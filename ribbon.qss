@@ -1,0 +1,136 @@
+
+# RibbonPanel Modern Styles (Web App Parity)
+
+/* RibbonPanel header background (transparent, only border) */
+QWidget#RibbonPanel {
+    background: transparent;
+    border-bottom: 1px solid #444;
+}
+QWidget#RibbonPanel[dark="true"] {
+    background: transparent;
+    border-bottom: 1px solid #444;
+}
+
+/* Tab bar background */
+QTabBar, QTabBar[dark="true"] {
+    background: #2D2D2D;
+}
+
+/* Content area background */
+QStackedWidget, QWidget[ribbonContent="true"], QStackedWidget[dark="true"], QWidget[ribbonContent="true"][dark="true"] {
+    background: #2D2D2D;
+}
+
+/* Tabs (QTabBar) */
+QTabBar {
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b7280;
+    background: transparent;
+    border: none;
+    padding: 0 8px;
+}
+QTabBar[dark="true"] {
+    color: #9ca3af;
+}
+QTabBar::tab {
+    background: #fff;
+    color: #6b7280;
+    border: 1px solid #d1d5db;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    padding: 6px 18px 8px 18px;
+    margin-right: 2px;
+}
+QTabBar::tab:selected {
+    color: #111827;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-bottom: 1px solid #fff;
+}
+QTabBar::tab:hover {
+    color: #111827;
+    background: #e5e7eb;
+}
+QTabBar[dark="true"]::tab {
+    background: #2d2d2d;
+    color: #9ca3af;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+QTabBar[dark="true"]::tab:selected {
+    color: #f3f4f6;
+    background: #2d2d2d;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-bottom: 1px solid #2d2d2d;
+}
+QTabBar[dark="true"]::tab:hover {
+    color: #f3f4f6;
+    background: #3f3f46;
+}
+
+/* Content Area */
+QStackedWidget, QWidget[ribbonContent="true"] {
+    min-height: 95px;
+    background: #fff;
+}
+QStackedWidget[dark="true"], QWidget[ribbonContent="true"][dark="true"] {
+    background: #2d2d2d;
+}
+
+/* Panels */
+QFrame#RibbonPanel {
+    border-right: 1px solid #e5e7eb;
+    border-radius: 6px;
+    background: transparent;
+}
+QFrame#RibbonPanel[dark="true"] {
+    border-right: 1px solid rgba(255,255,255,0.1);
+}
+QLabel[ribbonPanelTitle="true"] {
+    font-size: 10px;
+    font-weight: 600;
+    color: #6b7280;
+}
+QLabel[ribbonPanelTitle="true"][dark="true"] {
+    color: #9ca3af;
+}
+
+/* Buttons */
+QPushButton {
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 10px;
+    font-weight: 500;
+    color: #111827;
+}
+QPushButton[dark="true"] {
+    background: #2d2d2d;
+    border: 1px solid #52525b;
+    color: #d1d5db;
+}
+QPushButton:hover {
+    background: #e5e7eb;
+    border: 1px solid #d1d5db;
+}
+QPushButton[dark="true"]:hover {
+    background: #3f3f46;
+    border: 1px solid #52525b;
+}
+QPushButton:pressed {
+    background: #dbeafe;
+    border: 1px solid #bfdbfe;
+    color: #0FB881;
+}
+QPushButton[dark="true"]:pressed {
+    background: rgba(21,21,21,0.15);
+    border: 1px solid rgba(108,108,108,0.3);
+    color: #0FB881;
+}
+QPushButton[cancel="true"] {
+    color: #ef4444;
+}
+QPushButton[cancel="true"][dark="true"] {
+    color: #f87171;
+}

@@ -1,0 +1,46 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run PySide6 App",
+			"type": "shell",
+			"command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe",
+			"args": [
+				"main.py"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Run PySide6 App",
+			"type": "shell",
+			"command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe",
+			"args": [
+				"main.py"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Run PySide6 App",
+			"type": "shell",
+			"command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe",
+			"args": [
+				"main.py"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Run PySide6 App",
+			"type": "shell",
+			"command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe",
+			"args": [
+				"main.py"
+			],
+			"isBackground": false,
+			"group": "build"
+		}
+	]
+}
