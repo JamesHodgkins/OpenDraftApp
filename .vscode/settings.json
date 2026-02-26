@@ -1,0 +1,14 @@
+{
+  "actionButtons": {
+    "defaultColor": "#2f81f7",
+    "reloadButton": "↻",
+    "commands": [
+      {
+        "name": "▶ Run OpenDraft",
+        "tooltip": "Run main.py using project .venv",
+        "command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe main.py",
+        "cwd": "${workspaceFolder}"
+      }
+    ]
+  }
+}

@@ -136,3 +136,60 @@ QPushButton[cancel="true"] {
 QPushButton[cancel="true"][dark="true"] {
     color: #f87171;
 }
+
+/* Status bar: subtle top border to separate from canvas/content */
+QStatusBar {
+    background: #ffffff;
+    border-top: 1px solid #e5e7eb;
+    padding: 4px 8px;
+    color: #4b5563;
+}
+QStatusBar[dark="true"] {
+    background: #1f2937;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    padding: 4px 8px;
+    color: #cbd5e1;
+}
+
+/* More specific selectors to ensure the rule matches when nested inside QMainWindow
+   and to increase border contrast for visibility. */
+QMainWindow QStatusBar {
+    background: #ffffff;
+    border-top: 1px solid #d1d5db;
+    padding: 4px 8px;
+    min-height: 22px;
+    color: #4b5563;
+}
+QMainWindow QStatusBar[dark="true"] {
+    background: #111827;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding: 4px 8px;
+    min-height: 22px;
+    color: #cbd5e1;
+}
+
+/* Target the status bar by objectName for highest specificity */
+#MainStatusBar {
+    background: #ffffff;
+    border-top: 1px solid #cbd5e1;
+    padding: 4px 8px;
+    min-height: 22px;
+    color: #4b5563;
+}
+#MainStatusBar[dark="true"] {
+    background: #0f1724;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding: 4px 8px;
+    min-height: 22px;
+    color: #cbd5e1;
+}
+
+/* Guaranteed visible separator above the status bar (used as fallback) */
+#StatusSeparator {
+    background: #e5e7eb;
+    min-height: 1px;
+}
+#StatusSeparator[dark="true"] {
+    background: rgba(255,255,255,0.06);
+    min-height: 1px;
+}

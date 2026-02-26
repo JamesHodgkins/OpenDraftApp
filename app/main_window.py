@@ -3,7 +3,7 @@ Main application window for OpenDraft.
 
 Owns the ribbon configuration data and assembles the top-level layout.
 """
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
 
 from controls.ribbon import RibbonPanel
 from app.canvas import CADCanvas
@@ -126,9 +126,38 @@ class MainWindow(QMainWindow):
             dark=False,  # set True for dark mode
         )
         layout.addWidget(ribbon)
-        layout.addWidget(CADCanvas())
+        # keep a reference to the canvas so we can connect signals
+        canvas = CADCanvas()
+        layout.addWidget(canvas)
+
+        # thin separator that visually separates the central content from the status bar
+        sep = QFrame()
+        sep.setObjectName("StatusSeparator")
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Plain)
+        sep.setLineWidth(0)
+        sep.setMidLineWidth(0)
+        sep.setFixedHeight(1)
+        sep.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout.addWidget(sep)
 
         central = QWidget()
         central.setLayout(layout)
         central.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(central)
+
+        # Status bar with cursor coordinates on the right
+        self.coord_label = QLabel("X: 0.00 Y: 0.00")
+        sb = self.statusBar()
+        sb.setObjectName("MainStatusBar")
+        # rely on the separator/QSS for the top border; remove forced inline styling
+        sb.addPermanentWidget(self.coord_label)
+
+        # update status with canvas mouse movement
+        try:
+            canvas.mouseMoved.connect(self._on_canvas_mouse_moved)
+        except Exception:
+            pass
+
+    def _on_canvas_mouse_moved(self, x: float, y: float) -> None:
+        self.coord_label.setText(f"X: {x:.2f} Y: {y:.2f}")

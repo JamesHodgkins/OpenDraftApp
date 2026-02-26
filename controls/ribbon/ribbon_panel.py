@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from controls.ribbon.draw_ribbon_panel import DrawRibbonPanel
 from controls.ribbon.ribbon_panel_widget import RibbonPanel as RibbonPanelWidget
 from controls.ribbon.panel_factory import create_panel_widget
 from controls.ribbon.ribbon_split_button import RibbonSplitButton

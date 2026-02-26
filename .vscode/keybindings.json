@@ -1,0 +1,13 @@
+[
+  {
+    "key": "ctrl+r",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Run PySide6 App",
+    "when": "workspaceFolderCount == 1"
+  },
+  {
+    "key": "ctrl+shift+r",
+    "command": "workbench.action.debug.startWithoutDebugging",
+    "when": "workspaceFolderCount == 1"
+  }
+]
