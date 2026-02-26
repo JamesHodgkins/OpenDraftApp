@@ -13,7 +13,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt, QSize
 
 from controls.icon_widget import Icon
-from controls.ribbon.ribbon_constants import SIZE, Styles, ButtonSize, IconSize
+from controls.ribbon.ribbon_constants import SIZE, Styles, ButtonSize, IconSize, COLORS
 
 
 class RibbonSplitButton(QWidget):
@@ -45,7 +45,8 @@ class RibbonSplitButton(QWidget):
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        # Use the shared split-button spacing for the large (vertical) layout
+        layout.setSpacing(SIZE.SPLIT_BUTTON_SPACING)
 
         if small:
             self._create_small_layout(layout, menu, main_icon, main_label, main_action)
@@ -58,6 +59,16 @@ class RibbonSplitButton(QWidget):
 
     def _build_menu(self, items: List[Dict[str, Any]]) -> QMenu:
         menu = QMenu(self)
+        # Ensure menu item text and hovered item text is visible on dark backgrounds
+        menu.setStyleSheet(f"""
+            QMenu {{
+                color: {COLORS.TEXT_PRIMARY_DARK};
+            }}
+            QMenu::item:selected {{
+                color: {COLORS.TEXT_PRIMARY_DARK};
+                background: {COLORS.HOVER_DARK};
+            }}
+        """)
         for item in items:
             icon_path = item.get("icon", "")
             icon_obj = None
@@ -110,8 +121,13 @@ class RibbonSplitButton(QWidget):
             alignment=Qt.AlignmentFlag.AlignHCenter,
         )
         self.setLayout(layout)
-        w, h = ButtonSize.LARGE.value
-        self.setFixedSize(w, h)
+        # Compute height from child sizes to avoid overlap (icon + dropdown + spacing)
+        large_w = ButtonSize.LARGE.value[0]
+        icon_h = ButtonSize.ICON_LARGE.value[1]
+        dropdown_h = SIZE.DROPDOWN_TEXT_HEIGHT
+        spacing = layout.spacing()
+        total_h = icon_h + dropdown_h + spacing
+        self.setFixedSize(large_w, total_h)
 
     # ------------------------------------------------------------------
     # Individual button factories

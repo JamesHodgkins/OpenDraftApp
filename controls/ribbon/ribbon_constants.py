@@ -23,21 +23,21 @@ class ButtonType(Enum):
 
 class ButtonSize(Enum):
     """Standard button sizes used in the ribbon."""
-    LARGE = (52, 64)
+    LARGE = (60, 64)
     SMALL = (72, 28)
     SPLIT_SMALL = (92, 28)
-    ICON_LARGE = (52, 44)
-    ICON_SMALL = (36, 28)
+    ICON_LARGE = (60, 52)
+    ICON_SMALL = (40, 32)
     DROPDOWN_ARROW = (20, 28)
-    DROPDOWN_TEXT = (52, 20)
-    ICON_LABEL = (72, 28)
+    DROPDOWN_TEXT = (60, 20)
+    ICON_LABEL = (84, 28)
 
 
 class IconSize(Enum):
     """Standard icon sizes."""
-    LARGE = 40
-    SMALL = 24
-    MENU = 24
+    LARGE = 48
+    SMALL = 28
+    MENU = 28
 
 
 # ===== SIZE CONSTANTS =====
@@ -55,10 +55,10 @@ class Sizing(NamedTuple):
     SPLIT_SMALL_WIDTH: int = 92
 
     # Icon dimensions
-    LARGE_ICON_SIZE: int = 40
-    SMALL_ICON_SIZE: int = 24
-    LARGE_ICON_BUTTON_HEIGHT: int = 44
-    LARGE_ICON_LABEL_SIZE: int = 48
+    LARGE_ICON_SIZE: int = 48
+    SMALL_ICON_SIZE: int = 28
+    LARGE_ICON_BUTTON_HEIGHT: int = 52
+    LARGE_ICON_LABEL_SIZE: int = 56
 
     # Dropdown dimensions
     DROPDOWN_ARROW_WIDTH: int = 20
@@ -73,15 +73,15 @@ class Sizing(NamedTuple):
 
 SIZE = Sizing(
     RIBBON_HEIGHT=140,
-    LARGE_BUTTON_WIDTH=52,
+    LARGE_BUTTON_WIDTH=60,
     LARGE_BUTTON_HEIGHT=64,
     SMALL_BUTTON_WIDTH=72,
     SMALL_BUTTON_HEIGHT=28,
     SPLIT_SMALL_WIDTH=92,
-    LARGE_ICON_SIZE=40,
-    SMALL_ICON_SIZE=24,
-    LARGE_ICON_BUTTON_HEIGHT=44,
-    LARGE_ICON_LABEL_SIZE=48,
+    LARGE_ICON_SIZE=48,
+    SMALL_ICON_SIZE=28,
+    LARGE_ICON_BUTTON_HEIGHT=52,
+    LARGE_ICON_LABEL_SIZE=56,
     DROPDOWN_ARROW_WIDTH=20,
     DROPDOWN_TEXT_HEIGHT=20,
     PANEL_SPACING=6,
@@ -94,11 +94,23 @@ SIZE = Sizing(
 # ===== COLOR CONSTANTS =====
 
 class Colors(NamedTuple):
-    """Container for all colour constants."""
+    """Container for all colour constants.
+
+    Note
+    ----
+    * ``_LIGHT`` and ``_DARK`` suffixes indicate the **theme** in which the
+      colour is applied, not the brightness of the colour itself.  For example,
+      ``HOVER_LIGHT`` is the hover background used when the ribbon is in light
+      mode; because the canvas there is white we actually pick a soft grey
+      (#E5E7EB) which appears slightly darker than the base.  ``HOVER_DARK`` is
+      used on dark-mode ribbons and therefore is a lighter grey that contrasts
+      against the dark panel.
+    """
     BACKGROUND_DARK: str = "#2D2D2D"
     BACKGROUND_LIGHT: str = "#2D2D2D"
-    HOVER_DARK: str = "rgba(255, 255, 255, 0.06)"
-    HOVER_LIGHT: str = "rgba(0, 0, 0, 0.06)"
+    # hover colours are chosen to be visible against the panel they sit on
+    HOVER_DARK: str = "#4A4A4A"   # used when theme is dark
+    HOVER_LIGHT: str = "#4A4A4A"  # used when theme is light
     PRESSED_DARK: str = "rgba(255, 255, 255, 0.12)"
     PRESSED_LIGHT: str = "rgba(0, 0, 0, 0.12)"
     TEXT_PRIMARY_DARK: str = "#eeeeee"
@@ -111,8 +123,8 @@ class Colors(NamedTuple):
 COLORS = Colors(
     BACKGROUND_DARK="#2D2D2D",
     BACKGROUND_LIGHT="#2D2D2D",
-    HOVER_DARK="rgba(255, 255, 255, 0.06)",
-    HOVER_LIGHT="rgba(0, 0, 0, 0.06)",
+    HOVER_DARK="#4A4A4A",
+    HOVER_LIGHT="#4A4A4A",
     PRESSED_DARK="rgba(255, 255, 255, 0.12)",
     PRESSED_LIGHT="rgba(0, 0, 0, 0.12)",
     TEXT_PRIMARY_DARK="#eeeeee",
@@ -151,6 +163,27 @@ class Styles:
         return f"background: {color};"
 
     @staticmethod
+    def large_button(dark: bool = False) -> str:
+        """Full large ribbon button: icon stacked above label."""
+        text_color = COLORS.TEXT_PRIMARY_DARK  # ribbon content area is always dark
+        return f"""
+            QToolButton {{
+                {Styles.button_base(dark)}
+                font-size: {Styles.FONT_SIZE_SMALL}px;
+                color: {text_color};
+                padding: {Styles.PADDING_SMALL}px;
+            }}
+            QToolButton:hover {{
+                {Styles.button_hover(dark)}
+                border-radius: {Styles.BORDER_RADIUS_LARGE}px;
+            }}
+            QToolButton:pressed {{
+                {Styles.button_pressed(dark)}
+                border-radius: {Styles.BORDER_RADIUS_LARGE}px;
+            }}
+        """
+
+    @staticmethod
     def large_icon_button(dark: bool = False) -> str:
         return f"""
             QToolButton {{
@@ -173,12 +206,14 @@ class Styles:
             QToolButton {{
                 font-size: {Styles.FONT_SIZE_LARGE}px;
                 font-weight: 500;
+                color: {COLORS.TEXT_PRIMARY_DARK};
                 {Styles.button_base(dark)}
                 padding: 0 {Styles.PADDING_SMALL}px;
                 text-align: center;
             }}
             QToolButton:hover {{
                 {Styles.button_hover(dark)}
+                color: {COLORS.TEXT_PRIMARY_DARK};
                 border-radius: {Styles.BORDER_RADIUS_SMALL}px;
             }}
             QToolButton:pressed {{
@@ -199,7 +234,9 @@ class Styles:
                 font-size: {Styles.FONT_SIZE_SMALL}px;
                 font-weight: 500;
                 {Styles.button_base(dark)}
-                padding: 0 {Styles.PADDING_MEDIUM}px;
+                /* Remove left padding so icon sits at the left edge; tighten right padding */
+                padding: 0 {Styles.PADDING_SMALL}px;
+                padding-left: 0px;
                 text-align: left;
             }}
             QToolButton:hover {{
@@ -236,6 +273,7 @@ class Styles:
     def small_button(dark: bool = False) -> str:
         return f"""
             QPushButton {{
+                {Styles.button_base(dark)}
                 font-size: {Styles.FONT_SIZE_SMALL}px;
                 white-space: nowrap;
                 text-align: left;
@@ -244,6 +282,14 @@ class Styles:
                 max-width: {SIZE.SMALL_BUTTON_WIDTH}px;
                 min-height: {SIZE.SMALL_BUTTON_HEIGHT}px;
                 max-height: {SIZE.SMALL_BUTTON_HEIGHT}px;
+            }}
+            QPushButton:hover {{
+                {Styles.button_hover(dark)}
+                border-radius: {Styles.BORDER_RADIUS_SMALL}px;
+            }}
+            QPushButton:pressed {{
+                {Styles.button_pressed(dark)}
+                border-radius: {Styles.BORDER_RADIUS_SMALL}px;
             }}
         """
 

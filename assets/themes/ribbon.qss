@@ -97,43 +97,47 @@ QLabel[ribbonPanelTitle="true"][dark="true"] {
     color: #9ca3af;
 }
 
-/* Buttons */
-QPushButton {
-    background: #fff;
-    border: 1px solid #d1d5db;
+/* Buttons inside ribbon panels: remove borders and use hover/pressed backgrounds only */
+QFrame#RibbonPanel QPushButton,
+QFrame#RibbonPanel QToolButton {
+    background: transparent;
+    border: none;
     border-radius: 4px;
     padding: 6px 12px;
     font-size: 10px;
     font-weight: 500;
     color: #111827;
 }
-QPushButton[dark="true"] {
-    background: #2d2d2d;
-    border: 1px solid #52525b;
+QFrame#RibbonPanel[dark="true"] QPushButton,
+QFrame#RibbonPanel[dark="true"] QToolButton {
+    background: transparent;
+    border: none;
     color: #d1d5db;
 }
-QPushButton:hover {
-    background: #e5e7eb;
-    border: 1px solid #d1d5db;
+QFrame#RibbonPanel QPushButton:hover,
+QFrame#RibbonPanel QToolButton:hover {
+    background: #E5E7EB;
 }
-QPushButton[dark="true"]:hover {
-    background: #3f3f46;
-    border: 1px solid #52525b;
+QFrame#RibbonPanel[dark="true"] QPushButton:hover,
+QFrame#RibbonPanel[dark="true"] QToolButton:hover {
+    background: #4A4A4A;
 }
-QPushButton:pressed {
+QFrame#RibbonPanel QPushButton:pressed,
+QFrame#RibbonPanel QToolButton:pressed {
     background: #dbeafe;
-    border: 1px solid #bfdbfe;
     color: #0FB881;
 }
-QPushButton[dark="true"]:pressed {
+QFrame#RibbonPanel[dark="true"] QPushButton:pressed,
+QFrame#RibbonPanel[dark="true"] QToolButton:pressed {
     background: rgba(21,21,21,0.15);
-    border: 1px solid rgba(108,108,108,0.3);
     color: #0FB881;
 }
-QPushButton[cancel="true"] {
+QFrame#RibbonPanel QPushButton[cancel="true"],
+QFrame#RibbonPanel QToolButton[cancel="true"] {
     color: #ef4444;
 }
-QPushButton[cancel="true"][dark="true"] {
+QFrame#RibbonPanel[dark="true"] QPushButton[cancel="true"],
+QFrame#RibbonPanel[dark="true"] QToolButton[cancel="true"] {
     color: #f87171;
 }
 

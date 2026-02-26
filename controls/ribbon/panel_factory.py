@@ -7,9 +7,10 @@ panel definition (the format used in main_window.py).
 from typing import Callable, Optional, Dict, Any
 
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QSizePolicy,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QToolButton, QLabel, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon
 
 from controls.ribbon.ribbon_panel_widget import RibbonPanel as RibbonPanelWidget
 from controls.ribbon.ribbon_split_button import RibbonSplitButton
@@ -103,7 +104,7 @@ def create_panel_widget(
                 pix = Icon(tool["icon"], size=SIZE.SMALL_ICON_SIZE).pixmap()
                 if pix and not pix.isNull():
                     btn.setIcon(pix)
-                    btn.setIconSize(QSize(28, 20))
+                    btn.setIconSize(QSize(SIZE.SMALL_ICON_SIZE, SIZE.SMALL_ICON_SIZE))
             btn.setFixedSize(SIZE.SMALL_BUTTON_WIDTH, SIZE.SMALL_BUTTON_HEIGHT)
             btn.setStyleSheet(Styles.small_button(dark))
             btn.clicked.connect(
@@ -131,7 +132,7 @@ def create_panel_widget(
                         pix = Icon(btn_def["icon"], size=SIZE.SMALL_ICON_SIZE).pixmap()
                         if pix and not pix.isNull():
                             b.setIcon(pix)
-                            b.setIconSize(QSize(28, 20))
+                            b.setIconSize(QSize(SIZE.SMALL_ICON_SIZE, SIZE.SMALL_ICON_SIZE))
                     b.setFixedSize(SIZE.SMALL_BUTTON_WIDTH, SIZE.SMALL_BUTTON_HEIGHT)
                     b.setStyleSheet(Styles.small_button(dark))
                     b.clicked.connect(
@@ -149,41 +150,20 @@ def create_panel_widget(
             if small_btns:
                 layout.addWidget(_small_column(small_btns))
                 small_btns = []
-            btn_widget = QWidget()
-            vbox = QVBoxLayout()
-            vbox.setSpacing(0)
-            vbox.setContentsMargins(0, 2, 0, 2)
-            icon_label = QLabel()
-            icon_label.setAlignment(Qt.AlignCenter)
-            icon_label.setFixedSize(SIZE.LARGE_ICON_LABEL_SIZE, SIZE.LARGE_ICON_LABEL_SIZE)
+            btn = QToolButton()
+            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             if tool.get("icon"):
                 pix = Icon(tool["icon"], size=SIZE.LARGE_ICON_SIZE).pixmap()
                 if pix and not pix.isNull():
-                    icon_label.setPixmap(pix)
-                else:
-                    icon_label.setText("?")
-                    icon_label.setStyleSheet("color: #888; font-size: 18px;")
-            vbox.addWidget(icon_label, alignment=Qt.AlignHCenter)
-            text_label = QLabel(tool["label"])
-            text_label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-            text_label.setStyleSheet(
-                f"font-size: {Styles.FONT_SIZE_SMALL}px; "
-                "color: #eee; margin-top: 0px; margin-bottom: 0px;"
-            )
-            vbox.addWidget(text_label, alignment=Qt.AlignHCenter)
-            btn_widget.setLayout(vbox)
-            btn_widget.setFixedSize(SIZE.LARGE_BUTTON_WIDTH, SIZE.LARGE_BUTTON_HEIGHT)
-            btn_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            # Transparent overlay button for click events
-            btn = QPushButton(btn_widget)
-            btn.setFlat(True)
-            btn.setStyleSheet("QPushButton { background: transparent; border: none; }")
+                    btn.setIcon(QIcon(pix))
+                    btn.setIconSize(QSize(SIZE.LARGE_ICON_SIZE, SIZE.LARGE_ICON_SIZE))
+            btn.setText(tool["label"])
             btn.setFixedSize(SIZE.LARGE_BUTTON_WIDTH, SIZE.LARGE_BUTTON_HEIGHT)
+            btn.setStyleSheet(Styles.large_button(dark))
             btn.clicked.connect(
                 _make_callback(tool.get("action", tool["label"]), action_handler)
             )
-            btn.raise_()
-            layout.addWidget(btn_widget)
+            layout.addWidget(btn)
 
     if small_btns:
         layout.addWidget(_small_column(small_btns))

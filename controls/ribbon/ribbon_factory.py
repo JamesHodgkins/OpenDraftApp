@@ -101,7 +101,7 @@ class ButtonFactory:
             pix = Icon(tool.icon, size=SIZE.SMALL_ICON_SIZE).pixmap()
             if pix and not pix.isNull():
                 btn.setIcon(QIcon(pix))
-                btn.setIconSize(QSize(28, 20))
+                btn.setIconSize(QSize(SIZE.SMALL_ICON_SIZE, SIZE.SMALL_ICON_SIZE))
         btn.setFixedSize(SIZE.SMALL_BUTTON_WIDTH, SIZE.SMALL_BUTTON_HEIGHT)
         btn.setStyleSheet(Styles.small_button(self.dark))
         if tool.action:
