@@ -24,8 +24,9 @@ class ButtonType(Enum):
 class ButtonSize(Enum):
     """Standard button sizes used in the ribbon."""
     LARGE = (60, 64)
-    SMALL = (72, 28)
-    SPLIT_SMALL = (92, 28)
+    SMALL = (72, 22)  # width x height
+    # split-small width now matches a normal small button (total, including arrow)
+    SPLIT_SMALL = (72, 22)
     ICON_LARGE = (60, 52)
     ICON_SMALL = (40, 32)
     DROPDOWN_ARROW = (20, 28)
@@ -35,8 +36,8 @@ class ButtonSize(Enum):
 
 class IconSize(Enum):
     """Standard icon sizes."""
-    LARGE = 48
-    SMALL = 28
+    LARGE = 45  # now 45x45 px per user request
+    SMALL = 20  # requested 20x20 px
     MENU = 28
 
 
@@ -51,12 +52,12 @@ class Sizing(NamedTuple):
     LARGE_BUTTON_WIDTH: int = 52
     LARGE_BUTTON_HEIGHT: int = 64
     SMALL_BUTTON_WIDTH: int = 72
-    SMALL_BUTTON_HEIGHT: int = 28
-    SPLIT_SMALL_WIDTH: int = 92
+    SMALL_BUTTON_HEIGHT: int = 22
+    SPLIT_SMALL_WIDTH: int = 72  # same as small button; internal logic splits arrow
 
     # Icon dimensions
-    LARGE_ICON_SIZE: int = 48
-    SMALL_ICON_SIZE: int = 28
+    LARGE_ICON_SIZE: int = 45
+    SMALL_ICON_SIZE: int = 20
     LARGE_ICON_BUTTON_HEIGHT: int = 52
     LARGE_ICON_LABEL_SIZE: int = 56
 
@@ -65,8 +66,8 @@ class Sizing(NamedTuple):
     DROPDOWN_TEXT_HEIGHT: int = 20
 
     # Spacing
-    PANEL_SPACING: int = 6
-    TOOL_SPACING: int = 4
+    PANEL_SPACING: int = 2   # cut panel-to-panel gap down for tighter layout
+    TOOL_SPACING: int = 2   # reduced horizontal/vertical space between tools
     STACK_SPACING: int = 2
     SPLIT_BUTTON_SPACING: int = 2
 
@@ -76,17 +77,17 @@ SIZE = Sizing(
     LARGE_BUTTON_WIDTH=60,
     LARGE_BUTTON_HEIGHT=64,
     SMALL_BUTTON_WIDTH=72,
-    SMALL_BUTTON_HEIGHT=28,
-    SPLIT_SMALL_WIDTH=92,
-    LARGE_ICON_SIZE=48,
-    SMALL_ICON_SIZE=28,
+    SMALL_BUTTON_HEIGHT=22,
+    SPLIT_SMALL_WIDTH=72,
+    LARGE_ICON_SIZE=45,
+    SMALL_ICON_SIZE=20,
     LARGE_ICON_BUTTON_HEIGHT=52,
     LARGE_ICON_LABEL_SIZE=56,
     DROPDOWN_ARROW_WIDTH=20,
     DROPDOWN_TEXT_HEIGHT=20,
-    PANEL_SPACING=6,
-    TOOL_SPACING=4,
-    STACK_SPACING=2,
+    PANEL_SPACING=1,
+    TOOL_SPACING=1,
+    STACK_SPACING=1,
     SPLIT_BUTTON_SPACING=2,
 )
 
@@ -271,13 +272,15 @@ class Styles:
 
     @staticmethod
     def small_button(dark: bool = False) -> str:
+        # small text buttons previously had left padding; remove it to pack
+        # buttons edge‑to‑edge.  width is already fixed by the SIZE constants.
         return f"""
             QPushButton {{
                 {Styles.button_base(dark)}
                 font-size: {Styles.FONT_SIZE_SMALL}px;
                 white-space: nowrap;
                 text-align: left;
-                padding-left: {Styles.PADDING_MEDIUM}px;
+                padding: 0px;
                 min-width: {SIZE.SMALL_BUTTON_WIDTH}px;
                 max-width: {SIZE.SMALL_BUTTON_WIDTH}px;
                 min-height: {SIZE.SMALL_BUTTON_HEIGHT}px;
@@ -310,14 +313,14 @@ class Styles:
 class Margins(NamedTuple):
     """Standard margin values."""
     NONE: tuple = (0, 0, 0, 0)
-    SMALL: tuple = (2, 2, 2, 2)
-    MEDIUM: tuple = (4, 4, 4, 4)
+    SMALL: tuple = (1, 1, 1, 1)  # reduced padding around panels
+    MEDIUM: tuple = (2, 2, 2, 2)
 
 
 MARGINS = Margins(
     NONE=(0, 0, 0, 0),
-    SMALL=(2, 2, 2, 2),
-    MEDIUM=(4, 4, 4, 4),
+    SMALL=(1, 1, 1, 1),
+    MEDIUM=(2, 2, 2, 2),
 )
 
 

@@ -10,7 +10,9 @@ class DrawLineCommand(CommandBase):
 
     def execute(self) -> None:
         start = self.editor.get_point("Line: pick start point")
+        self.editor.snap_from_point = start
         self.editor.set_dynamic(lambda m: [LineEntity(p1=start, p2=m)])
         end = self.editor.get_point("Line: pick end point")
+        self.editor.snap_from_point = None
         self.editor.clear_dynamic()
         self.editor.add_entity(LineEntity(p1=start, p2=end))

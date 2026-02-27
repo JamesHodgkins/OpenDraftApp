@@ -20,6 +20,7 @@ class DrawArcCenterStartEndCommand(CommandBase):
                 LineEntity(p1=center, p2=m),
             ]
         )
+        self.editor.snap_from_point = center
         start = self.editor.get_point("Arc: pick start point")
 
         radius      = math.hypot(start.x - center.x, start.y - center.y)

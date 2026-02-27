@@ -35,11 +35,12 @@ class RibbonPanel(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("RibbonPanel")
+        self.setFrameShape(QFrame.NoFrame)
         self.setProperty("dark", dark)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(*MARGINS.SMALL)
-        layout.setSpacing(2)
+        layout.setSpacing(1)
 
         layout.addWidget(content_widget)
 

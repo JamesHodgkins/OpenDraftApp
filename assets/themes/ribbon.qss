@@ -81,12 +81,13 @@ QStackedWidget[dark="true"], QWidget[ribbonContent="true"][dark="true"] {
 
 /* Panels */
 QFrame#RibbonPanel {
-    border-right: 1px solid #e5e7eb;
+    border: none;
     border-radius: 6px;
     background: transparent;
 }
 QFrame#RibbonPanel[dark="true"] {
-    border-right: 1px solid rgba(255,255,255,0.1);
+    border: none;
+    background: transparent;
 }
 QLabel[ribbonPanelTitle="true"] {
     font-size: 10px;

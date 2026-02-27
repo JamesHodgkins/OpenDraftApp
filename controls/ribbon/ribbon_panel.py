@@ -8,15 +8,34 @@ from typing import List, Dict, Any, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
-    QTabBar, QStackedWidget,
+    QTabBar, QStackedWidget, QFrame,
 )
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPainter, QColor
 
 from controls.ribbon.ribbon_panel_widget import RibbonPanel as RibbonPanelWidget
 from controls.ribbon.panel_factory import create_panel_widget
 from controls.ribbon.ribbon_split_button import RibbonSplitButton
 from controls.icon_widget import Icon
 from controls.ribbon.ribbon_constants import SIZE, COLORS, MARGINS
+
+
+class _PanelSeparator(QWidget):
+    """A 1-px vertical rule drawn directly via QPainter — no stylesheet involved."""
+
+    def __init__(self, dark: bool = False, parent: QWidget = None):
+        super().__init__(parent)
+        self.setFixedWidth(1)
+        # Tell Qt we paint every pixel ourselves — prevents parent palette/stylesheet bleed
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        # Both themes currently use #2D2D2D (45,45,45) background.
+        # A solid 25-step lighter grey is clearly visible but unobtrusive.
+        self._color = QColor(70, 70, 70)
+
+    def paintEvent(self, event):  # noqa: N802
+        p = QPainter(self)
+        p.fillRect(self.rect(), self._color)
+        p.end()
 
 
 class RibbonPanel(QWidget):
@@ -83,20 +102,25 @@ class RibbonPanel(QWidget):
         dark: bool,
     ) -> QWidget:
         tab_widget = QWidget()
+        tab_widget.setObjectName("RibbonTabContent")
         tab_widget.setProperty("dark", dark)
         bg = COLORS.BACKGROUND_DARK if dark else COLORS.BACKGROUND_LIGHT
-        tab_widget.setStyleSheet(f"background: {bg};")
+        # Use objectName selector so this rule does NOT bleed into child widgets
+        tab_widget.setStyleSheet(f"QWidget#RibbonTabContent {{ background: {bg}; }}")
 
         tab_layout = QHBoxLayout()
         tab_layout.setContentsMargins(*MARGINS.SMALL)
-        tab_layout.setSpacing(SIZE.PANEL_SPACING)
+        # spacing will be provided by the separator line rather than layout gaps
+        tab_layout.setSpacing(0)
 
-        for panel_name in tab["panels"]:
+        panels = [name for name in tab["panels"] if panel_definitions.get(name)]
+        for idx, panel_name in enumerate(panels):
             panel_def = panel_definitions.get(panel_name)
-            if panel_def:
-                tab_layout.addWidget(
-                    self._build_panel(panel_name, panel_def, dark=dark)
-                )
+            panel_widget = self._build_panel(panel_name, panel_def, dark=dark)
+            tab_layout.addWidget(panel_widget)
+            # insert a vertical rule between panels (not after last)
+            if idx < len(panels) - 1:
+                tab_layout.addWidget(_PanelSeparator(dark=dark))
 
         tab_layout.addStretch()
         tab_widget.setLayout(tab_layout)

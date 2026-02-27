@@ -12,12 +12,20 @@ SIZE = Sizing(
     LARGE_BUTTON_WIDTH=52,       # Large button width
     LARGE_BUTTON_HEIGHT=64,      # Large button height
     SMALL_BUTTON_WIDTH=72,       # Small button width
-    SMALL_BUTTON_HEIGHT=28,      # Small button height
-    SPLIT_SMALL_WIDTH=92,        # Small split button total width
-    LARGE_ICON_SIZE=40,          # Large icon size in pixels
-    SMALL_ICON_SIZE=24,          # Small icon size in pixels
-    PANEL_SPACING=6,             # Space between panels
-    TOOL_SPACING=4,              # Space between tools
+    SMALL_BUTTON_HEIGHT=22,      # Small button height (reduced from 28)
+    SPLIT_SMALL_WIDTH=72,        # Split-small buttons now total the same width as a normal small button
+    LARGE_ICON_SIZE=45,          # Large icon size in pixels (now 45x45)
+    SMALL_ICON_SIZE=20,          # Small icon size in pixels (now 20x20)
+    PANEL_SPACING=2,             # Space between panels (reduced)
+
+# Visual separators
+
+The ribbon now draws a 1px vertical rule between adjacent panels.  This is
+added dynamically by `RibbonPanel._create_tab_widget` so you don't need to
+manually insert it when defining panels; the separator colour is picked
+dynamically based on the current theme (`#e5e7eb` in light mode, a very
+transparent white in dark mode) to keep it unobtrusive.
+    TOOL_SPACING=2,              # Space between tools (reduced)
     STACK_SPACING=2,             # Space between stacked buttons
 )
 ```
@@ -151,8 +159,8 @@ class Styles:
 
 ```python
 class Styles:
-    PADDING_SMALL: int = 2    # Tight padding
-    PADDING_MEDIUM: int = 8   # Normal padding
+    PADDING_SMALL: int = 2    # Tight padding (mostly for internal spacing)
+    PADDING_MEDIUM: int = 8   # Normal padding (small buttons no longer use this)
 ```
 
 ## File Organization

@@ -83,6 +83,9 @@ class Editor(QObject):
         self._active_command: Optional[CommandBase] = None
         self._input_mode: str = "none"
         self._dynamic_callback: Optional[Callable[[Vec2], List[BaseEntity]]] = None
+        # Set by commands before calling get_point() so the OSNAP engine can
+        # compute perpendicular snaps relative to the previously selected point.
+        self.snap_from_point: Optional[Vec2] = None
 
     # ---------------------------------------------------------------- properties
 
@@ -313,6 +316,7 @@ class Editor(QObject):
         finally:
             self._active_command = None
             self._dynamic_callback = None
+            self.snap_from_point = None
             self._set_input_mode("none")
             self.status_message.emit("")
             self.command_finished.emit()

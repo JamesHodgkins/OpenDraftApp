@@ -20,6 +20,7 @@ class DrawPolylineCommand(CommandBase):
                 "Polyline: pick first vertex (Esc to cancel)"
             )
             points.append(first)
+            self.editor.snap_from_point = first
             # Preview: draw confirmed segments plus a trailing segment to the cursor.
             self.editor.set_dynamic(
                 lambda m: [PolylineEntity(points=points + [m], closed=False)]
@@ -32,8 +33,10 @@ class DrawPolylineCommand(CommandBase):
                     f"Polyline: pick vertex {pts + 1} \u2014 {tip}"
                 )
                 points.append(pt)
+                self.editor.snap_from_point = pt
 
         except CommandCancelled:
+            self.editor.snap_from_point = None
             self.editor.clear_dynamic()
             # Finish gracefully if at least two points were collected;
             # otherwise let the cancellation propagate (no entity created).

@@ -8,12 +8,13 @@ scale rather than snapping between states.
 from math import log10, floor, ceil, pi
 
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QPen, QColor
+from PySide6.QtGui import QPainter, QPen, QColor, QPolygonF
 from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal, Slot
 from typing import List, Optional
 
 from app.document import DocumentStore
 from app.entities import Vec2
+from app.editor.osnap_engine import OsnapEngine, SnapResult, SnapType
 
 
 class CADCanvas(QWidget):
@@ -64,6 +65,11 @@ class CADCanvas(QWidget):
         # Cached preview entities from the last mouse-move callback.
         self._preview_entities: List = []
 
+        # OSNAP engine — active whenever the editor is waiting for a point input.
+        self._osnap: OsnapEngine = OsnapEngine()
+        # Last computed snap result (None when no snap is within aperture).
+        self._snap_result: Optional[SnapResult] = None
+
     # ----------------------
     # Coordinate transforms
     # ----------------------
@@ -83,7 +89,12 @@ class CADCanvas(QWidget):
         if event.button() == Qt.LeftButton:
             posf = event.position() if hasattr(event, "position") else event.posF()
             world_pt = self.screen_to_world(posf)
-            self.pointSelected.emit(world_pt.x(), world_pt.y())
+            # If a snap candidate is active, use it instead of the raw cursor.
+            if self._snap_result is not None:
+                pt = self._snap_result.point
+                self.pointSelected.emit(pt.x, pt.y)
+            else:
+                self.pointSelected.emit(world_pt.x(), world_pt.y())
             # Give the canvas focus so subsequent key events (Escape) are routed here.
             self.setFocus()
             return
@@ -95,22 +106,38 @@ class CADCanvas(QWidget):
             self.setCursor(Qt.ClosedHandCursor)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        # always emit cursor world coordinates
         posf = event.position() if hasattr(event, "position") else event.posF()
         world_pt = self.screen_to_world(posf)
+        raw = Vec2(world_pt.x(), world_pt.y())
+
+        # ---- OSNAP --------------------------------------------------------
+        # Only run snap when the editor is expecting a point input.
+        snap_active = (
+            self._editor is not None
+            and getattr(self._editor, "_input_mode", "none") == "point"
+            and self._document is not None
+        )
+        if snap_active:
+            self._snap_result = self._osnap.snap(
+                raw, self._document, self.scale,
+                from_point=getattr(self._editor, "snap_from_point", None),
+            )
+        else:
+            self._snap_result = None
+
+        # Coordinate display follows the snapped position when snap is active.
+        display = self._snap_result.point if self._snap_result else raw
         try:
-            self.mouseMoved.emit(world_pt.x(), world_pt.y())
+            self.mouseMoved.emit(display.x, display.y)
         except Exception:
-            # be resilient if no connections
             pass
 
-        # Update rubberband preview
+        # Update rubberband preview using snapped position when available.
         if self._editor is not None:
-            self._preview_entities = self._editor.get_dynamic(
-                Vec2(world_pt.x(), world_pt.y())
-            )
-            if self._preview_entities:
-                self.update()
+            preview_pt = self._snap_result.point if self._snap_result else raw
+            self._preview_entities = self._editor.get_dynamic(preview_pt)
+
+        self.update()
 
         if self._panning:
             pos = event.pos()
@@ -179,6 +206,83 @@ class CADCanvas(QWidget):
             painter.setPen(preview_pen)
             for e in self._preview_entities:
                 self._draw_entity(painter, e)
+
+        # Draw OSNAP marker
+        if self._snap_result is not None:
+            self._draw_snap_marker(painter, self._snap_result)
+
+    def _draw_snap_marker(self, painter: QPainter, snap: SnapResult) -> None:
+        """Draw the OSNAP marker at the snap point in screen coordinates.
+
+        Matches the web version: orange stroke-only shapes, 2 px line width,
+        fixed 6 px half-size aperture, no fill, no label.
+        """
+        sp = self.world_to_screen(QPointF(snap.point.x, snap.point.y))
+        sx, sy = sp.x(), sp.y()
+        S = 6  # half-size in pixels (matches web's  6 / zoom  at zoom=1)
+
+        orange = QColor(0xF9, 0x73, 0x16)  # #f97316
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        pen = QPen(orange, 2)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+
+        t = snap.snap_type
+
+        if t == SnapType.ENDPOINT:
+            # Stroke-only square
+            painter.drawRect(int(sx - S), int(sy - S), S * 2, S * 2)
+
+        elif t == SnapType.MIDPOINT:
+            # Upward-pointing triangle: apex top, base bottom
+            triangle = QPolygonF([
+                QPointF(sx,      sy - S),   # apex
+                QPointF(sx - S,  sy + S),   # bottom-left
+                QPointF(sx + S,  sy + S),   # bottom-right
+            ])
+            painter.drawPolygon(triangle)
+
+        elif t == SnapType.CENTER:
+            # Stroke-only circle
+            painter.drawEllipse(QPointF(sx, sy), S, S)
+
+        elif t == SnapType.QUADRANT:
+            # Diamond (not in web version; keep as a sensible extra)
+            diamond = QPolygonF([
+                QPointF(sx,      sy - S),
+                QPointF(sx + S,  sy),
+                QPointF(sx,      sy + S),
+                QPointF(sx - S,  sy),
+            ])
+            painter.drawPolygon(diamond)
+
+        elif t == SnapType.INTERSECTION:
+            # X with a bounding square cap (nearest style from web)
+            painter.drawLine(QPointF(sx - S, sy - S), QPointF(sx + S, sy + S))
+            painter.drawLine(QPointF(sx + S, sy - S), QPointF(sx - S, sy + S))
+            painter.drawLine(QPointF(sx - S, sy - S), QPointF(sx + S, sy - S))
+            painter.drawLine(QPointF(sx - S, sy + S), QPointF(sx + S, sy + S))
+
+        elif t == SnapType.PERPENDICULAR:
+            # Two L-shapes (matches web version exactly): top-right + bottom-left corners
+            # top-right L
+            painter.drawLine(QPointF(sx,       sy + S), QPointF(sx + S, sy + S))
+            painter.drawLine(QPointF(sx + S,   sy + S), QPointF(sx + S, sy))
+            # bottom-left L
+            painter.drawLine(QPointF(sx,       sy - S), QPointF(sx - S, sy - S))
+            painter.drawLine(QPointF(sx - S,   sy - S), QPointF(sx - S, sy))
+
+        elif t == SnapType.NEAREST:
+            # X with top and bottom horizontal bars (matches web nearest)
+            painter.drawLine(QPointF(sx - S, sy - S), QPointF(sx + S, sy + S))
+            painter.drawLine(QPointF(sx + S, sy - S), QPointF(sx - S, sy + S))
+            painter.drawLine(QPointF(sx - S, sy - S), QPointF(sx + S, sy - S))
+            painter.drawLine(QPointF(sx - S, sy + S), QPointF(sx + S, sy + S))
+
+        painter.restore()
 
     def _draw_entity(self, painter: QPainter, e) -> None:
         """Draw a single entity using the painter's current pen."""

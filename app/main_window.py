@@ -186,6 +186,18 @@ class MainWindow(QMainWindow):
         sb.addWidget(self.cmd_label)              # stretches on the left
         sb.addPermanentWidget(self.coord_label)   # pinned to the right
 
+        # -------------------------------------------------------------------
+        # Window sizing/positioning
+        # -------------------------------------------------------------------
+        # Ensure the initial size isn't too small or too large and center it on screen.
+        # A separate minimum is already enforced by the canvas, but we add a default
+        # resize to avoid unusually large automatic geometry which on some systems
+        # resulted in the window appearing in the lower-right corner when the
+        # content size exceeded the available screen size.
+        self.setMinimumSize(1400, 768)
+        self.resize(1400, 768)
+        self._center_on_screen()
+
         # Editor status message → left side of status bar
         self.editor.status_message.connect(self.cmd_label.setText)
 
@@ -197,3 +209,19 @@ class MainWindow(QMainWindow):
 
     def _on_canvas_mouse_moved(self, x: float, y: float) -> None:
         self.coord_label.setText(f"X: {x:.2f} Y: {y:.2f}")
+
+    # -----------------------------------------------------------------------
+    # helpers
+    # -----------------------------------------------------------------------
+    def _center_on_screen(self) -> None:
+        """Move the window to the centre of the primary available screen."""
+        from PySide6.QtGui import QGuiApplication
+
+        screen = QGuiApplication.primaryScreen()
+        if not screen:
+            return
+        avail = screen.availableGeometry()
+        # move the top‑left point so that the window is centred
+        new_left = avail.x() + (avail.width() - self.width()) // 2
+        new_top = avail.y() + (avail.height() - self.height()) // 2
+        self.move(new_left, new_top)

@@ -21,7 +21,9 @@ class DrawCircleCommand(CommandBase):
             ]
 
         self.editor.set_dynamic(_preview)
+        self.editor.snap_from_point = center
         edge = self.editor.get_point("Circle: pick point on circumference")
+        self.editor.snap_from_point = None
         self.editor.clear_dynamic()
         radius = math.hypot(edge.x - center.x, edge.y - center.y)
         self.editor.add_entity(CircleEntity(center=center, radius=radius))

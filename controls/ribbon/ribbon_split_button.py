@@ -94,15 +94,22 @@ class RibbonSplitButton(QWidget):
         main_label: str,
         main_action: Callable,
     ) -> None:
+        # Horizontal split button: icon+label on left, arrow on right.  We want the
+        # *total* width to equal a normal small button so the ribbon stays compact.
+        total_w = SIZE.SMALL_BUTTON_WIDTH
+        arrow_w = ButtonSize.DROPDOWN_ARROW.value[0]
+        label_w = total_w - arrow_w
+
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(SIZE.SPLIT_BUTTON_SPACING)
 
-        layout.addWidget(self._create_icon_label_button(main_icon, main_label, main_action))
+        layout.addWidget(
+            self._create_icon_label_button(main_icon, main_label, main_action, width=label_w)
+        )
         layout.addWidget(self._create_arrow_button(menu))
         self.setLayout(layout)
-        w, h = ButtonSize.SPLIT_SMALL.value
-        self.setFixedSize(w, h)
+        self.setFixedSize(total_w, SIZE.SMALL_BUTTON_HEIGHT)
 
     def _create_large_layout(
         self,
@@ -138,6 +145,7 @@ class RibbonSplitButton(QWidget):
         main_icon: Optional[str],
         main_label: str,
         main_action: Callable,
+        width: Optional[int] = None,
     ) -> QToolButton:
         btn = QToolButton(self)
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -148,8 +156,10 @@ class RibbonSplitButton(QWidget):
                 btn.setIcon(QIcon(pix))
         btn.setIconSize(QSize(IconSize.SMALL.value, IconSize.SMALL.value))
         btn.setText(main_label)
-        w, h = ButtonSize.ICON_LABEL.value
-        btn.setFixedSize(w, h)
+        # default size originates from the ICON_LABEL constant, but callers can
+        # override via the `width` argument (used by small split buttons).
+        default_w, h = ButtonSize.ICON_LABEL.value
+        btn.setFixedSize(width or default_w, h)
         btn.clicked.connect(main_action)
         btn.setStyleSheet(Styles.small_icon_label_button())
         return btn
