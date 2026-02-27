@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
     QTabBar, QStackedWidget,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 from controls.ribbon.ribbon_panel_widget import RibbonPanel as RibbonPanelWidget
 from controls.ribbon.panel_factory import create_panel_widget
@@ -30,6 +30,11 @@ class RibbonPanel(QWidget):
         parent: Optional parent widget.
         dark: Whether to apply dark-mode styling.
     """
+
+    #: Emitted whenever any ribbon button is clicked.  The payload is the
+    #: ``action`` string from the button's tool definition (e.g.
+    #: ``"lineCommand"``).
+    actionTriggered = Signal(str)
 
     def __init__(
         self,
@@ -103,4 +108,9 @@ class RibbonPanel(QWidget):
         panel_def: Dict[str, Any],
         dark: bool = False,
     ) -> RibbonPanelWidget:
-        return create_panel_widget(panel_name, panel_def, dark=dark)
+        return create_panel_widget(
+            panel_name,
+            panel_def,
+            action_handler=self.actionTriggered.emit,
+            dark=dark,
+        )

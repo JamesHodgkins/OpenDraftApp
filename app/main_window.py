@@ -4,9 +4,14 @@ Main application window for OpenDraft.
 Owns the ribbon configuration data and assembles the top-level layout.
 """
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
+from PySide6.QtCore import Qt
 
 from controls.ribbon import RibbonPanel
 from app.canvas import CADCanvas
+from app.document import DocumentStore
+from app.editor import Editor
+from app.entities import Vec2
+import app.commands  # registers all @command decorators  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +135,32 @@ class MainWindow(QMainWindow):
         canvas = CADCanvas()
         layout.addWidget(canvas)
 
+        # ---- Editor -------------------------------------------------------
+        doc = DocumentStore()
+        self.editor = Editor(document=doc, parent=self)
+
+        # Canvas left-click → provide world point to the active command
+        canvas.pointSelected.connect(
+            lambda x, y: self.editor.provide_point(Vec2(x, y))
+        )
+        # Give the canvas a reference to the active document so it can draw
+        canvas._document = doc
+        # Give the canvas a reference to the editor for rubberband preview
+        canvas._editor = self.editor
+        # Escape key on canvas → cancel the active command
+        canvas.cancelRequested.connect(self.editor.cancel)
+
+        # Ribbon button → run the corresponding command
+        ribbon.actionTriggered.connect(self.editor.run_command)
+
+        # Redraw the canvas whenever the document changes.
+        # Use QueuedConnection to ensure canvas.refresh() is called on the GUI
+        # thread even though document_changed is emitted from the worker thread.
+        self.editor.document_changed.connect(
+            canvas.refresh, Qt.ConnectionType.QueuedConnection
+        )
+        # -------------------------------------------------------------------
+
         # thin separator that visually separates the central content from the status bar
         sep = QFrame()
         sep.setObjectName("StatusSeparator")
@@ -146,12 +177,17 @@ class MainWindow(QMainWindow):
         central.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(central)
 
-        # Status bar with cursor coordinates on the right
+        # Status bar — command prompt (left) and cursor coordinates (right)
+        self.cmd_label = QLabel("")
         self.coord_label = QLabel("X: 0.00 Y: 0.00")
         sb = self.statusBar()
         sb.setObjectName("MainStatusBar")
         # rely on the separator/QSS for the top border; remove forced inline styling
-        sb.addPermanentWidget(self.coord_label)
+        sb.addWidget(self.cmd_label)              # stretches on the left
+        sb.addPermanentWidget(self.coord_label)   # pinned to the right
+
+        # Editor status message → left side of status bar
+        self.editor.status_message.connect(self.cmd_label.setText)
 
         # update status with canvas mouse movement
         try:

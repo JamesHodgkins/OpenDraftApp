@@ -5,11 +5,15 @@ Provides basic pan/zoom, screen<->world transforms and a smooth adaptive grid
 that fades between density levels as you zoom, giving a continuous sense of
 scale rather than snapping between states.
 """
-from math import log10, floor, ceil
+from math import log10, floor, ceil, pi
 
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QPen, QColor
-from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal
+from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal, Slot
+from typing import List, Optional
+
+from app.document import DocumentStore
+from app.entities import Vec2
 
 
 class CADCanvas(QWidget):
@@ -17,6 +21,18 @@ class CADCanvas(QWidget):
 
     # emits world x,y when the mouse moves over the canvas
     mouseMoved = Signal(float, float)
+    # emits the world-space point the user clicked (left button)
+    pointSelected = Signal(float, float)
+    # emits when the user presses Escape
+    cancelRequested = Signal()
+
+    @Slot()
+    def refresh(self) -> None:
+        """Schedule a repaint.  Safe to call from any thread via QueuedConnection."""
+        # If the editor no longer has a dynamic callback, clear stale preview.
+        if self._editor is not None and self._editor._dynamic_callback is None:
+            self._preview_entities = []
+        self.update()
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
@@ -31,10 +47,22 @@ class CADCanvas(QWidget):
         self._last_mouse_pos = QPoint()
 
         # UI niceties
-        self.setCursor(Qt.OpenHandCursor)
+        self.setCursor(Qt.CrossCursor)
 
         # receive mouse move events even when no button is pressed
         self.setMouseTracking(True)
+
+        # Accept keyboard focus so key-press events (Escape, etc.) are received
+        self.setFocusPolicy(Qt.StrongFocus)
+
+        # Document reference (set by MainWindow)
+        self._document: Optional[DocumentStore] = None
+
+        # Editor reference — used to query rubberband preview on mouse move.
+        # Set by MainWindow after constructing the editor.
+        self._editor = None
+        # Cached preview entities from the last mouse-move callback.
+        self._preview_entities: List = []
 
     # ----------------------
     # Coordinate transforms
@@ -51,6 +79,15 @@ class CADCanvas(QWidget):
     # Event handling
     # ----------------------
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        # Left click — emit a world-space point for the active command.
+        if event.button() == Qt.LeftButton:
+            posf = event.position() if hasattr(event, "position") else event.posF()
+            world_pt = self.screen_to_world(posf)
+            self.pointSelected.emit(world_pt.x(), world_pt.y())
+            # Give the canvas focus so subsequent key events (Escape) are routed here.
+            self.setFocus()
+            return
+
         # start panning with middle mouse button
         if event.button() == Qt.MiddleButton:
             self._panning = True
@@ -67,6 +104,14 @@ class CADCanvas(QWidget):
             # be resilient if no connections
             pass
 
+        # Update rubberband preview
+        if self._editor is not None:
+            self._preview_entities = self._editor.get_dynamic(
+                Vec2(world_pt.x(), world_pt.y())
+            )
+            if self._preview_entities:
+                self.update()
+
         if self._panning:
             pos = event.pos()
             dx = pos.x() - self._last_mouse_pos.x()
@@ -81,7 +126,13 @@ class CADCanvas(QWidget):
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MiddleButton:
             self._panning = False
-            self.setCursor(Qt.OpenHandCursor)
+            self.setCursor(Qt.CrossCursor)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key_Escape:
+            self.cancelRequested.emit()
+        else:
+            super().keyPressEvent(event)
 
     def wheelEvent(self, event) -> None:  # noqa: N802
         # Zoom centered on mouse cursor
@@ -115,14 +166,76 @@ class CADCanvas(QWidget):
         # Draw grid
         self._draw_grid(painter)
 
-        # Draw example geometry in world coordinates
-        pen = QPen(QColor(220, 220, 220), max(1, 2))
-        painter.setPen(pen)
-        a = QPointF(100, 100)
-        b = QPointF(300, 300)
-        sa = self.world_to_screen(a)
-        sb = self.world_to_screen(b)
-        painter.drawLine(sa.x(), sa.y(), sb.x(), sb.y())
+        # Draw document entities
+        if self._document is not None:
+            pen = QPen(QColor(220, 220, 220), 1)
+            painter.setPen(pen)
+            for e in self._document:
+                self._draw_entity(painter, e)
+
+        # Draw dynamic / rubberband preview entities
+        if self._preview_entities:
+            preview_pen = QPen(QColor(0, 191, 255), 1)
+            painter.setPen(preview_pen)
+            for e in self._preview_entities:
+                self._draw_entity(painter, e)
+
+    def _draw_entity(self, painter: QPainter, e) -> None:
+        """Draw a single entity using the painter's current pen."""
+        try:
+            t = getattr(e, "type", "")
+            if t == "line":
+                p1 = QPointF(e.p1.x, e.p1.y)
+                p2 = QPointF(e.p2.x, e.p2.y)
+                s1 = self.world_to_screen(p1)
+                s2 = self.world_to_screen(p2)
+                painter.drawLine(s1.x(), s1.y(), s2.x(), s2.y())
+
+            elif t == "circle":
+                c = QPointF(e.center.x, e.center.y)
+                sc = self.world_to_screen(c)
+                r_px = e.radius * self.scale
+                rect = QRectF(sc.x() - r_px, sc.y() - r_px, 2 * r_px, 2 * r_px)
+                painter.drawEllipse(rect)
+
+            elif t == "rect":
+                p1 = QPointF(e.p1.x, e.p1.y)
+                p2 = QPointF(e.p2.x, e.p2.y)
+                s1 = self.world_to_screen(p1)
+                s2 = self.world_to_screen(p2)
+                left = min(s1.x(), s2.x())
+                top = min(s1.y(), s2.y())
+                w = abs(s2.x() - s1.x())
+                h = abs(s2.y() - s1.y())
+                painter.drawRect(int(left), int(top), int(w), int(h))
+
+            elif t == "polyline":
+                pts = [self.world_to_screen(QPointF(p.x, p.y)) for p in e.points]
+                if len(pts) >= 2:
+                    for i in range(len(pts) - 1):
+                        a = pts[i]
+                        b = pts[i + 1]
+                        painter.drawLine(a.x(), a.y(), b.x(), b.y())
+                    if getattr(e, "closed", False):
+                        a = pts[-1]
+                        b = pts[0]
+                        painter.drawLine(a.x(), a.y(), b.x(), b.y())
+
+            elif t == "text":
+                pos = QPointF(e.position.x, e.position.y)
+                sp = self.world_to_screen(pos)
+                painter.drawText(sp.x(), sp.y(), e.text)
+
+            elif t == "arc":
+                sc = self.world_to_screen(QPointF(e.center.x, e.center.y))
+                r_px = e.radius * self.scale
+                rect = QRectF(sc.x() - r_px, sc.y() - r_px, 2 * r_px, 2 * r_px)
+                start_deg = e.start_angle * 180.0 / pi
+                end_deg   = e.end_angle   * 180.0 / pi
+                span = (end_deg - start_deg) % 360.0 if e.ccw else -((start_deg - end_deg) % 360.0)
+                painter.drawArc(rect, int(start_deg * 16), int(span * 16))
+        except Exception:
+            import traceback; traceback.print_exc()
 
     def _draw_grid(self, painter: QPainter) -> None:
         """
