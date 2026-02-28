@@ -4,12 +4,17 @@ app.entities — drawing element models for OpenDraft.
 All concrete entity classes are exported from this package.  The helper
 ``entity_from_dict`` deserialises any raw dict (as loaded from JSON) into
 the correct typed entity object.
+
+Entity classes register themselves automatically in ``_ENTITY_REGISTRY``
+(defined in :mod:`app.entities.base`) via ``__init_subclass__``.  Importing
+the concrete entity modules below is sufficient to populate the registry —
+no manual mapping needs to be maintained here.
 """
 from __future__ import annotations
 
 from typing import Any, Dict
 
-from app.entities.base import BaseEntity, Vec2
+from app.entities.base import BaseEntity, Vec2, _ENTITY_REGISTRY
 from app.entities.line import LineEntity
 from app.entities.circle import CircleEntity
 from app.entities.arc import ArcEntity
@@ -33,26 +38,14 @@ __all__ = [
     "entity_from_dict",
 ]
 
-# ---------------------------------------------------------------------------
-# Type → class registry
-# ---------------------------------------------------------------------------
-
-_ENTITY_REGISTRY: Dict[str, type] = {
-    "line":      LineEntity,
-    "circle":    CircleEntity,
-    "arc":       ArcEntity,
-    "rect":      RectangleEntity,
-    "polyline":  PolylineEntity,
-    "text":      TextEntity,
-    "dimension": DimensionEntity,
-    "hatch":     HatchEntity,
-}
-
 
 def entity_from_dict(d: Dict[str, Any]) -> BaseEntity:
     """Deserialise a raw dict into the appropriate typed entity.
 
-    Unknown ``type`` values fall back to a bare :class:`BaseEntity`.
+    The mapping from ``type`` string to class is driven by ``_ENTITY_REGISTRY``
+    in :mod:`app.entities.base`, which is populated automatically when each
+    entity module is first imported.  Unknown ``type`` values fall back to a
+    bare :class:`BaseEntity`.
 
     Parameters
     ----------

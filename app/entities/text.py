@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional
+from typing import AbstractSet, Any, ClassVar, Dict, List, Literal, Optional
 
-from app.entities.base import BaseEntity, Vec2
+from app.entities.base import BaseEntity, BBox, Vec2
 
 HAlign = Literal["left", "center", "right"]
 VAlign = Literal["top", "middle", "bottom", "baseline"]
@@ -13,22 +13,9 @@ VAlign = Literal["top", "middle", "bottom", "baseline"]
 
 @dataclass
 class TextEntity(BaseEntity):
-    """A single-line text label placed at a world-space position.
+    """A single-line text label placed at a world-space position."""
 
-    Attributes
-    ----------
-    text:           The string content to display.
-    position:       Anchor point in world coordinates.
-    height:         Cap height of the text in world units.
-    align:          Horizontal alignment of the anchor within the text box.
-    vertical_align: Vertical alignment of the anchor within the text box.
-    justify:        Text justification (left / center / right).
-    font_family:    Font family name (e.g. ``"Arial"``).
-    font_style:     CSS-style modifier string (e.g. ``"Bold Italic"``).
-    letter_spacing: Extra letter-spacing in world units.
-    rotation:       Counter-clockwise rotation in degrees.
-    """
-
+    _entity_kind: ClassVar[str] = "text"
     type: str = field(default="text", init=False, repr=False)
     text: str = ""
     position: Vec2 = field(default_factory=Vec2)
@@ -40,6 +27,42 @@ class TextEntity(BaseEntity):
     font_style: str = ""
     letter_spacing: float = 0.0
     rotation: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Entity protocol
+    # ------------------------------------------------------------------
+
+    def bounding_box(self) -> Optional[BBox]:
+        # Approximate: width ≈ character-count × 0.6 × height
+        w = len(self.text) * 0.6 * self.height
+        h = self.height
+        px, py = self.position.x, self.position.y
+        return BBox(px, py, px + w, py + h)
+
+    def hit_test(self, pt: Vec2, tolerance: float) -> bool:
+        bb = self.bounding_box()
+        if bb is None:
+            return False
+        return (bb.min_x - tolerance <= pt.x <= bb.max_x + tolerance and
+                bb.min_y - tolerance <= pt.y <= bb.max_y + tolerance)
+
+    def snap_candidates(self, enabled: AbstractSet) -> List:
+        return []   # text has no geometric snap points
+
+    def nearest_snap(self, cursor: Vec2) -> Optional[object]:
+        return None
+
+    def perp_snaps(self, from_pt: Vec2) -> List:
+        return []
+
+    def draw(self, painter, world_to_screen, scale: float) -> None:
+        from PySide6.QtCore import QPointF
+        sp = world_to_screen(QPointF(self.position.x, self.position.y))
+        painter.drawText(sp.x(), sp.y(), self.text)
+
+    # ------------------------------------------------------------------
+    # Serialisation
+    # ------------------------------------------------------------------
 
     def to_dict(self) -> Dict[str, Any]:
         d = self._base_dict()

@@ -17,6 +17,27 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 _ICONS_DIR = os.path.join(_PROJECT_ROOT, "assets", "icons")
 
 
+def load_pixmap(name: str, size: int) -> Optional[QPixmap]:
+    """Return a :class:`QPixmap` for *name* at *size* pixels, or ``None``.
+
+    Tries ``<name>.svg`` first, then ``<name>.png``.  Does **not** create
+    any widget — use this instead of ``Icon(name, size).pixmap()`` when you
+    only need the pixmap (e.g. for setting a ``QToolButton`` icon).
+
+    Args:
+        name: Icon filename without extension (e.g. ``'file_new'``).
+        size: Desired icon size in pixels (minimum 16).
+    """
+    icon_size = max(16, int(size))
+    svg_path = os.path.join(_ICONS_DIR, f"{name}.svg")
+    png_path = os.path.join(_ICONS_DIR, f"{name}.png")
+    if os.path.exists(svg_path):
+        return QIcon(svg_path).pixmap(QSize(icon_size, icon_size))
+    if os.path.exists(png_path):
+        return QPixmap(png_path).scaled(icon_size, icon_size)
+    return None
+
+
 class Icon(QLabel):
     """
     A QLabel that displays an icon from the project's assets/icons folder.
@@ -47,4 +68,4 @@ class Icon(QLabel):
             self.setPixmap(pixmap.scaled(icon_size, icon_size))
         else:
             self.setText("?")
-            self.setStyleSheet("color: #888; font-size: 16px;")
+            self.setStyleSheet("color: #888; font-size: 12pt;")

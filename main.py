@@ -4,12 +4,17 @@ OpenDraft — entry point.
 Initialises the Qt application, loads the stylesheet, and shows the main window.
 """
 import sys
+from pathlib import Path
 
 from typing import Optional, Sequence
 
 from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
+
+# Absolute path to the stylesheet — resolved relative to *this* file so the
+# app works regardless of the current working directory at launch time.
+_QSS_PATH = Path(__file__).parent / "assets" / "themes" / "ribbon.qss"
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -22,8 +27,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     app = QApplication(argv)
 
     try:
-        with open("assets/themes/ribbon.qss", "r") as f:
-            app.setStyleSheet(f.read())
+        app.setStyleSheet(_QSS_PATH.read_text(encoding="utf-8"))
     except Exception as e:
         print(f"Could not load stylesheet: {e}")
 

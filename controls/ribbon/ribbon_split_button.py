@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QM
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt, QSize
 
-from controls.icon_widget import Icon
+from controls.icon_widget import Icon, load_pixmap
 from controls.ribbon.ribbon_constants import SIZE, Styles, ButtonSize, IconSize, COLORS
 
 
@@ -74,8 +74,7 @@ class RibbonSplitButton(QWidget):
             icon_obj = None
             if icon_path:
                 icon_name = os.path.splitext(os.path.basename(icon_path))[0]
-                icon_widget = Icon(icon_name, size=IconSize.MENU.value)
-                pix = icon_widget.pixmap()
+                pix = load_pixmap(icon_name, IconSize.MENU.value)
                 if pix and not pix.isNull():
                     icon_obj = QIcon(pix)
             action = menu.addAction(icon_obj if icon_obj else QIcon(), item["label"])
@@ -151,7 +150,7 @@ class RibbonSplitButton(QWidget):
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         if main_icon:
             icon_name = os.path.splitext(os.path.basename(main_icon))[0]
-            pix = Icon(icon_name, size=IconSize.SMALL.value).pixmap()
+            pix = load_pixmap(icon_name, IconSize.SMALL.value)
             if pix and not pix.isNull():
                 btn.setIcon(QIcon(pix))
         btn.setIconSize(QSize(IconSize.SMALL.value, IconSize.SMALL.value))
@@ -184,7 +183,7 @@ class RibbonSplitButton(QWidget):
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         if main_icon:
             icon_name = os.path.splitext(os.path.basename(main_icon))[0]
-            pix = Icon(icon_name, size=IconSize.LARGE.value).pixmap()
+            pix = load_pixmap(icon_name, IconSize.LARGE.value)
             if pix and not pix.isNull():
                 btn.setIcon(QIcon(pix))
         btn.setIconSize(QSize(IconSize.LARGE.value, IconSize.LARGE.value))

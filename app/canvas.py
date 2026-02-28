@@ -5,16 +5,40 @@ Provides basic pan/zoom, screen<->world transforms and a smooth adaptive grid
 that fades between density levels as you zoom, giving a continuous sense of
 scale rather than snapping between states.
 """
-from math import log10, floor, ceil, pi
+from math import log10, floor, ceil
 
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QPen, QColor, QPolygonF
+from PySide6.QtGui import QPainter, QPen, QColor, QPolygonF, QBrush
 from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal, Slot
+
+
+# ---------------------------------------------------------------------------
+# Line-style helper
+# ---------------------------------------------------------------------------
+_LINE_STYLE_MAP = {
+    "solid":      Qt.SolidLine,
+    "dashed":     Qt.DashLine,
+    "dotted":     Qt.DotLine,
+    "dashdot":    Qt.DashDotLine,
+    "dashdotdot": Qt.DashDotDotLine,
+    "center":     Qt.DashLine,       # closest Qt equivalent
+    "phantom":    Qt.DashDotDotLine,
+    "hidden":     Qt.DashLine,
+}
+
+
+def _line_style_to_qt(style: str) -> Qt.PenStyle:
+    return _LINE_STYLE_MAP.get(style.lower(), Qt.SolidLine)
 from typing import List, Optional
 
 from app.document import DocumentStore
 from app.entities import Vec2
 from app.editor.osnap_engine import OsnapEngine, SnapResult, SnapType
+from app.editor.hit_testing import (
+    hit_test_point,
+    entity_inside_rect,
+    entity_crosses_rect,
+)
 
 
 class CADCanvas(QWidget):
@@ -35,13 +59,25 @@ class CADCanvas(QWidget):
             self._preview_entities = []
         self.update()
 
-    def __init__(self, parent: QWidget = None):
+    def __init__(
+        self,
+        document: Optional[DocumentStore] = None,
+        editor=None,
+        parent: QWidget = None,
+    ):
         super().__init__(parent)
         self.setMinimumSize(800, 600)
 
         # View transform state
         self.scale = 1.0  # pixels per world unit
         self.offset = QPointF(0.0, 0.0)  # world coordinates at screen (0,0)
+        # Origin anchoring: keep world (0,0) mapped to a screen corner
+        # by default place origin at bottom-left with a small inset.
+        self._origin_anchor: str = "bottom-left"  # one of: top-left, top-right, bottom-left, bottom-right
+        self._origin_inset_px: QPointF = QPointF(10.0, 10.0)  # (x inset, y inset) in screen pixels
+        self._origin_locked: bool = True  # when True, resize keeps the anchor
+        # Initialise offset so world (0,0) appears at the chosen corner/inset
+        self._update_offset_for_origin()
 
         # Interaction state
         self._panning = False
@@ -56,12 +92,10 @@ class CADCanvas(QWidget):
         # Accept keyboard focus so key-press events (Escape, etc.) are received
         self.setFocusPolicy(Qt.StrongFocus)
 
-        # Document reference (set by MainWindow)
-        self._document: Optional[DocumentStore] = None
-
-        # Editor reference — used to query rubberband preview on mouse move.
-        # Set by MainWindow after constructing the editor.
-        self._editor = None
+        # Document and editor — injected via constructor (preferred) or set
+        # via the public properties below.
+        self._document: Optional[DocumentStore] = document
+        self._editor = editor
         # Cached preview entities from the last mouse-move callback.
         self._preview_entities: List = []
 
@@ -69,6 +103,24 @@ class CADCanvas(QWidget):
         self._osnap: OsnapEngine = OsnapEngine()
         # Last computed snap result (None when no snap is within aperture).
         self._snap_result: Optional[SnapResult] = None
+
+        # ---- Selection state ------------------------------------------------
+        # Pixel threshold for click-to-select hit testing.
+        self._pick_tolerance_px: float = 7.0
+        # True while the user is dragging a selection rectangle.
+        self._sel_dragging: bool = False
+        # Screen-space anchor for selection rectangle (where left-button was pressed).
+        self._sel_origin_screen: Optional[QPointF] = None
+        # Current screen-space mouse position during a selection drag.
+        self._sel_current_screen: Optional[QPointF] = None
+        # World-space origin of the selection rectangle.
+        self._sel_origin_world: Optional[Vec2] = None
+        # Minimum pixel drag distance before starting a rectangle selection.
+        self._sel_drag_threshold: float = 4.0
+
+        # ---- Hover state ---------------------------------------------------
+        # Entity id currently under the cursor (None when nothing is hovered).
+        self._hovered_entity_id: Optional[str] = None
 
     # ----------------------
     # Coordinate transforms
@@ -81,21 +133,76 @@ class CADCanvas(QWidget):
         # Inverted Y: convert world y to screen y by subtracting from offset
         return QPointF((pt.x() - self.offset.x()) * self.scale, (self.offset.y() - pt.y()) * self.scale)
 
+    def set_origin_anchor(self, anchor: str = "bottom-left", inset_x_px: float = 0.0, inset_y_px: float = 0.0, lock: bool = True) -> None:
+        """Set where the world-origin (0,0) is mapped on the widget.
+
+        anchor: one of 'top-left', 'top-right', 'bottom-left', 'bottom-right'
+        inset_x_px / inset_y_px: pixel inset from the chosen edges
+        lock: when True, the anchor is preserved across widget resizes
+        """
+        anchor = anchor.lower()
+        if anchor not in ("top-left", "top-right", "bottom-left", "bottom-right"):
+            raise ValueError("invalid anchor")
+        self._origin_anchor = anchor
+        self._origin_inset_px = QPointF(float(inset_x_px), float(inset_y_px))
+        self._origin_locked = bool(lock)
+        self._update_offset_for_origin()
+
+    def _update_offset_for_origin(self) -> None:
+        """Recompute `self.offset` (world coords at screen (0,0)) from the
+        current anchor/inset, widget size and scale.
+        """
+        w_px, h_px = self.width(), self.height()
+        ix = self._origin_inset_px.x()
+        iy = self._origin_inset_px.y()
+        # X offset (world coordinate that maps to screen x==0).
+        # We choose offset so world x==0 maps to the requested screen x inset:
+        #   world_to_screen.x(0) == inset_x_px  =>  (0 - offset.x) * scale == inset_x_px
+        # hence offset.x = -inset_x_px / scale for left anchor. For right anchor
+        # world x==0 should map to (widget_width - inset_x_px).
+        if self._origin_anchor.endswith("-left"):
+            ox = -ix / max(self.scale, 1e-12)
+        else:
+            ox = -(w_px - ix) / max(self.scale, 1e-12)
+        # Y offset (world coordinate that maps to screen y==0)
+        if self._origin_anchor.startswith("top-"):
+            oy = iy / max(self.scale, 1e-12)
+        else:
+            # anchor on bottom: world y that maps to screen y==0 is (widget_height - inset)/scale
+            oy = (h_px - iy) / max(self.scale, 1e-12)
+        self.offset = QPointF(ox, oy)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if getattr(self, "_origin_locked", False):
+            self._update_offset_for_origin()
+
     # ----------------------
     # Event handling
     # ----------------------
+    @property
+    def _idle(self) -> bool:
+        """True when no command is running and the editor is not waiting for input."""
+        return self._editor is None or not self._editor.is_running
+
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        # Left click — emit a world-space point for the active command.
         if event.button() == Qt.LeftButton:
             posf = event.position() if hasattr(event, "position") else event.posF()
             world_pt = self.screen_to_world(posf)
-            # If a snap candidate is active, use it instead of the raw cursor.
-            if self._snap_result is not None:
-                pt = self._snap_result.point
-                self.pointSelected.emit(pt.x, pt.y)
+
+            if self._idle:
+                # ---- Selection mode ----
+                self._sel_origin_screen = QPointF(posf)
+                self._sel_current_screen = QPointF(posf)
+                self._sel_origin_world = Vec2(world_pt.x(), world_pt.y())
+                self._sel_dragging = False  # will become True after threshold
             else:
-                self.pointSelected.emit(world_pt.x(), world_pt.y())
-            # Give the canvas focus so subsequent key events (Escape) are routed here.
+                # ---- Command mode — emit world point for the active command ----
+                if self._snap_result is not None:
+                    pt = self._snap_result.point
+                    self.pointSelected.emit(pt.x, pt.y)
+                else:
+                    self.pointSelected.emit(world_pt.x(), world_pt.y())
             self.setFocus()
             return
 
@@ -110,6 +217,16 @@ class CADCanvas(QWidget):
         world_pt = self.screen_to_world(posf)
         raw = Vec2(world_pt.x(), world_pt.y())
 
+        # ---- Selection rectangle drag tracking ----------------------------
+        if self._sel_origin_screen is not None and not self._panning:
+            self._sel_current_screen = QPointF(posf)
+            dx = posf.x() - self._sel_origin_screen.x()
+            dy = posf.y() - self._sel_origin_screen.y()
+            if not self._sel_dragging and (dx * dx + dy * dy) > self._sel_drag_threshold ** 2:
+                self._sel_dragging = True
+            if self._sel_dragging:
+                self.update()
+
         # ---- OSNAP --------------------------------------------------------
         # Only run snap when the editor is expecting a point input.
         snap_active = (
@@ -119,7 +236,7 @@ class CADCanvas(QWidget):
         )
         if snap_active:
             self._snap_result = self._osnap.snap(
-                raw, self._document, self.scale,
+                raw, self._document.entities, self.scale,
                 from_point=getattr(self._editor, "snap_from_point", None),
             )
         else:
@@ -137,6 +254,24 @@ class CADCanvas(QWidget):
             preview_pt = self._snap_result.point if self._snap_result else raw
             self._preview_entities = self._editor.get_dynamic(preview_pt)
 
+        # ---- Hover hit-test (idle mode only) --------------------------------
+        if self._idle and self._document is not None and not self._sel_dragging:
+            tolerance = self._pick_tolerance_px / self.scale
+            new_hover: Optional[str] = None
+            for e in self._document:
+                lyr = self._document.get_layer(e.layer)
+                if lyr is not None and not lyr.visible:
+                    continue
+                if hit_test_point(e, raw, tolerance):
+                    new_hover = e.id
+                    break
+            if new_hover != self._hovered_entity_id:
+                self._hovered_entity_id = new_hover
+        elif not self._idle:
+            # Clear hover while a command is running
+            if self._hovered_entity_id is not None:
+                self._hovered_entity_id = None
+
         self.update()
 
         if self._panning:
@@ -151,15 +286,116 @@ class CADCanvas(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self._sel_origin_screen is not None:
+            posf = event.position() if hasattr(event, "position") else event.posF()
+            shift = bool(event.modifiers() & Qt.ShiftModifier)
+            self._finish_selection(posf, shift)
+            # Reset selection drag state
+            self._sel_origin_screen = None
+            self._sel_current_screen = None
+            self._sel_origin_world = None
+            self._sel_dragging = False
+            self.update()
+
         if event.button() == Qt.MiddleButton:
             self._panning = False
             self.setCursor(Qt.CrossCursor)
 
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        """Clear hover highlight when the cursor leaves the canvas."""
+        if self._hovered_entity_id is not None:
+            self._hovered_entity_id = None
+            self.update()
+
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key_Escape:
-            self.cancelRequested.emit()
+            if self._idle:
+                # No command running: clear selection (and hover)
+                changed = False
+                if self._editor is not None and self._editor.selection:
+                    self._editor.selection.clear()
+                    changed = True
+                if self._hovered_entity_id is not None:
+                    self._hovered_entity_id = None
+                    changed = True
+                if changed:
+                    self.update()
+                # Always emit so any other idle-mode handlers can react
+                self.cancelRequested.emit()
+            else:
+                # Command is active: cancel the command but leave selection intact
+                self.cancelRequested.emit()
         else:
             super().keyPressEvent(event)
+
+    # ----------------------------------------------------------------
+    # Selection logic
+    # ----------------------------------------------------------------
+
+    def _finish_selection(self, release_pos: QPointF, shift: bool) -> None:
+        """Process a completed left-button click or drag for selection.
+
+        Called from ``mouseReleaseEvent`` when in idle (no command) mode.
+        """
+        if self._editor is None or self._document is None:
+            return
+
+        selection = self._editor.selection
+
+        if self._sel_dragging:
+            # ---- Rectangle selection ----------------------------------
+            origin_world = self._sel_origin_world
+            end_world_qpt = self.screen_to_world(release_pos)
+            end_world = Vec2(end_world_qpt.x(), end_world_qpt.y())
+
+            # Normalise the rectangle
+            rmin = Vec2(min(origin_world.x, end_world.x),
+                        min(origin_world.y, end_world.y))
+            rmax = Vec2(max(origin_world.x, end_world.x),
+                        max(origin_world.y, end_world.y))
+
+            # Direction determines mode:
+            # screen-space left→right  ⇒  window  (fully inside)
+            # screen-space right→left  ⇒  crossing (intersects)
+            is_window = release_pos.x() >= self._sel_origin_screen.x()
+
+            matched_ids = set()
+            for e in self._document:
+                layer = self._document.get_layer(e.layer)
+                if layer is not None and not layer.visible:
+                    continue
+                if is_window:
+                    if entity_inside_rect(e, rmin, rmax):
+                        matched_ids.add(e.id)
+                else:
+                    if entity_crosses_rect(e, rmin, rmax):
+                        matched_ids.add(e.id)
+
+            if shift:
+                selection.subtract(matched_ids)
+            else:
+                selection.extend(matched_ids)
+        else:
+            # ---- Point (click) selection --------------------------------
+            click_world_qpt = self.screen_to_world(release_pos)
+            click_world = Vec2(click_world_qpt.x(), click_world_qpt.y())
+            tolerance = self._pick_tolerance_px / self.scale
+
+            hit = None
+            for e in self._document:
+                layer = self._document.get_layer(e.layer)
+                if layer is not None and not layer.visible:
+                    continue
+                if hit_test_point(e, click_world, tolerance):
+                    hit = e
+                    break  # first hit wins (topmost in draw order)
+
+            if hit is not None:
+                if shift:
+                    selection.remove(hit.id)
+                else:
+                    selection.add(hit.id)
+            # Clicking in empty space does nothing (per requirements).
 
     def wheelEvent(self, event) -> None:  # noqa: N802
         # Zoom centered on mouse cursor
@@ -193,11 +429,61 @@ class CADCanvas(QWidget):
         # Draw grid
         self._draw_grid(painter)
 
-        # Draw document entities
+        # Draw document entities — layer-aware pen per entity
+        sel_ids   = self._editor.selection.ids if self._editor is not None else set()
+        hover_id  = self._hovered_entity_id
         if self._document is not None:
-            pen = QPen(QColor(220, 220, 220), 1)
-            painter.setPen(pen)
+            # Compute viewport world bounds once for frustum culling.
+            w_px, h_px = self.width(), self.height()
+            tl = self.screen_to_world(QPointF(0, 0))
+            br = self.screen_to_world(QPointF(w_px, h_px))
+            vp_min_x = min(tl.x(), br.x())
+            vp_min_y = min(tl.y(), br.y())
+            vp_max_x = max(tl.x(), br.x())
+            vp_max_y = max(tl.y(), br.y())
+
             for e in self._document:
+                layer = self._document.get_layer(e.layer)
+                # Skip entities whose layer is hidden
+                if layer is not None and not layer.visible:
+                    continue
+                # Frustum cull: skip entities whose bounding box is entirely
+                # outside the viewport.  Entities with no bounding box (unknown
+                # types) are always drawn as a safe fallback.
+                bb = e.bounding_box()
+                if bb is not None and not bb.intersects_viewport(
+                    vp_min_x, vp_min_y, vp_max_x, vp_max_y
+                ):
+                    continue
+                # Resolve pen — priority: hover > selected > normal
+                is_sel   = e.id in sel_ids
+                is_hover = e.id == hover_id
+                if is_hover and is_sel:
+                    # Hovered + selected: solid bright blue
+                    color     = QColor(80, 180, 255)
+                    thickness = 2.0
+                    style     = Qt.SolidLine
+                elif is_hover:
+                    # Hovered only: amber/gold highlight
+                    color     = QColor(255, 200, 0)
+                    thickness = 2.0
+                    style     = Qt.SolidLine
+                elif is_sel:
+                    # Selected only: bright blue dashed
+                    color     = QColor(0, 150, 255)
+                    thickness = 2.0
+                    style     = Qt.DashLine
+                elif layer is not None:
+                    color     = QColor(layer.color)
+                    thickness = layer.thickness
+                    style     = _line_style_to_qt(layer.line_style)
+                else:
+                    color     = QColor(220, 220, 220)
+                    thickness = 1.0
+                    style     = Qt.SolidLine
+                pen = QPen(color, thickness)
+                pen.setStyle(style)
+                painter.setPen(pen)
                 self._draw_entity(painter, e)
 
         # Draw dynamic / rubberband preview entities
@@ -210,6 +496,10 @@ class CADCanvas(QWidget):
         # Draw OSNAP marker
         if self._snap_result is not None:
             self._draw_snap_marker(painter, self._snap_result)
+
+        # Draw selection rectangle overlay
+        if self._sel_dragging and self._sel_origin_screen is not None and self._sel_current_screen is not None:
+            self._draw_selection_rect(painter)
 
     def _draw_snap_marker(self, painter: QPainter, snap: SnapResult) -> None:
         """Draw the OSNAP marker at the snap point in screen coordinates.
@@ -260,11 +550,9 @@ class CADCanvas(QWidget):
             painter.drawPolygon(diamond)
 
         elif t == SnapType.INTERSECTION:
-            # X with a bounding square cap (nearest style from web)
+            # X symbol: two diagonal crossing lines (classic CAD intersection marker)
             painter.drawLine(QPointF(sx - S, sy - S), QPointF(sx + S, sy + S))
             painter.drawLine(QPointF(sx + S, sy - S), QPointF(sx - S, sy + S))
-            painter.drawLine(QPointF(sx - S, sy - S), QPointF(sx + S, sy - S))
-            painter.drawLine(QPointF(sx - S, sy + S), QPointF(sx + S, sy + S))
 
         elif t == SnapType.PERPENDICULAR:
             # Two L-shapes (matches web version exactly): top-right + bottom-left corners
@@ -284,60 +572,47 @@ class CADCanvas(QWidget):
 
         painter.restore()
 
+    def _draw_selection_rect(self, painter: QPainter) -> None:
+        """Draw the selection rectangle overlay in screen coordinates.
+
+        **Window** (left→right): solid blue border, semi-transparent blue fill.
+        **Crossing** (right→left): dashed green border, semi-transparent green fill.
+        Matches the standard AutoCAD colour convention.
+        """
+        ox, oy = self._sel_origin_screen.x(), self._sel_origin_screen.y()
+        cx, cy = self._sel_current_screen.x(), self._sel_current_screen.y()
+
+        is_window = cx >= ox  # left-to-right ⇒ window
+
+        left   = min(ox, cx)
+        top    = min(oy, cy)
+        width  = abs(cx - ox)
+        height = abs(cy - oy)
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+
+        if is_window:
+            # Window: solid blue border + translucent blue fill
+            border_color = QColor(0, 120, 215)
+            fill_color   = QColor(0, 120, 215, 40)
+            pen = QPen(border_color, 1, Qt.SolidLine)
+        else:
+            # Crossing: dashed green border + translucent green fill
+            border_color = QColor(0, 200, 80)
+            fill_color   = QColor(0, 200, 80, 40)
+            pen = QPen(border_color, 1, Qt.DashLine)
+
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(fill_color))
+        painter.drawRect(QRectF(left, top, width, height))
+        painter.restore()
+
     def _draw_entity(self, painter: QPainter, e) -> None:
         """Draw a single entity using the painter's current pen."""
         try:
-            t = getattr(e, "type", "")
-            if t == "line":
-                p1 = QPointF(e.p1.x, e.p1.y)
-                p2 = QPointF(e.p2.x, e.p2.y)
-                s1 = self.world_to_screen(p1)
-                s2 = self.world_to_screen(p2)
-                painter.drawLine(s1.x(), s1.y(), s2.x(), s2.y())
-
-            elif t == "circle":
-                c = QPointF(e.center.x, e.center.y)
-                sc = self.world_to_screen(c)
-                r_px = e.radius * self.scale
-                rect = QRectF(sc.x() - r_px, sc.y() - r_px, 2 * r_px, 2 * r_px)
-                painter.drawEllipse(rect)
-
-            elif t == "rect":
-                p1 = QPointF(e.p1.x, e.p1.y)
-                p2 = QPointF(e.p2.x, e.p2.y)
-                s1 = self.world_to_screen(p1)
-                s2 = self.world_to_screen(p2)
-                left = min(s1.x(), s2.x())
-                top = min(s1.y(), s2.y())
-                w = abs(s2.x() - s1.x())
-                h = abs(s2.y() - s1.y())
-                painter.drawRect(int(left), int(top), int(w), int(h))
-
-            elif t == "polyline":
-                pts = [self.world_to_screen(QPointF(p.x, p.y)) for p in e.points]
-                if len(pts) >= 2:
-                    for i in range(len(pts) - 1):
-                        a = pts[i]
-                        b = pts[i + 1]
-                        painter.drawLine(a.x(), a.y(), b.x(), b.y())
-                    if getattr(e, "closed", False):
-                        a = pts[-1]
-                        b = pts[0]
-                        painter.drawLine(a.x(), a.y(), b.x(), b.y())
-
-            elif t == "text":
-                pos = QPointF(e.position.x, e.position.y)
-                sp = self.world_to_screen(pos)
-                painter.drawText(sp.x(), sp.y(), e.text)
-
-            elif t == "arc":
-                sc = self.world_to_screen(QPointF(e.center.x, e.center.y))
-                r_px = e.radius * self.scale
-                rect = QRectF(sc.x() - r_px, sc.y() - r_px, 2 * r_px, 2 * r_px)
-                start_deg = e.start_angle * 180.0 / pi
-                end_deg   = e.end_angle   * 180.0 / pi
-                span = (end_deg - start_deg) % 360.0 if e.ccw else -((start_deg - end_deg) % 360.0)
-                painter.drawArc(rect, int(start_deg * 16), int(span * 16))
+            e.draw(painter, self.world_to_screen, self.scale)
         except Exception:
             import traceback; traceback.print_exc()
 

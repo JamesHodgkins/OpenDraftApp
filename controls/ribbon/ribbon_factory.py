@@ -8,7 +8,7 @@ from typing import Callable, Optional, List, Dict, Any
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QSizePolicy, QToolButton,
+    QLabel, QSizePolicy, QToolButton, QComboBox,
 )
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
@@ -16,9 +16,21 @@ from PySide6.QtGui import QIcon
 from controls.ribbon.ribbon_constants import (
     ButtonType, ButtonSize, IconSize, SIZE, Styles, MARGINS,
 )
-from controls.ribbon.ribbon_models import ToolDefinition, SplitButtonDefinition, StackDefinition
+from controls.ribbon.ribbon_models import (
+    ToolDefinition, SplitButtonDefinition, StackDefinition,
+    LayerSelectDefinition, PropStackDefinition,
+)
 from controls.ribbon.ribbon_split_button import RibbonSplitButton
-from controls.icon_widget import Icon
+from controls.icon_widget import Icon, load_pixmap
+
+
+_PROP_LABEL_STYLE = "color: #999; font-size: 8pt; padding: 0;"
+# Maps PropStackRow.label → QWidget objectName used by RibbonPanel.setup_document()
+_PROP_OBJ_NAMES: dict[str, str] = {
+    "Color": "colorSwatchBtn",
+    "Style": "lineStyleCombo",
+    "Weight": "thicknessCombo",
+}
 
 
 class ButtonFactory:
@@ -48,6 +60,10 @@ class ButtonFactory:
             return self._create_split_button(tool, large=False)
         elif bt == ButtonType.STACK.value:
             return self._create_stack(tool)
+        elif bt == ButtonType.LAYER_SELECT.value:
+            return self._create_layer_select(tool)
+        elif bt == ButtonType.PROP_STACK.value:
+            return self._create_prop_stack(tool)
         else:
             return self._create_large_button(tool)
 
@@ -65,7 +81,7 @@ class ButtonFactory:
         icon_label.setAlignment(Qt.AlignCenter)
         icon_label.setFixedSize(SIZE.LARGE_ICON_LABEL_SIZE, SIZE.LARGE_ICON_LABEL_SIZE)
         if tool.icon:
-            pix = Icon(tool.icon, size=SIZE.LARGE_ICON_SIZE).pixmap()
+            pix = load_pixmap(tool.icon, SIZE.LARGE_ICON_SIZE)
             if pix and not pix.isNull():
                 icon_label.setPixmap(pix)
             else:
@@ -75,7 +91,7 @@ class ButtonFactory:
         text_label = QLabel(tool.label)
         text_label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         text_label.setStyleSheet(
-            f"font-size: {Styles.FONT_SIZE_SMALL}px; "
+            f"font-size: {Styles.FONT_SIZE_SMALL}pt; "
             "color: #eee; margin-top: 0px; margin-bottom: 0px;"
         )
         vbox.addWidget(text_label, alignment=Qt.AlignHCenter)
@@ -98,7 +114,7 @@ class ButtonFactory:
         btn = QPushButton()
         btn.setText(tool.label)
         if tool.icon:
-            pix = Icon(tool.icon, size=SIZE.SMALL_ICON_SIZE).pixmap()
+            pix = load_pixmap(tool.icon, SIZE.SMALL_ICON_SIZE)
             if pix and not pix.isNull():
                 btn.setIcon(QIcon(pix))
                 btn.setIconSize(QSize(SIZE.SMALL_ICON_SIZE, SIZE.SMALL_ICON_SIZE))
@@ -150,14 +166,8 @@ class ButtonFactory:
             col_layout = QVBoxLayout()
             col_layout.setSpacing(SIZE.STACK_SPACING)
             col_layout.setContentsMargins(*MARGINS.NONE)
-            for btn_def in column:
-                temp = ToolDefinition(
-                    label=btn_def["label"],
-                    type=btn_def.get("type", "small"),
-                    icon=btn_def.get("icon"),
-                    action=btn_def.get("action"),
-                )
-                col_layout.addWidget(self._create_small_button(temp), alignment=Qt.AlignLeft)
+            for btn_def in column:  # btn_def is now a ToolDefinition
+                col_layout.addWidget(self._create_small_button(btn_def), alignment=Qt.AlignLeft)
             col_layout.addStretch()
             col_widget.setLayout(col_layout)
             stack_layout.addWidget(col_widget)
@@ -165,10 +175,91 @@ class ButtonFactory:
         stack_widget.setLayout(stack_layout)
         return stack_widget
 
+    def _create_layer_select(self, tool: ToolDefinition) -> QWidget:
+        """Build a labeled layer-selection combo.
+
+        Sets ``objectName='layerSelectCombo'`` on the inner :class:`QComboBox`
+        so that :meth:`RibbonPanel.setup_document` can locate and wire it.
+        """
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(2, 2, 2, 2)
+        vbox.setSpacing(2)
+
+        lbl = QLabel(tool.label or "Layer")
+        lbl.setStyleSheet(_PROP_LABEL_STYLE)
+        lbl.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        vbox.addWidget(lbl)
+
+        combo = QComboBox()
+        combo.setObjectName("layerSelectCombo")
+        combo.setFixedWidth(130)
+        combo.setFixedHeight(22)
+        combo.setStyleSheet(Styles.combo_style())
+        combo.setMaxVisibleItems(12)
+        vbox.addWidget(combo)
+        vbox.addStretch()
+        return container
+
+    def _create_prop_stack(self, tool: ToolDefinition) -> QWidget:
+        """Build a vertical stack of property-override controls.
+
+        Object names assigned (for :meth:`RibbonPanel.setup_document`):
+            ``colorSwatchBtn``, ``lineStyleCombo``, ``thicknessCombo``.
+        """
+        if not isinstance(tool, PropStackDefinition):
+            raise ValueError("Prop stack requires PropStackDefinition")
+
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(2, 2, 2, 4)
+        vbox.setSpacing(3)
+
+        for row in tool.rows:
+            obj_name = _PROP_OBJ_NAMES.get(row.label, "")
+
+            row_w = QWidget()
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(0, 0, 0, 0)
+            row_h.setSpacing(3)
+
+            lbl = QLabel(row.label)
+            lbl.setStyleSheet(_PROP_LABEL_STYLE)
+            lbl.setFixedWidth(38)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row_h.addWidget(lbl)
+
+            if row.type == "color-swatch":
+                btn = QPushButton()
+                btn.setObjectName(obj_name)
+                btn.setFixedSize(22, 22)
+                btn.setStyleSheet(
+                    "QPushButton { background: #ffffff; border: 1px solid #666; border-radius: 2px; }"
+                    "QPushButton:hover { border-color: #aaa; }"
+                )
+                btn.setToolTip("Override colour (click to change, blank = use layer colour)")
+                row_h.addWidget(btn)
+                row_h.addStretch()
+            else:
+                combo = QComboBox()
+                combo.setObjectName(obj_name)
+                combo.addItem("\u2014 by layer \u2014")
+                for opt in row.options:
+                    combo.addItem(opt)
+                combo.setFixedHeight(22)
+                combo.setFixedWidth(110)
+                combo.setStyleSheet(Styles.combo_style())
+                row_h.addWidget(combo)
+
+            vbox.addWidget(row_w)
+
+        vbox.addStretch()
+        return container
+
     @staticmethod
     def _set_placeholder_icon(label: QLabel) -> None:
         label.setText("?")
-        label.setStyleSheet("color: #888; font-size: 18px;")
+        label.setStyleSheet("color: #888; font-size: 13pt;")
 
 
 class PanelFactory:

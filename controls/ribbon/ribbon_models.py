@@ -57,6 +57,10 @@ class ToolDefinition:
             return SelectDefinition.from_dict(data)
         elif tool_type == ButtonType.COLOR_PICKER.value:
             return ColorPickerDefinition.from_dict(data)
+        elif tool_type == ButtonType.LAYER_SELECT.value:
+            return LayerSelectDefinition.from_dict(data)
+        elif tool_type == ButtonType.PROP_STACK.value:
+            return PropStackDefinition.from_dict(data)
         else:
             return cls(
                 label=data["label"],
@@ -93,14 +97,17 @@ class SplitButtonDefinition(ToolDefinition):
 @dataclass
 class StackDefinition(ToolDefinition):
     """Definition for a stacked group of buttons."""
-    columns: List[List[Dict[str, Any]]] = field(default_factory=list)
+    columns: List[List["ToolDefinition"]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StackDefinition":
         return cls(
             label=data.get("label", ""),
             type=ButtonType.STACK.value,
-            columns=data.get("columns", []),
+            columns=[
+                [ToolDefinition.from_dict(btn) for btn in col]
+                for col in data.get("columns", [])
+            ],
         )
 
 
@@ -131,6 +138,48 @@ class ColorPickerDefinition(ToolDefinition):
             label=data["label"],
             type=ButtonType.COLOR_PICKER.value,
             source=data.get("source"),
+        )
+
+
+@dataclass
+class LayerSelectDefinition(ToolDefinition):
+    """Definition for the layer-selection combo control."""
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LayerSelectDefinition":
+        return cls(
+            label=data.get("label", "Layer"),
+            type=ButtonType.LAYER_SELECT.value,
+        )
+
+
+@dataclass
+class PropStackRowDefinition:
+    """A single row in a prop-stack control (colour, line-style, weight)."""
+    label: str
+    type: str  # "color-swatch" | "select"
+    options: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PropStackRowDefinition":
+        return cls(
+            label=data["label"],
+            type=data.get("type", "select"),
+            options=data.get("options", []),
+        )
+
+
+@dataclass
+class PropStackDefinition(ToolDefinition):
+    """Definition for a vertical stack of property-override controls."""
+    rows: List[PropStackRowDefinition] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PropStackDefinition":
+        return cls(
+            label=data.get("label", ""),
+            type=ButtonType.PROP_STACK.value,
+            rows=[PropStackRowDefinition.from_dict(r) for r in data.get("rows", [])],
         )
 
 

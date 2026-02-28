@@ -10,5 +10,9 @@
         "cwd": "${workspaceFolder}"
       }
     ]
+  },
+  "chat.tools.terminal.autoApprove": {
+    "&": true,
+    ".\\.venv\\Scripts\\python.exe": true
   }
 }

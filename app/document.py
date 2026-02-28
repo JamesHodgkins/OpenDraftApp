@@ -24,9 +24,20 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
+
+from PySide6.QtCore import QObject, Signal as _Signal
 
 from app.entities import BaseEntity, entity_from_dict
+
+
+# ---------------------------------------------------------------------------
+# Qt change notifier
+# ---------------------------------------------------------------------------
+
+class _DocumentNotifier(QObject):
+    """Minimal QObject companion so DocumentStore can emit a proper Qt signal."""
+    changed = _Signal()
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +112,36 @@ class DocumentStore:
     active_line_style: Optional[str] = None
     active_thickness: Optional[float] = None
 
+    # Qt-based change notifier — provides a proper Signal instead of bare callbacks.
+    # ``field(...)`` keeps it out of ``__init__``, ``__repr__``, equality, and JSON.
+    _notifier: _DocumentNotifier = field(
+        default_factory=_DocumentNotifier, init=False, repr=False, compare=False
+    )
+
+    # ------------------------------------------------------------------
+    # Change notification
+    # ------------------------------------------------------------------
+
+    def add_change_listener(self, fn: Callable[[], None]) -> None:
+        """Register *fn* to be called (no arguments) on any document mutation.
+
+        Internally connects *fn* to the ``_DocumentNotifier.changed`` Qt signal,
+        so callers that need thread-safe delivery should wrap *fn* in a Qt slot
+        connected with ``Qt.QueuedConnection`` before passing it here.
+        """
+        self._notifier.changed.connect(fn)
+
+    def remove_change_listener(self, fn: Callable[[], None]) -> None:
+        """Unregister a previously registered change listener."""
+        try:
+            self._notifier.changed.disconnect(fn)
+        except RuntimeError:
+            pass  # was not connected
+
+    def _notify(self) -> None:
+        """Emit the Qt ``changed`` signal to notify all registered listeners."""
+        self._notifier.changed.emit()
+
     # ------------------------------------------------------------------
     # Entity CRUD
     # ------------------------------------------------------------------
@@ -108,13 +149,16 @@ class DocumentStore:
     def add_entity(self, entity: BaseEntity) -> BaseEntity:
         """Append *entity* to the store and return it."""
         self.entities.append(entity)
+        self._notify()
         return entity
 
     def remove_entity(self, entity_id: str) -> Optional[BaseEntity]:
         """Remove the entity with *entity_id* and return it, or ``None``."""
         for i, e in enumerate(self.entities):
             if e.id == entity_id:
-                return self.entities.pop(i)
+                removed = self.entities.pop(i)
+                self._notify()
+                return removed
         return None
 
     def get_entity(self, entity_id: str) -> Optional[BaseEntity]:
@@ -131,6 +175,7 @@ class DocumentStore:
     def clear(self) -> None:
         """Remove all entities from the document."""
         self.entities.clear()
+        self._notify()
 
     # ------------------------------------------------------------------
     # Layer helpers
@@ -140,6 +185,7 @@ class DocumentStore:
         """Add *layer* to the document (no-op if the name already exists)."""
         if not self.get_layer(layer.name):
             self.layers.append(layer)
+            self._notify()
         return layer
 
     def get_layer(self, name: str) -> Optional[Layer]:
@@ -158,7 +204,9 @@ class DocumentStore:
             return None
         for i, lyr in enumerate(self.layers):
             if lyr.name == name:
-                return self.layers.pop(i)
+                removed = self.layers.pop(i)
+                self._notify()
+                return removed
         return None
 
     # ------------------------------------------------------------------

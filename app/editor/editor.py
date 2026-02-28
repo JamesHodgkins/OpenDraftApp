@@ -45,6 +45,7 @@ from app.document import DocumentStore
 from app.entities import BaseEntity, Vec2
 from app.editor.base_command import CommandBase, CommandCancelled
 from app.editor.command_registry import get_command
+from app.editor.selection import SelectionSet
 
 
 # Sentinel placed in the queue by cancel() to unblock a waiting command.
@@ -87,6 +88,16 @@ class Editor(QObject):
         # compute perpendicular snaps relative to the previously selected point.
         self.snap_from_point: Optional[Vec2] = None
 
+        # Selection set — tracks currently selected entity IDs.
+        self.selection = SelectionSet(parent=self)
+
+        # Wire DocumentStore change notifications → document_changed signal so
+        # any direct mutation of the document (e.g. from LayerManagerDialog)
+        # propagates to UI without additional manual wiring.  The signal is
+        # emitted on whatever thread performs the mutation; the canvas must
+        # connect with Qt.QueuedConnection for thread safety.
+        self._document.add_change_listener(self.document_changed.emit)
+
     # ---------------------------------------------------------------- properties
 
     @property
@@ -122,6 +133,15 @@ class Editor(QObject):
             self.cancel()
             if self._thread:
                 self._thread.join(timeout=2.0)
+                if self._thread.is_alive():
+                    import warnings
+                    warnings.warn(
+                        f"Command thread '{self._thread.name}' did not terminate "
+                        "within 2 s after cancel — starting new command anyway.  "
+                        "Check that all get_point/get_integer paths honour cancellation.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
 
         cls = get_command(name)
         if cls is None:
@@ -281,8 +301,13 @@ class Editor(QObject):
     def add_entity(self, entity: BaseEntity) -> BaseEntity:
         """Add *entity* to the document and emit :attr:`entity_added`.
 
+        The entity's ``layer`` attribute is stamped with the document's
+        current ``active_layer`` before insertion so all newly drawn objects
+        land on the correct layer automatically.
+
         Returns the entity (for chaining).
         """
+        entity.layer = self._document.active_layer
         self._document.add_entity(entity)
         self.entity_added.emit(entity)
         self.document_changed.emit()

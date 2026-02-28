@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal
+from typing import AbstractSet, Any, ClassVar, Dict, List, Literal, Optional
 
-from app.entities.base import BaseEntity, Vec2
+from app.entities.base import BaseEntity, BBox, Vec2, _geo_pt_seg_dist
 
 DimType = Literal["linear", "aligned"]
 ArrowheadType = Literal["arrow", "dot", "tick", "none"]
@@ -14,26 +14,9 @@ TextPosition = Literal["above", "inline", "below"]
 
 @dataclass
 class DimensionEntity(BaseEntity):
-    """A linear or aligned dimension annotation.
+    """A linear or aligned dimension annotation."""
 
-    Geometry
-    --------
-    ``p1`` and ``p2`` are the two measurement points (annotation origins).
-    ``p3`` is the dimension-line offset point — it controls how far the
-    dimension line sits away from the measured geometry.
-
-    Attributes
-    ----------
-    dim_type:        ``"linear"`` (horizontal/vertical) or ``"aligned"``
-                     (parallel to the p1–p2 vector).
-    text_height:     Height of the dimension text in world units.
-    arrowhead_type:  Style of the arrowhead terminator.
-    arrowhead_size:  Size of the arrowhead in world units.
-    text_position:   Where the text sits relative to the dimension line.
-    text_offset:     Additional offset applied to the text along the
-                     dimension line normal.
-    """
-
+    _entity_kind: ClassVar[str] = "dimension"
     type: str = field(default="dimension", init=False, repr=False)
     p1: Vec2 = field(default_factory=Vec2)
     p2: Vec2 = field(default_factory=Vec2)
@@ -44,6 +27,42 @@ class DimensionEntity(BaseEntity):
     arrowhead_size: float = 2.5
     text_position: TextPosition = "above"
     text_offset: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Entity protocol
+    # ------------------------------------------------------------------
+
+    def bounding_box(self) -> Optional[BBox]:
+        xs = [self.p1.x, self.p2.x, self.p3.x]
+        ys = [self.p1.y, self.p2.y, self.p3.y]
+        return BBox(min(xs), min(ys), max(xs), max(ys))
+
+    def hit_test(self, pt: Vec2, tolerance: float) -> bool:
+        for a, b in [(self.p1, self.p2), (self.p1, self.p3), (self.p2, self.p3)]:
+            if _geo_pt_seg_dist(pt, a, b) <= tolerance:
+                return True
+        return False
+
+    def snap_candidates(self, enabled: AbstractSet) -> List:
+        from app.entities.snap_types import SnapType, SnapResult
+        results = []
+        if SnapType.ENDPOINT in enabled:
+            for p in (self.p1, self.p2, self.p3):
+                results.append(SnapResult(Vec2(p.x, p.y), SnapType.ENDPOINT, self.id))
+        return results
+
+    def nearest_snap(self, cursor: Vec2) -> Optional[object]:
+        return None  # complex geometry — not implemented
+
+    def perp_snaps(self, from_pt: Vec2) -> List:
+        return []
+
+    def draw(self, painter, world_to_screen, scale: float) -> None:
+        pass  # dimension rendering not yet implemented
+
+    # ------------------------------------------------------------------
+    # Serialisation
+    # ------------------------------------------------------------------
 
     def to_dict(self) -> Dict[str, Any]:
         d = self._base_dict()

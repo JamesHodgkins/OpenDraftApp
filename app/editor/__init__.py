@@ -14,6 +14,7 @@ from app.editor.base_command import CommandBase, CommandCancelled
 from app.editor.command_registry import command, get_command, registered_commands
 from app.editor.editor import Editor
 from app.editor.osnap_engine import OsnapEngine, SnapResult, SnapType
+from app.editor.selection import SelectionSet
 
 __all__ = [
     "Editor",
@@ -22,6 +23,7 @@ __all__ = [
     "OsnapEngine",
     "SnapResult",
     "SnapType",
+    "SelectionSet",
     "command",
     "get_command",
     "registered_commands",

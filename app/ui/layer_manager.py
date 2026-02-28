@@ -1,0 +1,316 @@
+"""
+Layer Manager Dialog.
+
+A floating dialog that lets the user create, delete, rename and configure
+drawing layers — including colour, visibility and active-layer selection.
+"""
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+    QTableWidget, QTableWidgetItem, QHeaderView,
+    QAbstractItemView, QColorDialog, QMessageBox,
+)
+from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, Signal
+
+from app.document import DocumentStore, Layer
+
+
+class LayerManagerDialog(QDialog):
+    """Modal dialog for managing drawing layers.
+
+    Signals
+    -------
+    layers_changed:
+        Emitted whenever any layer property is modified (visibility, colour,
+        rename, add, delete, active-layer change).  Connect this to the
+        canvas's ``refresh`` slot so the viewport updates live.
+    """
+
+    layers_changed = Signal()
+
+    # ── Column indices ────────────────────────────────────────────────
+    COL_ACTIVE  = 0
+    COL_VISIBLE = 1
+    COL_COLOR   = 2
+    COL_NAME    = 3
+    HEADERS     = ["Active", "Visible", "Color", "Name"]
+
+    # ── Stylesheet ────────────────────────────────────────────────────
+    _DIALOG_STYLE = """
+        QDialog {
+            background: #2d2d2d;
+            color: #e0e0e0;
+        }
+        QTableWidget {
+            background: #252525;
+            color: #e0e0e0;
+            gridline-color: #3a3a3a;
+            border: 1px solid #3a3a3a;
+            selection-background-color: #3a6ea5;
+        }
+        QHeaderView::section {
+            background: #2d2d2d;
+            color: #bbb;
+            padding: 4px;
+            border: none;
+            border-bottom: 1px solid #3a3a3a;
+            font-weight: bold;
+        }
+        QPushButton {
+            background: #3a3a3a;
+            color: #e0e0e0;
+            border: 1px solid #555;
+            border-radius: 3px;
+            padding: 4px 10px;
+        }
+        QPushButton:hover  { background: #4a4a4a; }
+        QPushButton:pressed { background: #222; }
+    """
+
+    def __init__(self, document: DocumentStore, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Layer Manager")
+        self.setMinimumSize(520, 320)
+        self.setStyleSheet(self._DIALOG_STYLE)
+        self._doc = document
+        self._build_ui()
+        self._populate()
+
+    # ──────────────────────────────────────────────────────────────────
+    # UI construction
+    # ──────────────────────────────────────────────────────────────────
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
+
+        # ── layer table ──────────────────────────────────────────────
+        self._table = QTableWidget(0, len(self.HEADERS))
+        self._table.setHorizontalHeaderLabels(self.HEADERS)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._table.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked
+        )
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(self.COL_ACTIVE,  QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(self.COL_VISIBLE, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(self.COL_COLOR,   QHeaderView.Fixed)
+        self._table.setColumnWidth(self.COL_COLOR, 50)
+        hdr.setSectionResizeMode(self.COL_NAME,    QHeaderView.Stretch)
+        self._table.verticalHeader().setVisible(False)
+        self._table.itemChanged.connect(self._on_item_changed)
+        self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+        root.addWidget(self._table)
+
+        # ── hint label ───────────────────────────────────────────────
+        hint_label = QPushButton()
+        hint_label.setEnabled(False)
+        hint_label.setText("Double-click a colour swatch to change it.  Double-click a name to rename.")
+        hint_label.setStyleSheet(
+            "QPushButton { background: transparent; border: none; "
+            "color: #888; font-size: 9pt; padding: 0; }"
+        )
+        root.addWidget(hint_label)
+
+        # ── action buttons ───────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+
+        self._btn_add    = QPushButton("Add Layer")
+        self._btn_delete = QPushButton("Delete Layer")
+        btn_close        = QPushButton("Close")
+
+        self._btn_add.clicked.connect(self._add_layer)
+        self._btn_delete.clicked.connect(self._delete_layer)
+        btn_close.clicked.connect(self.accept)
+
+        btn_row.addWidget(self._btn_add)
+        btn_row.addWidget(self._btn_delete)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_close)
+        root.addLayout(btn_row)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Table population
+    # ──────────────────────────────────────────────────────────────────
+
+    def _populate(self) -> None:
+        """Rebuild the table from the current document layer list."""
+        self._table.blockSignals(True)
+        self._table.setRowCount(0)
+        for layer in self._doc.layers:
+            self._append_row(layer)
+        self._table.blockSignals(False)
+
+    def _append_row(self, layer: Layer) -> None:
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+
+        # Active (checkable; only one row should be checked at a time)
+        active_item = QTableWidgetItem()
+        active_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+        active_item.setCheckState(
+            Qt.Checked if layer.name == self._doc.active_layer else Qt.Unchecked
+        )
+        active_item.setData(Qt.UserRole, layer.name)
+        self._table.setItem(row, self.COL_ACTIVE, active_item)
+
+        # Visible
+        vis_item = QTableWidgetItem()
+        vis_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+        vis_item.setCheckState(Qt.Checked if layer.visible else Qt.Unchecked)
+        vis_item.setData(Qt.UserRole, layer.name)
+        self._table.setItem(row, self.COL_VISIBLE, vis_item)
+
+        # Color swatch — read-only; double-click opens colour picker
+        color_item = QTableWidgetItem()
+        color_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        color_item.setBackground(QColor(layer.color))
+        color_item.setData(Qt.UserRole, layer.name)
+        self._table.setItem(row, self.COL_COLOR, color_item)
+
+        # Name — editable (except for the "default" layer)
+        name_item = QTableWidgetItem(layer.name)
+        if layer.name == "default":
+            name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        name_item.setData(Qt.UserRole, layer.name)
+        self._table.setItem(row, self.COL_NAME, name_item)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Event handlers
+    # ──────────────────────────────────────────────────────────────────
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        col        = self._table.column(item)
+        row        = self._table.row(item)
+        layer_name = item.data(Qt.UserRole)
+        layer      = self._doc.get_layer(layer_name)
+        if layer is None:
+            return
+
+        if col == self.COL_ACTIVE:
+            if item.checkState() == Qt.Checked:
+                self._doc.active_layer = layer_name
+                # Uncheck all other rows
+                self._table.blockSignals(True)
+                for r in range(self._table.rowCount()):
+                    if r != row:
+                        self._table.item(r, self.COL_ACTIVE).setCheckState(Qt.Unchecked)
+                self._table.blockSignals(False)
+                self.layers_changed.emit()
+            else:
+                # Don't allow deactivating the only checked row without
+                # another one being selected — silently re-check it.
+                self._table.blockSignals(True)
+                item.setCheckState(Qt.Checked)
+                self._table.blockSignals(False)
+
+        elif col == self.COL_VISIBLE:
+            layer.visible = item.checkState() == Qt.Checked
+            self.layers_changed.emit()
+
+        elif col == self.COL_NAME:
+            new_name = item.text().strip()
+            if not new_name or new_name == layer_name:
+                return
+            # Reject if the name is already taken
+            if self._doc.get_layer(new_name):
+                self._table.blockSignals(True)
+                item.setText(layer_name)
+                self._table.blockSignals(False)
+                return
+            # Apply the rename
+            layer.name = new_name
+            if self._doc.active_layer == layer_name:
+                self._doc.active_layer = new_name
+            # Update the stored key in every cell of this row
+            self._table.blockSignals(True)
+            for c in range(self._table.columnCount()):
+                cell = self._table.item(row, c)
+                if cell is not None:
+                    cell.setData(Qt.UserRole, new_name)
+            self._table.blockSignals(False)
+            self.layers_changed.emit()
+
+    def _on_cell_double_clicked(self, row: int, col: int) -> None:
+        """Open a colour picker when the user double-clicks the colour swatch."""
+        if col != self.COL_COLOR:
+            return
+        item = self._table.item(row, self.COL_COLOR)
+        layer_name = item.data(Qt.UserRole)
+        layer = self._doc.get_layer(layer_name)
+        if layer is None:
+            return
+        chosen = QColorDialog.getColor(
+            QColor(layer.color), self, f"Choose colour — {layer_name}"
+        )
+        if chosen.isValid():
+            layer.color = chosen.name()
+            self._table.blockSignals(True)
+            item.setBackground(chosen)
+            self._table.blockSignals(False)
+            self.layers_changed.emit()
+
+    # ──────────────────────────────────────────────────────────────────
+    # Toolbar actions
+    # ──────────────────────────────────────────────────────────────────
+
+    def _add_layer(self) -> None:
+        """Add a new layer with a unique generated name."""
+        base = "Layer"
+        idx  = len(self._doc.layers)
+        name = f"{base} {idx}"
+        while self._doc.get_layer(name):
+            idx += 1
+            name = f"{base} {idx}"
+        layer = Layer(name=name)
+        self._doc.add_layer(layer)
+        self._table.blockSignals(True)
+        self._append_row(layer)
+        self._table.blockSignals(False)
+        self.layers_changed.emit()
+
+    def _delete_layer(self) -> None:
+        """Delete the selected layer, moving its entities to 'default'."""
+        row = self._table.currentRow()
+        if row < 0:
+            return
+        name_item  = self._table.item(row, self.COL_NAME)
+        layer_name = name_item.data(Qt.UserRole)
+
+        if layer_name == "default":
+            QMessageBox.warning(
+                self, "Cannot Delete",
+                "The 'default' layer cannot be deleted."
+            )
+            return
+
+        result = QMessageBox.question(
+            self, "Delete Layer",
+            f"Delete layer '{layer_name}'?\n\n"
+            "Entities on this layer will be moved to 'default'.",
+        )
+        if result != QMessageBox.Yes:
+            return
+
+        # Reassign entities
+        for e in list(self._doc.entities_on_layer(layer_name)):
+            e.layer = "default"
+
+        self._doc.remove_layer(layer_name)
+        if self._doc.active_layer == layer_name:
+            self._doc.active_layer = "default"
+            # Fix the Active checkboxes in the table
+            self._table.blockSignals(True)
+            for r in range(self._table.rowCount()):
+                lname = self._table.item(r, self.COL_ACTIVE).data(Qt.UserRole)
+                state = Qt.Checked if lname == "default" else Qt.Unchecked
+                self._table.item(r, self.COL_ACTIVE).setCheckState(state)
+            self._table.blockSignals(False)
+
+        self._table.removeRow(row)
+        self.layers_changed.emit()

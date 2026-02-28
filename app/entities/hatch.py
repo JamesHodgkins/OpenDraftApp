@@ -3,35 +3,24 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import AbstractSet, Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
-from app.entities.base import BaseEntity
+from app.entities.base import BaseEntity, Vec2
 
 if TYPE_CHECKING:
-    # avoid circular import at runtime; used only for type hints
-    from app.entities import entity_from_dict
+    from app.entities.base import BBox
 
 
 @dataclass
 class HatchEntity(BaseEntity):
-    """A hatch-fill applied to a closed boundary entity.
+    """A hatch-fill applied to a closed boundary entity."""
 
-    Attributes
-    ----------
-    pattern:       Named hatch pattern, e.g. ``"solid"``, ``"ANSI31"``.
-    pattern_scale: Uniform scale applied to the pattern geometry.
-    pattern_angle: Rotation of the pattern in degrees.
-    boundary:      The closed entity (rect, circle, polyline …) that forms
-                   the hatch boundary.  Stored as a raw dict so this module
-                   does not need to know all entity types at import time;
-                   call ``resolved_boundary()`` to deserialise it.
-    """
-
+    _entity_kind: ClassVar[str] = "hatch"
     type: str = field(default="hatch", init=False, repr=False)
     pattern: str = "solid"
     pattern_scale: float = 1.0
     pattern_angle: float = 0.0
-    boundary: Optional[Dict[str, Any]] = None  # raw dict; see resolved_boundary()
+    boundary: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -41,9 +30,36 @@ class HatchEntity(BaseEntity):
         """Return the boundary deserialised as a concrete entity, or None."""
         if self.boundary is None:
             return None
-        # import here to avoid circular imports at module load time
         from app.entities import entity_from_dict
         return entity_from_dict(self.boundary)
+
+    # ------------------------------------------------------------------
+    # Entity protocol — delegate to the boundary entity
+    # ------------------------------------------------------------------
+
+    def bounding_box(self) -> Optional["BBox"]:
+        b = self.resolved_boundary()
+        return b.bounding_box() if b is not None else None
+
+    def hit_test(self, pt: Vec2, tolerance: float) -> bool:
+        b = self.resolved_boundary()
+        return b.hit_test(pt, tolerance) if b is not None else False
+
+    def snap_candidates(self, enabled: AbstractSet) -> List:
+        return []
+
+    def nearest_snap(self, cursor: Vec2) -> Optional[object]:
+        return None
+
+    def perp_snaps(self, from_pt: Vec2) -> List:
+        return []
+
+    def draw(self, painter, world_to_screen, scale: float) -> None:
+        pass  # hatch fill rendering not yet implemented
+
+    def crosses_rect(self, rmin: Vec2, rmax: Vec2) -> bool:
+        b = self.resolved_boundary()
+        return b.crosses_rect(rmin, rmax) if b is not None else False
 
     # ------------------------------------------------------------------
     # Serialisation
@@ -65,5 +81,5 @@ class HatchEntity(BaseEntity):
             pattern=d.get("pattern", "solid"),
             pattern_scale=float(d.get("patternScale", 1.0)),
             pattern_angle=float(d.get("patternAngle", 0.0)),
-            boundary=d.get("boundary"),  # keep as raw dict
+            boundary=d.get("boundary"),
         )

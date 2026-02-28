@@ -19,6 +19,8 @@ class ButtonType(Enum):
     STACK = "stack"
     SELECT = "select"
     COLOR_PICKER = "color-picker"
+    LAYER_SELECT = "layer-select"
+    PROP_STACK = "prop-stack"
 
 
 class ButtonSize(Enum):
@@ -141,8 +143,8 @@ COLORS = Colors(
 class Styles:
     """Style templates for ribbon components."""
 
-    FONT_SIZE_LARGE: int = 10
-    FONT_SIZE_SMALL: int = 9
+    FONT_SIZE_LARGE: int = 8
+    FONT_SIZE_SMALL: int = 7
     BORDER_RADIUS_SMALL: int = 3
     BORDER_RADIUS_LARGE: int = 4
     PADDING_SMALL: int = 2
@@ -170,7 +172,7 @@ class Styles:
         return f"""
             QToolButton {{
                 {Styles.button_base(dark)}
-                font-size: {Styles.FONT_SIZE_SMALL}px;
+                font-size: {Styles.FONT_SIZE_SMALL}pt;
                 color: {text_color};
                 padding: {Styles.PADDING_SMALL}px;
             }}
@@ -205,7 +207,7 @@ class Styles:
     def dropdown_text_button(dark: bool = False) -> str:
         return f"""
             QToolButton {{
-                font-size: {Styles.FONT_SIZE_LARGE}px;
+                font-size: {Styles.FONT_SIZE_LARGE}pt;
                 font-weight: 500;
                 color: {COLORS.TEXT_PRIMARY_DARK};
                 {Styles.button_base(dark)}
@@ -232,7 +234,7 @@ class Styles:
     def small_icon_label_button(dark: bool = False) -> str:
         return f"""
             QToolButton {{
-                font-size: {Styles.FONT_SIZE_SMALL}px;
+                font-size: {Styles.FONT_SIZE_SMALL}pt;
                 font-weight: 500;
                 {Styles.button_base(dark)}
                 /* Remove left padding so icon sits at the left edge; tighten right padding */
@@ -277,7 +279,7 @@ class Styles:
         return f"""
             QPushButton {{
                 {Styles.button_base(dark)}
-                font-size: {Styles.FONT_SIZE_SMALL}px;
+                font-size: {Styles.FONT_SIZE_SMALL}pt;
                 white-space: nowrap;
                 text-align: left;
                 padding: 0px;
@@ -300,11 +302,33 @@ class Styles:
     def panel_title(dark: bool = False) -> str:
         color = COLORS.TEXT_SECONDARY_DARK if dark else COLORS.TEXT_SECONDARY_LIGHT
         return f"""
-            font-size: {Styles.FONT_SIZE_LARGE}px;
+            font-size: {Styles.FONT_SIZE_LARGE}pt;
             color: {color};
             font-weight: normal;
             margin-top: {Styles.PADDING_SMALL}px;
             margin-bottom: 1px;
+        """
+
+    @staticmethod
+    def combo_style() -> str:
+        """QSS for QComboBox widgets used across ribbon panels."""
+        return """
+            QComboBox {
+                background: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 1px 4px;
+                font-size: 9pt;
+            }
+            QComboBox:hover { background: #4a4a4a; }
+            QComboBox::drop-down { width: 14px; border: none; }
+            QComboBox QAbstractItemView {
+                background: #2d2d2d;
+                color: #e0e0e0;
+                selection-background-color: #3a6ea5;
+                border: 1px solid #555;
+            }
         """
 
 

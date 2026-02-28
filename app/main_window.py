@@ -1,8 +1,11 @@
 """
 Main application window for OpenDraft.
 
-Owns the ribbon configuration data and assembles the top-level layout.
+Assembles the top-level layout and wires all major subsystems together.
+Ribbon configuration data lives in :mod:`app.config.ribbon_config`.
 """
+from typing import Optional
+
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
 from PySide6.QtCore import Qt
 
@@ -11,108 +14,14 @@ from app.canvas import CADCanvas
 from app.document import DocumentStore
 from app.editor import Editor
 from app.entities import Vec2
-import app.commands  # registers all @command decorators  # noqa: F401
+from app.ui.layer_manager import LayerManagerDialog
+from app.config.ribbon_config import RIBBON_CONFIG
+from app.editor.command_registry import autodiscover
 
-
-# ---------------------------------------------------------------------------
-# Ribbon configuration
-# ---------------------------------------------------------------------------
-
-RIBBON_STRUCTURE = [
-    {"name": "Home",   "panels": ["File", "Edit", "Draw", "Annotate", "Modify", "Properties", "System"]},
-    {"name": "Create", "panels": ["File", "Draw", "Annotate", "Hatch", "System"]},
-    {"name": "Edit",   "panels": ["Edit", "Modify", "System"]},
-    {"name": "View",   "panels": ["Properties", "System"]},
-    {"name": "Review", "panels": ["Measure", "System"]},
-    {"name": "Layout", "panels": ["Layout", "System"]},
-    {"name": "Output", "panels": ["Export", "System"]},
-]
-
-PANEL_DEFINITIONS = {
-    "File": {"tools": [
-        {"label": "New",  "icon": "file_new",  "type": "large", "action": "newDocument"},
-        {"label": "Save", "icon": "file_save", "type": "small", "action": "saveDocumentToFile"},
-        {"label": "Open", "icon": "file_open", "type": "small", "action": "openDocumentFromFile"},
-    ]},
-    "Edit": {"tools": [
-        {"label": "Undo", "icon": "edit_undo", "type": "large", "action": "undo"},
-        {"label": "Redo", "icon": "edit_redo", "type": "large", "action": "redo"},
-    ]},
-    "Draw": {"tools": [
-        {"label": "Line", "type": "split", "mainAction": "lineCommand", "items": [
-            {"label": "Line",     "icon": "draw_line",  "action": "lineCommand"},
-            {"label": "Polyline", "icon": "draw_pline", "action": "polylineCommand"},
-        ]},
-        {"label": "Rect",   "icon": "draw_rect",   "type": "small", "action": "rectCommand"},
-        {"label": "Circle", "icon": "draw_circle", "type": "small", "action": "circleCommand"},
-        {"label": "Arc", "type": "split-small", "mainAction": "arc3PointCommand", "items": [
-            {"label": "Arc (Center, Start, End)", "icon": "draw_arc", "action": "arcCenterStartEndCommand"},
-            {"label": "Arc (Start, End, Radius)", "icon": "draw_arc", "action": "arcStartEndRadiusCommand"},
-        ]},
-        {"label": "Text", "icon": "draw_text", "type": "large", "action": "textCommand"},
-    ]},
-    "Annotate": {"tools": [
-        {"label": "Dimension", "type": "split", "mainAction": "linearDimensionCommand", "items": [
-            {"label": "Linear Dimension",  "icon": "util_lin_dim", "action": "linearDimensionCommand"},
-            {"label": "Aligned Dimension", "icon": "util_aln_dim", "action": "alignedDimensionCommand"},
-        ]},
-    ]},
-    "Modify": {"tools": [
-        {"label": "Move", "icon": "mod_move", "type": "large", "action": "moveCommand"},
-        {"label": "Copy", "icon": "mod_copy", "type": "large", "action": "copyCommand"},
-        {"type": "stack", "columns": [
-            [
-                {"label": "Rotate", "icon": "mod_rotate", "type": "small", "action": "rotateCommand"},
-                {"label": "Scale",  "icon": "mod_scale",  "type": "small", "action": "scaleCommand"},
-                {"label": "Mirror", "icon": "mod_mirror", "type": "small", "action": "mirrorCommand"},
-            ],
-            [
-                {"label": "Trim",   "icon": "mod_trim",   "type": "small", "action": "trimCommand"},
-                {"label": "Extend", "icon": "mod_extend", "type": "small", "action": "extendCommand"},
-                {"label": "Delete", "icon": "icon-cancel", "type": "small", "action": "deleteCommand"},
-            ],
-        ]},
-    ]},
-    "Properties": {"tools": [
-        {"label": "Layers",         "icon": "util_layers",   "type": "large",        "action": "toggleLayerModal"},
-        {"label": "Layer Selection","type": "select",         "source": "documentStore.layers"},
-        {"label": "Color",          "type": "color-picker",  "source": "displayColor"},
-        {"label": "Line Style",     "type": "select",
-         "options": ["Continuous", "Dashed", "Dotted", "DashDot", "DashDotDot", "Center", "Phantom", "Hidden"]},
-        {"label": "Thickness",      "type": "select",
-         "options": ["0.25 mm", "0.50 mm", "1.00 mm", "2.00 mm", "3.00 mm"]},
-    ]},
-    "System": {"tools": [
-        {"label": "Properties", "icon": "util_props",     "type": "large", "action": "togglePropertiesPanel"},
-        {"label": "Settings",   "icon": "util_settings",  "type": "large", "action": "toggleSettingsModal"},
-        {"label": "Cancel",     "icon": "icon-cancel",    "type": "large", "action": "cancelCommand"},
-    ]},
-    "Hatch": {"tools": [
-        {"label": "Draw Hatch",  "icon": "draw_hatch_draw",  "type": "large", "status": "placeholder"},
-        {"label": "Pick Hatch",  "icon": "draw_hatch_pick",  "type": "large", "status": "placeholder"},
-        {"label": "Shape Hatch", "icon": "draw_hatch_shape", "type": "large", "action": "shapeHatchCommand"},
-    ]},
-    "Measure": {"tools": [
-        {"label": "Distance", "icon": "util_meas_length", "type": "large", "action": "measureDistanceCommand"},
-        {"label": "Angle",    "icon": "util_meas_angle",  "type": "large", "status": "placeholder"},
-        {"label": "Area",     "icon": "util_meas_area",   "type": "large", "action": "measureAreaCommand"},
-    ]},
-    "Layout": {"tools": [
-        {"label": "Viewport",   "icon": "util_props", "type": "large", "action": "placeViewportCommand"},
-        {"label": "Paper Size", "type": "select",
-         "options": ["A4 Landscape", "A4 Portrait", "A3 Landscape", "A3 Portrait",
-                     "A2 Landscape", "A2 Portrait", "Letter", "Tabloid"]},
-    ]},
-    "Export": {"tools": [
-        {"label": "Export PDF", "icon": "utils_exp_pdf", "type": "large", "status": "placeholder"},
-        {"label": "Export SVG", "icon": "utils_exp_svg", "type": "large", "status": "placeholder"},
-    ]},
-}
-
-
-# ---------------------------------------------------------------------------
-# Window
-# ---------------------------------------------------------------------------
+# Trigger @command decorator registration for all command modules.
+# Using autodiscover() instead of a bare `import app.commands` side-effect
+# import makes the intent explicit and prevents linters from stripping it.
+autodiscover("app.commands")
 
 class MainWindow(QMainWindow):
     """Top-level application window."""
@@ -121,37 +30,42 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("OpenDraft 2D CAD App")
 
+        # ---- Core subsystems (created before widgets so canvas can receive
+        #      proper constructor arguments instead of post-hoc attr injection) ---
+        doc = DocumentStore()
+        self._doc = doc
+        self.editor = Editor(document=doc, parent=self)
+
+        # ---- Layout -------------------------------------------------------
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         ribbon = RibbonPanel(
-            RIBBON_STRUCTURE,
-            PANEL_DEFINITIONS,
+            RIBBON_CONFIG,
             dark=False,  # set True for dark mode
         )
+        self._ribbon = ribbon
         layout.addWidget(ribbon)
-        # keep a reference to the canvas so we can connect signals
-        canvas = CADCanvas()
-        layout.addWidget(canvas)
 
-        # ---- Editor -------------------------------------------------------
-        doc = DocumentStore()
-        self.editor = Editor(document=doc, parent=self)
+        # Canvas receives document and editor via constructor — no post-hoc
+        # private attribute injection needed.
+        canvas = CADCanvas(document=doc, editor=self.editor)
+        self._canvas = canvas
+        layout.addWidget(canvas)
 
         # Canvas left-click → provide world point to the active command
         canvas.pointSelected.connect(
             lambda x, y: self.editor.provide_point(Vec2(x, y))
         )
-        # Give the canvas a reference to the active document so it can draw
-        canvas._document = doc
-        # Give the canvas a reference to the editor for rubberband preview
-        canvas._editor = self.editor
         # Escape key on canvas → cancel the active command
         canvas.cancelRequested.connect(self.editor.cancel)
 
-        # Ribbon button → run the corresponding command
-        ribbon.actionTriggered.connect(self.editor.run_command)
+        # Wire PropertyPanel controls to the live document
+        ribbon.setup_document(doc)
+
+        # Ribbon button → route to the correct handler
+        ribbon.actionTriggered.connect(self._on_action)
 
         # Redraw the canvas whenever the document changes.
         # Use QueuedConnection to ensure canvas.refresh() is called on the GUI
@@ -159,6 +73,11 @@ class MainWindow(QMainWindow):
         self.editor.document_changed.connect(
             canvas.refresh, Qt.ConnectionType.QueuedConnection
         )
+        # Redraw when selection changes (already on GUI thread).
+        self.editor.selection.changed.connect(canvas.refresh)
+        # Clear selection when a new command starts so drawing commands work
+        # on a clean slate.
+        self.editor.command_started.connect(lambda _: self.editor.selection.clear())
         # -------------------------------------------------------------------
 
         # thin separator that visually separates the central content from the status bar
@@ -207,8 +126,46 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # Reusable Layer Manager dialog — created once, re-shown on demand.
+        self._layer_dlg: Optional[LayerManagerDialog] = None
+
     def _on_canvas_mouse_moved(self, x: float, y: float) -> None:
         self.coord_label.setText(f"X: {x:.2f} Y: {y:.2f}")
+
+    # -----------------------------------------------------------------------
+    # Action routing
+    # -----------------------------------------------------------------------
+
+    # Actions handled directly by MainWindow (not forwarded to the editor)
+    _LOCAL_ACTIONS = {"toggleLayerModal", "togglePropertiesPanel", "toggleSettingsModal"}
+
+    def _on_action(self, name: str) -> None:
+        """Route ribbon actions to the correct handler.
+
+        Actions in :attr:`_LOCAL_ACTIONS` are handled here; everything else
+        is forwarded to the editor's command runner.
+        """
+        if name == "toggleLayerModal":
+            self._toggle_layer_modal()
+        elif name in self._LOCAL_ACTIONS:
+            # Placeholder — implement additional local actions here.
+            pass
+        else:
+            self.editor.run_command(name)
+
+    def _toggle_layer_modal(self) -> None:
+        """Open (or bring to front) the Layer Manager dialog.
+
+        The dialog is created once and reused on subsequent opens,
+        preserving scroll position and column widths between sessions.
+        """
+        if self._layer_dlg is None:
+            self._layer_dlg = LayerManagerDialog(self._doc, parent=self)
+            # Live-refresh the canvas whenever a layer property changes
+            self._layer_dlg.layers_changed.connect(self._canvas.refresh)
+            # Repopulate the layer combo if layers are added/removed/renamed
+            self._layer_dlg.layers_changed.connect(self._ribbon.refresh_layers)
+        self._layer_dlg.exec()  # modal — canvas refresh signal still fires during exec()
 
     # -----------------------------------------------------------------------
     # helpers

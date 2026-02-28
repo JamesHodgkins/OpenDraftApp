@@ -15,9 +15,19 @@ ribbon configuration::
 
 Registered commands can be looked up via :func:`get_command` and all
 registered names via :func:`registered_commands`.
+
+Use :func:`autodiscover` instead of an explicit ``import app.commands``
+side-effect import so the discovery intent is clear and linter tools
+cannot silently remove it::
+
+    from app.editor.command_registry import autodiscover
+    autodiscover("app.commands")
 """
 from __future__ import annotations
 
+import importlib
+import pkgutil
+import warnings
 from typing import Callable, Dict, Optional, Type
 
 from app.editor.base_command import CommandBase
@@ -67,3 +77,37 @@ def get_command(name: str) -> Optional[Type[CommandBase]]:
 def registered_commands() -> Dict[str, Type[CommandBase]]:
     """Return a shallow copy of the full registry dict."""
     return dict(_REGISTRY)
+
+
+def autodiscover(package: str) -> None:
+    """Import every module in *package* so their ``@command`` decorators fire.
+
+    This is the preferred alternative to a bare ``import app.commands``
+    side-effect import which linters may silently remove.
+
+    Parameters
+    ----------
+    package:
+        Dotted Python package name, e.g. ``"app.commands"``.
+
+    Example
+    -------
+    ::
+
+        from app.editor.command_registry import autodiscover
+        autodiscover("app.commands")
+    """
+    pkg = importlib.import_module(package)
+    pkg_path = getattr(pkg, "__path__", [])
+    for _importer, modname, _ispkg in pkgutil.walk_packages(
+        path=pkg_path,
+        prefix=package + ".",
+        onerror=lambda name: None,
+    ):
+        try:
+            importlib.import_module(modname)
+        except Exception as exc:
+            warnings.warn(
+                f"autodiscover: failed to import {modname!r}: {exc}",
+                stacklevel=2,
+            )
