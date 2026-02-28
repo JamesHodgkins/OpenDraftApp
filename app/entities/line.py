@@ -68,6 +68,8 @@ class LineEntity(BaseEntity):
         if len_sq < 1e-20:
             return []
         t = ((from_pt.x - p1.x) * dx + (from_pt.y - p1.y) * dy) / len_sq
+        if not (0.0 <= t <= 1.0):
+            return []
         return [SnapResult(
             Vec2(p1.x + t * dx, p1.y + t * dy),
             SnapType.PERPENDICULAR, self.id,

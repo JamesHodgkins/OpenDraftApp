@@ -48,6 +48,13 @@ from typing import List, Optional
 from app.document import DocumentStore
 from app.entities import Vec2
 from app.editor.osnap_engine import OsnapEngine, SnapResult, SnapType
+from app.editor.draftmate import (
+    DraftmateEngine,
+    DraftmateResult,
+    DraftmateSettings,
+    AlignmentLine,
+    TrackedPoint,
+)
 from app.editor.hit_testing import (
     hit_test_point,
     entity_inside_rect,
@@ -65,6 +72,10 @@ class CADCanvas(QWidget):
     pointSelected = Signal(float, float)
     # emits when the user presses Escape
     cancelRequested = Signal()
+    # emitted when a drawing-mode toggle changes on the canvas (F8/F10 etc.)
+    # so the status bar can stay in sync.
+    orthoChanged = Signal(bool)
+    draftmateChanged = Signal(bool)
 
     @Slot()
     def refresh(self) -> None:
@@ -116,8 +127,13 @@ class CADCanvas(QWidget):
 
         # OSNAP engine — active whenever the editor is waiting for a point input.
         self._osnap: OsnapEngine = OsnapEngine()
+        # Master OSNAP toggle — when False the snap engine is skipped entirely.
+        self._osnap_master: bool = True
         # Last computed snap result (None when no snap is within aperture).
         self._snap_result: Optional[SnapResult] = None
+
+        # ---- Ortho mode -----------------------------------------------------
+        self._ortho: bool = False
 
         # ---- Selection state ------------------------------------------------
         # Pixel threshold for click-to-select hit testing.
@@ -148,6 +164,11 @@ class CADCanvas(QWidget):
         self._dynamic_input.hide()
         self._dynamic_input.input_submitted.connect(self._on_dynamic_input_submitted)
         self._dynamic_input.input_cancelled.connect(self._on_dynamic_input_cancelled)
+
+        # ---- Draftmate (Object Snap Tracking + Polar Tracking) -----------
+        self._draftmate = DraftmateEngine()
+        # Last frame's Draftmate result (None when disabled or no data).
+        self._draftmate_result: Optional[DraftmateResult] = None
 
         # Connect to editor signals to update dynamic input state
         if self._editor is not None:
@@ -229,11 +250,20 @@ class CADCanvas(QWidget):
                 self._sel_dragging = False  # will become True after threshold
             else:
                 # ---- Command mode — emit world point for the active command ----
-                if self._snap_result is not None:
+                # Draftmate alignment snap takes priority over raw osnap.
+                dm = self._draftmate_result
+                if dm is not None and dm.snapped_point is not None:
+                    pt = dm.snapped_point
+                    self.pointSelected.emit(pt.x, pt.y)
+                elif self._snap_result is not None:
                     pt = self._snap_result.point
                     self.pointSelected.emit(pt.x, pt.y)
                 else:
                     self.pointSelected.emit(world_pt.x(), world_pt.y())
+                # Clear tracked points after each click so the workspace
+                # stays clean between drawing steps.
+                self._draftmate.clear()
+                self._draftmate_result = None
             self.setFocus()
             return
 
@@ -265,11 +295,13 @@ class CADCanvas(QWidget):
                 self.update()
 
         # ---- OSNAP --------------------------------------------------------
-        # Only run snap when the editor is expecting a point input.
+        # Only run snap when the editor is expecting a point input and the
+        # master snap toggle is on.
         snap_active = (
             self._editor is not None
             and getattr(self._editor, "_input_mode", "none") == "point"
             and self._document is not None
+            and self._osnap_master
         )
         if snap_active:
             self._snap_result = self._osnap.snap(
@@ -279,17 +311,32 @@ class CADCanvas(QWidget):
         else:
             self._snap_result = None
 
-        # Coordinate display follows the snapped position when snap is active.
-        display = self._snap_result.point if self._snap_result else raw
+        # ---- Draftmate tracking + alignment --------------------------------
+        from_point = getattr(self._editor, "snap_from_point", None) if self._editor else None
+        if snap_active:
+            self._draftmate_result = self._draftmate.update(
+                raw, self._snap_result, from_point, self.scale,
+            )
+        else:
+            self._draftmate_result = None
+
+        # Decide final display point: Draftmate alignment > OSNAP > raw.
+        dm = self._draftmate_result
+        if dm is not None and dm.snapped_point is not None:
+            display = dm.snapped_point
+        elif self._snap_result is not None:
+            display = self._snap_result.point
+        else:
+            display = raw
+
         try:
             self.mouseMoved.emit(display.x, display.y)
         except Exception:
             pass
 
-        # Update rubberband preview using snapped position when available.
+        # Update rubberband preview using the best available position.
         if self._editor is not None:
-            preview_pt = self._snap_result.point if self._snap_result else raw
-            self._preview_entities = self._editor.get_dynamic(preview_pt)
+            self._preview_entities = self._editor.get_dynamic(display)
 
         # ---- Dynamic input widget update ------------------------------------
         # Update dynamic input position and cursor coordinates whenever mouse moves
@@ -384,6 +431,35 @@ class CADCanvas(QWidget):
                 # Command is active: cancel the command but leave selection intact
                 self._dynamic_input.clear()
                 self.cancelRequested.emit()
+            return
+
+        # --- F10: toggle Draftmate (Object Snap Tracking + Polar Tracking) -
+        if event.key() == Qt.Key_F10:
+            dm = self._draftmate.settings
+            dm.enabled = not dm.enabled
+            if dm.enabled:
+                # Draftmate and Ortho are mutually exclusive.
+                self._ortho = False
+                self.orthoChanged.emit(False)
+            else:
+                # Turning off Draftmate clears tracked state.
+                self._draftmate.clear()
+                self._draftmate_result = None
+            self.draftmateChanged.emit(dm.enabled)
+            self.update()
+            return
+
+        # --- F8: toggle Ortho mode ----------------------------------------
+        if event.key() == Qt.Key_F8:
+            self._ortho = not self._ortho
+            if self._ortho:
+                # Ortho and Draftmate are mutually exclusive.
+                self._draftmate.settings.enabled = False
+                self._draftmate.clear()
+                self._draftmate_result = None
+                self.draftmateChanged.emit(False)
+            self.orthoChanged.emit(self._ortho)
+            self.update()
             return
 
         # --- Delete key: remove selected entities when idle --------------
@@ -599,6 +675,10 @@ class CADCanvas(QWidget):
             for e in self._preview_entities:
                 self._draw_entity(painter, e)
 
+        # Draw Draftmate guides (tracked points + alignment lines)
+        if self._draftmate_result is not None:
+            self._draw_draftmate(painter, self._draftmate_result)
+
         # Draw OSNAP marker
         if self._snap_result is not None:
             self._draw_snap_marker(painter, self._snap_result)
@@ -677,6 +757,81 @@ class CADCanvas(QWidget):
             painter.drawLine(QPointF(sx - S, sy + S), QPointF(sx + S, sy + S))
 
         painter.restore()
+
+    # ------------------------------------------------------------------
+    # Draftmate visual feedback
+    # ------------------------------------------------------------------
+
+    def _draw_draftmate(self, painter: QPainter, result: DraftmateResult) -> None:
+        """Draw Draftmate guides: green crosses for tracked points and
+        green dashed extension / polar lines."""
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        green = QColor(0x22, 0xC5, 0x5E)  # #22c55e — a bright "tracking green"
+        w_px, h_px = self.width(), self.height()
+
+        # ---- Tracked point crosses (+) ------------------------------------
+        cross_half = 6  # half-size in screen pixels
+        pen_cross = QPen(green, 1.5)
+        pen_cross.setCosmetic(True)
+        painter.setPen(pen_cross)
+        painter.setBrush(Qt.NoBrush)
+        for tp in result.tracked_points:
+            sp = self.world_to_screen(QPointF(tp.point.x, tp.point.y))
+            sx, sy = sp.x(), sp.y()
+            painter.drawLine(
+                QPointF(sx - cross_half, sy),
+                QPointF(sx + cross_half, sy),
+            )
+            painter.drawLine(
+                QPointF(sx, sy - cross_half),
+                QPointF(sx, sy + cross_half),
+            )
+
+        # ---- Alignment / polar guide lines --------------------------------
+        pen_guide = QPen(green, 1)
+        pen_guide.setStyle(Qt.DashLine)
+        pen_guide.setCosmetic(True)
+        painter.setPen(pen_guide)
+
+        for ln in result.alignment_lines:
+            self._draw_infinite_line(painter, ln, w_px, h_px)
+
+        # ---- Snapped point marker (small filled green circle) -------------
+        if result.snapped_point is not None:
+            sp = self.world_to_screen(
+                QPointF(result.snapped_point.x, result.snapped_point.y)
+            )
+            painter.setPen(QPen(green, 1.5))
+            painter.setBrush(QBrush(green))
+            painter.drawEllipse(sp, 3.0, 3.0)
+
+        painter.restore()
+
+    def _draw_infinite_line(
+        self,
+        painter: QPainter,
+        ln: AlignmentLine,
+        w_px: int,
+        h_px: int,
+    ) -> None:
+        """Clip an infinite line to the viewport and draw it."""
+        # Convert origin + direction to two world-space points far off-screen
+        # using a very large parameter range that guarantees the line extends
+        # well beyond the viewport in both directions.
+        T = 1e7  # large enough for any reasonable zoom level
+        p1w = QPointF(
+            ln.origin.x - T * ln.direction.x,
+            ln.origin.y - T * ln.direction.y,
+        )
+        p2w = QPointF(
+            ln.origin.x + T * ln.direction.x,
+            ln.origin.y + T * ln.direction.y,
+        )
+        p1s = self.world_to_screen(p1w)
+        p2s = self.world_to_screen(p2w)
+        painter.drawLine(p1s, p2s)
 
     def _draw_selection_rect(self, painter: QPainter) -> None:
         """Draw the selection rectangle overlay in screen coordinates.

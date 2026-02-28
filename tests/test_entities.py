@@ -82,11 +82,11 @@ class TestLineEntity:
         assert perps[0].point.x == pytest.approx(5.0)
         assert perps[0].point.y == pytest.approx(0.0)
 
-    def test_perp_infinite_extension(self, line_h):
-        """Perp foot outside segment range (t<0 or t>1) is still returned
-        because LineEntity uses the infinite line for perp snaps."""
+    def test_perp_outside_segment_skipped(self, line_h):
+        """Perp foot outside segment range (t<0 or t>1) is NOT returned,
+        consistent with PolylineEntity and RectangleEntity behaviour."""
         perps = line_h.perp_snaps(Vec2(-5, 10))
-        assert len(perps) == 1
+        assert len(perps) == 0
 
     # ---- crosses_rect ----
     def test_crosses_rect_intersecting(self, line_h):

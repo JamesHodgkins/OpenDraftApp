@@ -15,7 +15,10 @@ from app.canvas import CADCanvas
 from app.document import DocumentStore
 from app.editor import Editor
 from app.entities import Vec2
+from app.entities.snap_types import SnapType
 from app.ui.layer_manager import LayerManagerDialog
+from app.ui.draftmate_settings import DraftmateSettingsDialog
+from app.ui.status_bar import StatusBarWidget
 from app.config.ribbon_config import RIBBON_CONFIG
 from app.editor.command_registry import autodiscover
 
@@ -124,29 +127,26 @@ class MainWindow(QMainWindow):
         central.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(central)
 
-        # Status bar — command prompt (left) and cursor coordinates (right)
-        self.cmd_label = QLabel("")
-        self.coord_label = QLabel("X: 0.00 Y: 0.00")
+        # ---- Status bar (full custom widget) -------------------------------
+        self._status_widget = StatusBarWidget()
         sb = self.statusBar()
         sb.setObjectName("MainStatusBar")
-        # rely on the separator/QSS for the top border; remove forced inline styling
-        sb.addWidget(self.cmd_label)              # stretches on the left
-        sb.addPermanentWidget(self.coord_label)   # pinned to the right
+        # The StatusBarWidget is the sole occupant — add it as a permanent
+        # widget that spans the full width.
+        sb.addPermanentWidget(self._status_widget, 1)
+
+        # Wire toggle buttons → canvas / engine state.
+        self._wire_status_bar()
 
         # -------------------------------------------------------------------
         # Window sizing/positioning
         # -------------------------------------------------------------------
-        # Ensure the initial size isn't too small or too large and center it on screen.
-        # A separate minimum is already enforced by the canvas, but we add a default
-        # resize to avoid unusually large automatic geometry which on some systems
-        # resulted in the window appearing in the lower-right corner when the
-        # content size exceeded the available screen size.
         self.setMinimumSize(1400, 768)
         self.resize(1400, 768)
         self._center_on_screen()
 
         # Editor status message → left side of status bar
-        self.editor.status_message.connect(self.cmd_label.setText)
+        self.editor.status_message.connect(self._status_widget.cmd_label.setText)
 
         # update status with canvas mouse movement
         try:
@@ -157,8 +157,77 @@ class MainWindow(QMainWindow):
         # Reusable Layer Manager dialog — created once, re-shown on demand.
         self._layer_dlg: Optional[LayerManagerDialog] = None
 
+        # Sync status-bar buttons when the canvas toggles via F-keys.
+        canvas.orthoChanged.connect(self._status_widget.set_ortho)
+        canvas.draftmateChanged.connect(self._status_widget.set_draftmate)
+
+    # -----------------------------------------------------------------------
+    # Status-bar wiring
+    # -----------------------------------------------------------------------
+
+    def _wire_status_bar(self) -> None:
+        """Connect every StatusBarWidget toggle to the matching engine state."""
+        sw = self._status_widget
+        canvas = self._canvas
+
+        # -- Master OSNAP toggle --------------------------------------------
+        def _on_master_snap(on: bool) -> None:
+            canvas._osnap_master = on
+            canvas.update()
+        sw.btn_mas.toggled.connect(_on_master_snap)
+
+        # -- Individual snap-type toggles -----------------------------------
+        _snap_map = {
+            SnapType.ENDPOINT:      sw.snap_button(SnapType.ENDPOINT),
+            SnapType.MIDPOINT:      sw.snap_button(SnapType.MIDPOINT),
+            SnapType.CENTER:        sw.snap_button(SnapType.CENTER),
+            SnapType.PERPENDICULAR: sw.snap_button(SnapType.PERPENDICULAR),
+            SnapType.NEAREST:       sw.snap_button(SnapType.NEAREST),
+        }
+        for st, btn in _snap_map.items():
+            if btn is None:
+                continue
+            # Closure trick: bind *st* in default arg so each lambda captures
+            # its own copy.
+            def _make_handler(snap_type: SnapType):
+                def _handler(on: bool) -> None:
+                    if on:
+                        canvas._osnap.enabled.add(snap_type)
+                    else:
+                        canvas._osnap.enabled.discard(snap_type)
+                return _handler
+            btn.toggled.connect(_make_handler(st))
+
+        # -- Ortho toggle ---------------------------------------------------
+        def _on_ortho(on: bool) -> None:
+            canvas._ortho = on
+            if on:
+                # Ortho and Draftmate are mutually exclusive.
+                canvas._draftmate.settings.enabled = False
+                canvas._draftmate.clear()
+                canvas._draftmate_result = None
+                sw.set_draftmate(False)
+            canvas.update()
+        sw.btn_ortho.toggled.connect(_on_ortho)
+
+        # -- Draftmate toggle -----------------------------------------------
+        def _on_dm(on: bool) -> None:
+            canvas._draftmate.settings.enabled = on
+            if on:
+                # Draftmate and Ortho are mutually exclusive.
+                canvas._ortho = False
+                sw.set_ortho(False)
+            else:
+                canvas._draftmate.clear()
+                canvas._draftmate_result = None
+            canvas.update()
+        sw.btn_dm.toggled.connect(_on_dm)
+
+        # Right-click DM → open settings dialog.
+        sw.draftmate_settings_requested.connect(self._open_draftmate_settings)
+
     def _on_canvas_mouse_moved(self, x: float, y: float) -> None:
-        self.coord_label.setText(f"X: {x:.2f} Y: {y:.2f}")
+        self._status_widget.update_coords(x, y)
 
     # -----------------------------------------------------------------------
     # Action routing
@@ -194,6 +263,21 @@ class MainWindow(QMainWindow):
             # Repopulate the layer combo if layers are added/removed/renamed
             self._layer_dlg.layers_changed.connect(self._ribbon.refresh_layers)
         self._layer_dlg.exec()  # modal — canvas refresh signal still fires during exec()
+
+    # -----------------------------------------------------------------------
+    # Draftmate helpers
+    # -----------------------------------------------------------------------
+
+    def _open_draftmate_settings(self) -> None:
+        """Open the Draftmate settings dialog."""
+        dlg = DraftmateSettingsDialog(
+            self._canvas._draftmate.settings, parent=self,
+        )
+        dlg.exec()
+        # Sync the status label after the dialog closes.
+        self._status_widget.set_draftmate(
+            self._canvas._draftmate.settings.enabled
+        )
 
     # -----------------------------------------------------------------------
     # helpers
