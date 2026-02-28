@@ -15,11 +15,21 @@ from app.document import DocumentStore
 from app.entities import Vec2, LineEntity
 
 
+# helper for synthesising key events in tests
+from PySide6.QtGui import QKeyEvent
+
+def key(event, key_code, text=""):
+    return QKeyEvent(QKeyEvent.KeyPress, key_code, Qt.NoModifier, text)
+
+
 @pytest.fixture
 def canvas(qtbot):
-    """Create a canvas widget backed by an empty document."""
+    """Create a canvas widget backed by an empty document and editor."""
     doc = DocumentStore()
-    c = CADCanvas(document=doc)
+    from app.editor.editor import Editor
+
+    editor = Editor(document=doc)
+    c = CADCanvas(document=doc, editor=editor)
     c.resize(800, 600)
     qtbot.addWidget(c)
     return c
@@ -178,3 +188,38 @@ def test_entity_override_pen(canvas):
     overlay = canvas._overlay_pen_for_entity(e, sel_ids=set(), hover_id=e.id)
     assert overlay is not None
     assert overlay.color().red() == 255 and overlay.color().green() == 200 and overlay.color().blue() == 0
+
+
+def test_delete_selected_entities(canvas):
+    """Pressing Delete with a non-empty selection should remove those items."""
+    doc = canvas._document
+    # add a couple of lines and select them
+    e1 = LineEntity(p1=Vec2(0, 0), p2=Vec2(1, 0))
+    e2 = LineEntity(p1=Vec2(2, 2), p2=Vec2(3, 3))
+    doc.add_entity(e1)
+    doc.add_entity(e2)
+    canvas._editor.selection.add(e1.id)
+    canvas._editor.selection.add(e2.id)
+
+    # pretend the user was hovering one of them when they hit Delete
+    canvas._hovered_entity_id = e1.id
+
+    canvas.keyPressEvent(key(None, Qt.Key_Delete))
+    # both should be removed
+    assert doc.get_entity(e1.id) is None
+    assert doc.get_entity(e2.id) is None
+    assert not canvas._editor.selection
+    # hover state should have been reset
+    assert canvas._hovered_entity_id is None
+
+
+def test_delete_without_selection_does_nothing(canvas):
+    """Hitting Delete with nothing selected should be a no-op."""
+    doc = canvas._document
+    e = LineEntity(p1=Vec2(0, 0), p2=Vec2(1, 1))
+    doc.add_entity(e)
+    # ensure selection empty
+    canvas._editor.selection.clear()
+    canvas.keyPressEvent(key(None, Qt.Key_Delete))
+    # entity still present
+    assert doc.get_entity(e.id) is e

@@ -226,9 +226,15 @@ class DynamicInputWidget(QWidget):
 
         self._update_field_values()
         self.show()
+        # Defer focus + selection until after Qt processes the show event,
+        # otherwise selectAll() has no effect on a freshly shown widget.
+        QTimer.singleShot(0, self._focus_field_1)
+        self._hide_timer.start()
+
+    def _focus_field_1(self) -> None:
+        """Give keyboard focus to field 1 and select all its text."""
         self._field_1.setFocus()
         self._field_1.selectAll()
-        self._hide_timer.start()
 
     def _setup_vector_input(self) -> None:
         """Configure UI for point (vector) input."""
@@ -345,9 +351,18 @@ class DynamicInputWidget(QWidget):
         screen_pos:
             Current cursor screen position (widget will appear nearby).
         """
-        x = screen_pos.x() + self.CURSOR_OFFSET_X
-        y = screen_pos.y() + self.CURSOR_OFFSET_Y
-        self.move(x, y)
+        # On Windows, move() can trigger a WM_KILLFOCUS on the focused child
+        # (QLineEdit), silently dropping the caret. Save and restore focus.
+        focused = QApplication.focusWidget()
+        had_child_focus = focused is not None and self.isAncestorOf(focused)
+
+        self.move(
+            screen_pos.x() + self.CURSOR_OFFSET_X,
+            screen_pos.y() + self.CURSOR_OFFSET_Y,
+        )
+
+        if had_child_focus:
+            focused.setFocus()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         """Handle keyboard input."""

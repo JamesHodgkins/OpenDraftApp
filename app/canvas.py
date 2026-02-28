@@ -53,7 +53,7 @@ from app.editor.hit_testing import (
     entity_inside_rect,
     entity_crosses_rect,
 )
-from app.ui.dynamic_input_widget import DynamicInputWidget
+from app.ui.draftmate_widget import DraftmateWidget
 
 
 class CADCanvas(QWidget):
@@ -142,9 +142,9 @@ class CADCanvas(QWidget):
         # selection drags so we only redraw the selection rect each frame.
         self._scene_cache: Optional[QPixmap] = None
 
-        # ---- Dynamic input widget ------------------------------------------
-        # Shows input fields following the cursor during point/value input
-        self._dynamic_input = DynamicInputWidget(parent=self)
+        # ---- Draftmate widget -----------------------------------------------
+        # Custom-painted input fields following the cursor during point/value input
+        self._dynamic_input = DraftmateWidget(parent=self)
         self._dynamic_input.hide()
         self._dynamic_input.input_submitted.connect(self._on_dynamic_input_submitted)
         self._dynamic_input.input_cancelled.connect(self._on_dynamic_input_cancelled)
@@ -351,6 +351,20 @@ class CADCanvas(QWidget):
             self._hovered_entity_id = None
             self.update()
 
+    def event(self, event) -> bool:  # noqa: N802
+        """Intercept Tab/Shift-Tab before Qt's focus-chain handles them.
+
+        Qt processes Tab at the QWidget.event() level, before keyPressEvent
+        is called.  When the Draftmate widget is visible we must consume
+        Tab/Backtab here so they never reach the focus machinery.
+        """
+        if event.type() == event.Type.KeyPress:
+            key = event.key()
+            if key in (Qt.Key_Tab, Qt.Key_Backtab) and self._dynamic_input.isVisible():
+                self._dynamic_input.keyPressEvent(event)
+                return True  # consumed
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key_Escape:
             if self._idle:
@@ -368,7 +382,27 @@ class CADCanvas(QWidget):
                 self.cancelRequested.emit()
             else:
                 # Command is active: cancel the command but leave selection intact
+                self._dynamic_input.clear()
                 self.cancelRequested.emit()
+            return
+
+        # --- Delete key: remove selected entities when idle --------------
+        if event.key() == Qt.Key_Delete and self._idle:
+            if self._editor is not None and self._editor.selection:
+                # Editor provides a convenience helper that takes care of
+                # iterating, emitting signals and clearing the set.
+                self._editor.delete_selection()
+                # If the deleted objects included the one currently hovered,
+                # clear the hover so we don't try to render an overlay for a
+                # non-existent entity.
+                self._hovered_entity_id = None
+                self.update()
+            return
+
+        if self._dynamic_input.isVisible():
+            # Forward all non-Escape keys to the Draftmate widget while it
+            # is active so the user can type values without clicking.
+            self._dynamic_input.keyPressEvent(event)
         else:
             super().keyPressEvent(event)
 
@@ -928,6 +962,9 @@ class CADCanvas(QWidget):
             # Show the widget on the screen
             self._dynamic_input.show()
             self._dynamic_input.raise_()
+            # Ensure the canvas has keyboard focus so keyPressEvent fires
+            # and forwards typed characters to the Draftmate widget.
+            self.setFocus()
 
     @Slot(object)
     def _on_dynamic_input_submitted(self, value: object) -> None:

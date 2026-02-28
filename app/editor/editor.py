@@ -336,6 +336,32 @@ class Editor(QObject):
             self.document_changed.emit()
         return removed
 
+    # ------------------------------------------------------------------
+    # Convenience helpers
+    # ------------------------------------------------------------------
+
+    def delete_selection(self) -> list[BaseEntity]:
+        """Remove all currently selected entities from the document.
+
+        The selection set is cleared regardless of whether the entities
+        actually existed in the document.  Emitted signals are handled
+        by :meth:`remove_entity`, so callers can listen to
+        ``entity_removed`` if they need to track individual removals.
+
+        Returns a list of the removed entity objects (preserving the order
+        in the selection set at the time of deletion).
+        """
+        removed_entities: list[BaseEntity] = []
+        # copy ids because removal mutates the selection set
+        for eid in list(self.selection.ids):
+            ent = self.remove_entity(eid)
+            if ent is not None:
+                removed_entities.append(ent)
+        # clear selection regardless of success so user isn't left with stale
+        # IDs that no longer exist.
+        self.selection.clear()
+        return removed_entities
+
     # -------------------------------------------------------------- internals
 
     def _run_in_thread(self, cmd: CommandBase, name: str) -> None:
