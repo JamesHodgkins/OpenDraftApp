@@ -76,8 +76,7 @@ class HatchEntity(BaseEntity):
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "HatchEntity":
         return cls(
-            id=d.get("id", str(uuid.uuid4())),
-            layer=d.get("layer", "default"),
+            **cls._base_kwargs(d),
             pattern=d.get("pattern", "solid"),
             pattern_scale=float(d.get("patternScale", 1.0)),
             pattern_angle=float(d.get("patternAngle", 0.0)),

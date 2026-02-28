@@ -9,12 +9,14 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QColorDialog, QMessageBox,
+    QAbstractItemView, QMessageBox, QComboBox,
 )
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt, Signal
 
 from app.document import DocumentStore, Layer
+from app.colors.color import Color as _Color
+from app.ui.color_picker import ColorPickerDialog
 
 
 class LayerManagerDialog(QDialog):
@@ -35,7 +37,14 @@ class LayerManagerDialog(QDialog):
     COL_VISIBLE = 1
     COL_COLOR   = 2
     COL_NAME    = 3
-    HEADERS     = ["Active", "Visible", "Color", "Name"]
+    COL_STYLE   = 4
+    COL_WEIGHT  = 5
+    HEADERS     = ["Active", "Visible", "Color", "Name", "Line Style", "Weight"]
+
+    # Recognised line-style names (must match canvas._LINE_STYLE_MAP keys)
+    _LINE_STYLES = ["solid", "dashed", "dotted", "dashdot", "dashdotdot", "center", "phantom", "hidden"]
+    # Common line weight choices (displayed as mm/px units; internal store is float)
+    _LINE_WEIGHTS = ["0.25", "0.5", "0.75", "1.0", "1.25", "1.5", "2.0", "2.5", "3.0"]
 
     # ── Stylesheet ────────────────────────────────────────────────────
     _DIALOG_STYLE = """
@@ -72,7 +81,7 @@ class LayerManagerDialog(QDialog):
     def __init__(self, document: DocumentStore, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Layer Manager")
-        self.setMinimumSize(520, 320)
+        self.setMinimumSize(680, 320)
         self.setStyleSheet(self._DIALOG_STYLE)
         self._doc = document
         self._build_ui()
@@ -101,6 +110,10 @@ class LayerManagerDialog(QDialog):
         hdr.setSectionResizeMode(self.COL_COLOR,   QHeaderView.Fixed)
         self._table.setColumnWidth(self.COL_COLOR, 50)
         hdr.setSectionResizeMode(self.COL_NAME,    QHeaderView.Stretch)
+        hdr.setSectionResizeMode(self.COL_STYLE,   QHeaderView.Fixed)
+        self._table.setColumnWidth(self.COL_STYLE, 100)
+        hdr.setSectionResizeMode(self.COL_WEIGHT,  QHeaderView.Fixed)
+        self._table.setColumnWidth(self.COL_WEIGHT, 80)
         self._table.verticalHeader().setVisible(False)
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
@@ -109,7 +122,12 @@ class LayerManagerDialog(QDialog):
         # ── hint label ───────────────────────────────────────────────
         hint_label = QPushButton()
         hint_label.setEnabled(False)
-        hint_label.setText("Double-click a colour swatch to change it.  Double-click a name to rename.")
+        hint_label.setText(
+            "Double-click a colour swatch to change colour.  "
+            "Double-click Line Style to change it.  "
+            "Click Weight to edit thickness.  "
+            "Double-click a name to rename."
+        )
         hint_label.setStyleSheet(
             "QPushButton { background: transparent; border: none; "
             "color: #888; font-size: 9pt; padding: 0; }"
@@ -169,7 +187,11 @@ class LayerManagerDialog(QDialog):
         # Color swatch — read-only; double-click opens colour picker
         color_item = QTableWidgetItem()
         color_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-        color_item.setBackground(QColor(layer.color))
+        try:
+            resolved = _Color.from_string(layer.color).to_hex()
+        except Exception:
+            resolved = layer.color
+        color_item.setBackground(QColor(resolved))
         color_item.setData(Qt.UserRole, layer.name)
         self._table.setItem(row, self.COL_COLOR, color_item)
 
@@ -179,6 +201,51 @@ class LayerManagerDialog(QDialog):
             name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         name_item.setData(Qt.UserRole, layer.name)
         self._table.setItem(row, self.COL_NAME, name_item)
+
+        # Line style — dropdown
+        style_combo = QComboBox()
+        style_combo.addItems(self._LINE_STYLES)
+        if layer.line_style in self._LINE_STYLES:
+            style_combo.setCurrentText(layer.line_style)
+        else:
+            style_combo.setCurrentIndex(0)
+        style_combo.setProperty("layerName", layer.name)
+        def _on_style_change(text):
+            ln = style_combo.property("layerName")
+            l = self._doc.get_layer(ln)
+            if l is None:
+                return
+            l.line_style = text
+            self.layers_changed.emit()
+        style_combo.currentTextChanged.connect(_on_style_change)
+        self._table.setCellWidget(row, self.COL_STYLE, style_combo)
+
+        # Line weight — dropdown
+        weight_combo = QComboBox()
+        weight_combo.addItems(self._LINE_WEIGHTS)
+        cur_w = str(layer.thickness)
+        if cur_w in self._LINE_WEIGHTS:
+            weight_combo.setCurrentText(cur_w)
+        else:
+            try:
+                vals = [float(x) for x in self._LINE_WEIGHTS]
+                idx = min(range(len(vals)), key=lambda i: abs(vals[i] - float(layer.thickness)))
+                weight_combo.setCurrentIndex(idx)
+            except Exception:
+                weight_combo.setCurrentIndex(0)
+        weight_combo.setProperty("layerName", layer.name)
+        def _on_weight_change(text):
+            ln = weight_combo.property("layerName")
+            l = self._doc.get_layer(ln)
+            if l is None:
+                return
+            try:
+                l.thickness = float(text)
+                self.layers_changed.emit()
+            except Exception:
+                pass
+        weight_combo.currentTextChanged.connect(_on_weight_change)
+        self._table.setCellWidget(row, self.COL_WEIGHT, weight_combo)
 
     # ──────────────────────────────────────────────────────────────────
     # Event handlers
@@ -227,33 +294,49 @@ class LayerManagerDialog(QDialog):
             layer.name = new_name
             if self._doc.active_layer == layer_name:
                 self._doc.active_layer = new_name
-            # Update the stored key in every cell of this row
+            # Update the stored key in every cell of this row and any widgets
             self._table.blockSignals(True)
             for c in range(self._table.columnCount()):
                 cell = self._table.item(row, c)
                 if cell is not None:
                     cell.setData(Qt.UserRole, new_name)
+                widget = self._table.cellWidget(row, c)
+                if widget is not None:
+                    widget.setProperty("layerName", new_name)
             self._table.blockSignals(False)
             self.layers_changed.emit()
+        # Weight is edited via the dropdown widget; no QTableWidgetItem handling
 
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
-        """Open a colour picker when the user double-clicks the colour swatch."""
-        if col != self.COL_COLOR:
+        """Handle double-click on colour swatch or line-style cells."""
+        item = self._table.item(row, col)
+        if item is None:
             return
-        item = self._table.item(row, self.COL_COLOR)
         layer_name = item.data(Qt.UserRole)
         layer = self._doc.get_layer(layer_name)
         if layer is None:
             return
-        chosen = QColorDialog.getColor(
-            QColor(layer.color), self, f"Choose colour — {layer_name}"
-        )
-        if chosen.isValid():
-            layer.color = chosen.name()
-            self._table.blockSignals(True)
-            item.setBackground(chosen)
-            self._table.blockSignals(False)
-            self.layers_changed.emit()
+
+        if col == self.COL_COLOR:
+            try:
+                initial = _Color.from_string(layer.color)
+            except Exception:
+                initial = _Color(aci=7)
+            dlg = ColorPickerDialog(
+                initial=initial, parent=self,
+                title=f"Choose colour — {layer_name}",
+            )
+            if dlg.exec() == QDialog.Accepted:
+                chosen = dlg.chosen_color()
+                if chosen is not None:
+                    layer.color = chosen.to_string()
+                    resolved = chosen.to_hex()
+                    self._table.blockSignals(True)
+                    item.setBackground(QColor(resolved))
+                    self._table.blockSignals(False)
+                    self.layers_changed.emit()
+
+        # Line style is edited in-table via a QComboBox; nothing to do here
 
     # ──────────────────────────────────────────────────────────────────
     # Toolbar actions

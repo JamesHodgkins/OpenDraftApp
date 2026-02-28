@@ -80,8 +80,7 @@ class DimensionEntity(BaseEntity):
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DimensionEntity":
         return cls(
-            id=d.get("id", str(uuid.uuid4())),
-            layer=d.get("layer", "default"),
+            **cls._base_kwargs(d),
             p1=Vec2.from_dict(d["p1"]),
             p2=Vec2.from_dict(d["p2"]),
             p3=Vec2.from_dict(d["p3"]),

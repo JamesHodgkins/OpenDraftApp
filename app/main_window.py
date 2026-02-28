@@ -8,6 +8,7 @@ from typing import Optional
 
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QShortcut, QKeySequence
 
 from controls.ribbon import RibbonPanel
 from app.canvas import CADCanvas
@@ -54,6 +55,33 @@ class MainWindow(QMainWindow):
         self._canvas = canvas
         layout.addWidget(canvas)
 
+        # Global Escape shortcut: always handle Escape even when focus is
+        # inside ribbon controls so users can press Esc to clear selection
+        # or cancel commands without clicking the viewport first.
+        esc_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        def _handle_escape():
+            if self.editor is None:
+                return
+            # If a command is running, cancel it.
+            if not self.editor.is_running:
+                # Idle: clear selection and hover (if any) then notify editor.
+                changed = False
+                if self.editor.selection:
+                    self.editor.selection.clear()
+                    changed = True
+                if getattr(self._canvas, "_hovered_entity_id", None) is not None:
+                    self._canvas._hovered_entity_id = None
+                    changed = True
+                if changed:
+                    self._canvas.refresh()
+            # Always call editor.cancel (matches canvas behavior emitting cancelRequested)
+            try:
+                self.editor.cancel()
+            except Exception:
+                pass
+
+        esc_shortcut.activated.connect(_handle_escape)
+
         # Canvas left-click → provide world point to the active command
         canvas.pointSelected.connect(
             lambda x, y: self.editor.provide_point(Vec2(x, y))
@@ -62,7 +90,7 @@ class MainWindow(QMainWindow):
         canvas.cancelRequested.connect(self.editor.cancel)
 
         # Wire PropertyPanel controls to the live document
-        ribbon.setup_document(doc)
+        ribbon.setup_document(doc, editor=self.editor)
 
         # Ribbon button → route to the correct handler
         ribbon.actionTriggered.connect(self._on_action)

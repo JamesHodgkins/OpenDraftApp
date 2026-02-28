@@ -10,8 +10,13 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
     QTabBar, QStackedWidget,
 )
+# Add QComboBox for layer select lookup
+from PySide6.QtWidgets import QComboBox
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPainter, QColor
+import logging
+
+_LOG = logging.getLogger(__name__)
 
 from controls.ribbon.ribbon_panel_widget import RibbonPanel as RibbonPanelWidget
 from controls.ribbon.ribbon_factory import PanelFactory
@@ -90,12 +95,13 @@ class RibbonPanel(QWidget):
 
         # Held after setup_document() for refresh_layers()
         self._document = None
+        self._editor = None
 
     # ------------------------------------------------------------------
     # Document wiring
     # ------------------------------------------------------------------
 
-    def setup_document(self, doc) -> None:
+    def setup_document(self, doc, editor=None) -> None:
         """Wire live document data to the Properties-panel controls.
 
         Must be called after the ribbon is fully constructed (e.g. from
@@ -105,50 +111,274 @@ class RibbonPanel(QWidget):
         ----------
         doc:
             The application :class:`~app.document.DocumentStore`.
+        editor:
+            The application :class:`~app.editor.Editor` — required for
+            selection-aware behaviour (layer / property changes apply to
+            selected entities when a selection is active).
         """
         self._document = doc
+        self._editor = editor
         self.refresh_layers()
 
         # ── color swatch ─────────────────────────────────────────────
-        btn = self.findChild(object, "colorSwatchBtn")
-        if btn is not None:
-            from PySide6.QtWidgets import QColorDialog
-            def _pick_color(*, _doc=doc, _btn=btn):
-                start = _doc.active_color or "#ffffff"
-                from PySide6.QtGui import QColor
-                c = QColorDialog.getColor(QColor(start), self, "Override colour")
-                if c.isValid():
-                    _doc.active_color = c.name()
-                    _btn.setStyleSheet(
-                        f"QPushButton {{ background: {c.name()}; border: 1px solid #666; "
-                        "border-radius: 2px; }"
-                        "QPushButton:hover { border-color: #aaa; }"
-                    )
+        # Use findChildren (plural) so every tab's instance gets wired.
+        from PySide6.QtWidgets import QPushButton, QDialog
+        from app.colors.color import Color as _Color
+        from app.ui.color_picker import ColorPickerDialog as _ColorPickerDialog
+        for btn in self.findChildren(QPushButton, "colorSwatchBtn"):
+            def _pick_color(_btn=btn):
+                _doc = self._document
+                _editor = self._editor
+                # Determine a sensible starting colour
+                if _editor and _editor.selection:
+                    first_id = next(iter(_editor.selection.ids))
+                    e = _doc.get_entity(first_id)
+                    raw = (e.color if e and e.color else None)
+                else:
+                    raw = _doc.active_color
+
+                if raw is not None:
+                    initial = _Color.from_string(raw)
+                else:
+                    initial = _Color(aci=7)
+
+                dlg = _ColorPickerDialog(initial=initial, parent=self, title="Override colour")
+                if dlg.exec() != QDialog.Accepted:
+                    return
+
+                chosen = dlg.chosen_color()
+                if chosen is None:
+                    return
+
+                color_str = chosen.to_string()
+                if _editor and _editor.selection:
+                    # Apply colour override to every selected entity
+                    for eid in list(_editor.selection.ids):
+                        ent = _doc.get_entity(eid)
+                        if ent is not None:
+                            ent.color = color_str
+                    _doc._notify()
+                    _editor.document_changed.emit()
+                else:
+                    # Store as the active override for new entities
+                    _doc.active_color = color_str
+                    # Notify listeners that document-level state changed
+                    try:
+                        _doc._notify()
+                    except Exception:
+                        pass
+
+                # Update all swatch visuals immediately
+                for _b in self.findChildren(QPushButton, "colorSwatchBtn"):
+                    self._set_swatch_color(_b, color_str)
+
             btn.clicked.connect(_pick_color)
 
         # ── line-style combo ─────────────────────────────────────────
-        style_combo = self.findChild(object, "lineStyleCombo")
-        if style_combo is not None:
-            def _style_changed(idx, *, _doc=doc, _combo=style_combo):
-                if idx == 0:
-                    _doc.active_line_style = None
+        from PySide6.QtWidgets import QComboBox as _QComboBox
+        for style_combo in self.findChildren(_QComboBox, "lineStyleCombo"):
+            def _style_changed(idx, _combo=style_combo):
+                _doc = self._document
+                _editor = self._editor
+                val = None if idx == 0 else _combo.itemText(idx).lower()
+                if _editor and _editor.selection:
+                    for eid in list(_editor.selection.ids):
+                        ent = _doc.get_entity(eid)
+                        if ent is not None:
+                            ent.line_style = val
+                    _doc._notify()
+                    _editor.document_changed.emit()
                 else:
-                    _doc.active_line_style = _combo.itemText(idx).lower()
+                    _doc.active_line_style = val
+
             style_combo.currentIndexChanged.connect(_style_changed)
+            # Also listen to user activation (fires even if the index didn't change)
+            try:
+                style_combo.activated.connect(_style_changed)
+            except Exception:
+                pass
 
         # ── thickness combo ───────────────────────────────────────────
-        thick_combo = self.findChild(object, "thicknessCombo")
-        if thick_combo is not None:
-            def _thick_changed(idx, *, _doc=doc, _combo=thick_combo):
+        for thick_combo in self.findChildren(_QComboBox, "thicknessCombo"):
+            def _thick_changed(idx, _combo=thick_combo):
+                _doc = self._document
+                _editor = self._editor
                 if idx == 0:
-                    _doc.active_thickness = None
+                    val = None
                 else:
                     try:
                         val = float(_combo.itemText(idx).split()[0])
-                        _doc.active_thickness = val
                     except (ValueError, IndexError):
-                        _doc.active_thickness = None
+                        val = None
+                if _editor and _editor.selection:
+                    for eid in list(_editor.selection.ids):
+                        ent = _doc.get_entity(eid)
+                        if ent is not None:
+                            ent.line_weight = val
+                    _doc._notify()
+                    _editor.document_changed.emit()
+                else:
+                    _doc.active_thickness = val
+
             thick_combo.currentIndexChanged.connect(_thick_changed)
+            # Also handle activation so choosing the same visible item (e.g. "by layer")
+            # still triggers the handler when user explicitly picks it from the popup.
+            try:
+                thick_combo.activated.connect(_thick_changed)
+            except Exception:
+                pass
+
+        # ── selection awareness ───────────────────────────────────────
+        if editor is not None:
+            editor.selection.changed.connect(self._refresh_controls_from_selection)
+
+    # ------------------------------------------------------------------
+    # Selection-driven control refresh
+    # ------------------------------------------------------------------
+
+    def _refresh_controls_from_selection(self) -> None:
+        """Update ribbon controls to reflect the current selection state.
+
+        Called automatically whenever ``editor.selection`` changes.
+        - No selection: show document-level active layer / overrides.
+        - One or more entities selected: show their common properties
+          (or leave unchanged for mixed values).
+        """
+        doc = self._document
+        editor = self._editor
+        if doc is None:
+            return
+
+        sel_ids = editor.selection.ids if editor else set()
+
+        # ── layer combo ───────────────────────────────────────────────
+        for combo in self._get_layer_combos():
+            combo.blockSignals(True)
+            if sel_ids:
+                layers = {
+                    doc.get_entity(eid).layer
+                    for eid in sel_ids
+                    if doc.get_entity(eid) is not None
+                }
+                if len(layers) == 1:
+                    idx = combo.findText(next(iter(layers)))
+                    if idx >= 0:
+                        combo.setCurrentIndex(idx)
+                # mixed selection: leave combo unchanged
+            else:
+                idx = combo.findText(doc.active_layer)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+
+        # ── color swatch ──────────────────────────────────────────────
+        from PySide6.QtWidgets import QPushButton as _QPushButton
+        from PySide6.QtWidgets import QComboBox as _QComboBox
+        if sel_ids:
+            colors = {
+                getattr(doc.get_entity(eid), "color", None)
+                for eid in sel_ids
+                if doc.get_entity(eid) is not None
+            }
+            color = next(iter(colors)) if len(colors) == 1 else None
+        else:
+            color = doc.active_color
+        for btn in self.findChildren(_QPushButton, "colorSwatchBtn"):
+            self._set_swatch_color(btn, color)
+
+        # ── style combo ───────────────────────────────────────────────
+        if sel_ids:
+            styles = {
+                getattr(doc.get_entity(eid), "line_style", None)
+                for eid in sel_ids
+                if doc.get_entity(eid) is not None
+            }
+            style_val = next(iter(styles)) if len(styles) == 1 else None
+        else:
+            style_val = doc.active_line_style
+        for style_combo in self.findChildren(_QComboBox, "lineStyleCombo"):
+            style_combo.blockSignals(True)
+            self._set_combo_text(style_combo, style_val, case_fold=True)
+            style_combo.blockSignals(False)
+
+        # ── thickness combo ───────────────────────────────────────────
+        if sel_ids:
+            weights = {
+                getattr(doc.get_entity(eid), "line_weight", None)
+                for eid in sel_ids
+                if doc.get_entity(eid) is not None
+            }
+            weight_val = next(iter(weights)) if len(weights) == 1 else None
+        else:
+            weight_val = doc.active_thickness
+        for thick_combo in self.findChildren(_QComboBox, "thicknessCombo"):
+            thick_combo.blockSignals(True)
+            if weight_val is None:
+                thick_combo.setCurrentIndex(0)
+            else:
+                for i in range(1, thick_combo.count()):
+                    try:
+                        if abs(float(thick_combo.itemText(i).split()[0]) - weight_val) < 0.001:
+                            thick_combo.setCurrentIndex(i)
+                            break
+                    except (ValueError, IndexError):
+                        pass
+            thick_combo.blockSignals(False)
+
+    # ------------------------------------------------------------------
+    # Static helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _set_swatch_color(btn, color: Optional[str]) -> None:
+        """Apply a colour string to a colour-swatch QPushButton.
+
+        Accepts ACI strings (``"aci:N"``) as well as plain ``#rrggbb`` hex.
+        """
+        if color:
+            from app.colors.color import Color as _Color
+            try:
+                resolved = _Color.from_string(color).to_hex()
+            except Exception:
+                resolved = color
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {resolved}; border: 1px solid #666; border-radius: 2px; }}"
+                "QPushButton:hover { border-color: #aaa; }"
+            )
+        else:
+            btn.setStyleSheet(
+                "QPushButton { background: transparent; border: 1px solid #666; border-radius: 2px; }"
+                "QPushButton:hover { border-color: #aaa; }"
+            )
+
+    @staticmethod
+    def _set_combo_text(combo, value: Optional[str], *, case_fold: bool = False) -> None:
+        """Select the combo item matching *value*, or index 0 if None / not found."""
+        if value is None:
+            combo.setCurrentIndex(0)
+            return
+        # Try exact match first, then case-folded capitalisation
+        idx = combo.findText(value)
+        if idx < 0 and case_fold:
+            idx = combo.findText(value.capitalize())
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _get_layer_combos(self) -> "List[QComboBox]":
+        """Return all ``layerSelectCombo`` widgets found in the ribbon."""
+        combos: List[QComboBox] = []
+        if hasattr(self, "stacked") and self.stacked is not None:
+            for i in range(self.stacked.count()):
+                page = self.stacked.widget(i)
+                if page is None:
+                    continue
+                c = page.findChild(QComboBox, "layerSelectCombo")
+                if c is not None:
+                    combos.append(c)
+        if not combos:
+            c = self.findChild(QComboBox, "layerSelectCombo")
+            if c is not None:
+                combos.append(c)
+        return combos
 
     def refresh_layers(self) -> None:
         """Repopulate the layer-select combo from the current document.
@@ -158,26 +388,42 @@ class RibbonPanel(QWidget):
         doc = self._document
         if doc is None:
             return
-        combo = self.findChild(object, "layerSelectCombo")
-        if combo is None:
-            return
-        combo.blockSignals(True)
-        combo.clear()
-        for layer in doc.layers:
-            combo.addItem(layer.name)
-        # Restore current selection
-        idx = combo.findText(doc.active_layer)
-        if idx >= 0:
-            combo.setCurrentIndex(idx)
-        combo.blockSignals(False)
 
-        # Connect once – store the slot on the widget so multiple calls to
-        # refresh_layers() don't stack up duplicate connections.
-        if not hasattr(combo, "_layer_slot"):
-            def _slot(name, _doc=doc):
-                _doc.active_layer = name
-            combo._layer_slot = _slot
-            combo.currentTextChanged.connect(_slot)
+        combos = self._get_layer_combos()
+        if not combos:
+            return
+
+        for combo in combos:
+            combo.blockSignals(True)
+            combo.clear()
+            for layer in doc.layers:
+                combo.addItem(layer.name)
+            # Restore current selection
+            idx = combo.findText(doc.active_layer)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+
+            # Connect once — store the slot on the widget so multiple calls to
+            # refresh_layers() don't stack up duplicate connections.
+            if not hasattr(combo, "_layer_slot"):
+                def _slot(name, _ribbon=self):
+                    _doc = _ribbon._document
+                    _editor = _ribbon._editor
+                    if _editor and _editor.selection:
+                        # Move all selected entities to the chosen layer
+                        for eid in list(_editor.selection.ids):
+                            ent = _doc.get_entity(eid)
+                            if ent is not None:
+                                ent.layer = name
+                        _doc._notify()
+                        _editor.document_changed.emit()
+                    else:
+                        # No selection — change the active (current) layer
+                        _doc.active_layer = name
+
+                combo._layer_slot = _slot
+                combo.currentTextChanged.connect(_slot)
 
     # ------------------------------------------------------------------
     # Private helpers

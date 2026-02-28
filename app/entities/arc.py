@@ -181,8 +181,7 @@ class ArcEntity(BaseEntity):
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "ArcEntity":
         return cls(
-            id=d.get("id", str(uuid.uuid4())),
-            layer=d.get("layer", "default"),
+            **cls._base_kwargs(d),
             center=Vec2.from_dict(d["center"]),
             radius=float(d["radius"]),
             start_angle=float(d["startAngle"]),

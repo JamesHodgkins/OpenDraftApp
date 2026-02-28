@@ -305,10 +305,22 @@ class Editor(QObject):
         current ``active_layer`` before insertion so all newly drawn objects
         land on the correct layer automatically.
 
+        Any active property overrides (colour, line style, weight) stored on
+        the document are also applied to the new entity so that "ByLayer"
+        objects inherit the pending style described in the Properties panel.
+
         Returns the entity (for chaining).
         """
-        entity.layer = self._document.active_layer
-        self._document.add_entity(entity)
+        doc = self._document
+        entity.layer = doc.active_layer
+        # Apply active overrides — None means "ByLayer" so only stamp when set.
+        if doc.active_color is not None:
+            entity.color = doc.active_color
+        if doc.active_line_style is not None:
+            entity.line_style = doc.active_line_style
+        if doc.active_thickness is not None:
+            entity.line_weight = doc.active_thickness
+        doc.add_entity(entity)
         self.entity_added.emit(entity)
         self.document_changed.emit()
         return entity
@@ -369,9 +381,11 @@ class Editor(QObject):
             pass  # A value already queued; the command isn't waiting yet.
 
     def _set_input_mode(self, mode: str) -> None:
-        if self._input_mode != mode:
-            self._input_mode = mode
-            self.input_mode_changed.emit(mode)
+        # Always emit so the dynamic input widget re-activates on every new
+        # get_point/get_integer/… call, even when the mode hasn't changed
+        # (e.g. two consecutive get_point() calls in the same command).
+        self._input_mode = mode
+        self.input_mode_changed.emit(mode)
 
     def _drain_queue(self) -> None:
         """Discard any leftover values from a previous command."""

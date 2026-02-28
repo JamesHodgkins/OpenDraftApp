@@ -72,43 +72,20 @@ class ButtonFactory:
     # ------------------------------------------------------------------
 
     def _create_large_button(self, tool: ToolDefinition) -> QWidget:
-        btn_widget = QWidget()
-        vbox = QVBoxLayout()
-        vbox.setSpacing(0)
-        vbox.setContentsMargins(0, 2, 0, 2)
-
-        icon_label = QLabel()
-        icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setFixedSize(SIZE.LARGE_ICON_LABEL_SIZE, SIZE.LARGE_ICON_LABEL_SIZE)
+        # Use QToolButton with icon-over-text so QSS hover/pressed rules apply
+        btn = QToolButton()
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         if tool.icon:
             pix = load_pixmap(tool.icon, SIZE.LARGE_ICON_SIZE)
             if pix and not pix.isNull():
-                icon_label.setPixmap(pix)
-            else:
-                self._set_placeholder_icon(icon_label)
-        vbox.addWidget(icon_label, alignment=Qt.AlignHCenter)
-
-        text_label = QLabel(tool.label)
-        text_label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-        text_label.setStyleSheet(
-            f"font-size: {Styles.FONT_SIZE_SMALL}pt; "
-            "color: #eee; margin-top: 0px; margin-bottom: 0px;"
-        )
-        vbox.addWidget(text_label, alignment=Qt.AlignHCenter)
-
-        btn_widget.setLayout(vbox)
-        btn_widget.setFixedSize(SIZE.LARGE_BUTTON_WIDTH, SIZE.LARGE_BUTTON_HEIGHT)
-        btn_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-
-        btn = QPushButton(btn_widget)
-        btn.setFlat(True)
-        btn.setStyleSheet("QPushButton { background: transparent; border: none; }")
+                btn.setIcon(QIcon(pix))
+        btn.setIconSize(QSize(SIZE.LARGE_ICON_SIZE, SIZE.LARGE_ICON_SIZE))
+        btn.setText(tool.label)
         btn.setFixedSize(SIZE.LARGE_BUTTON_WIDTH, SIZE.LARGE_BUTTON_HEIGHT)
+        btn.setStyleSheet(Styles.large_button(self.dark))
         if tool.action:
             btn.clicked.connect(self._get_action_callback(tool.action))
-        btn.raise_()
-
-        return btn_widget
+        return btn
 
     def _create_small_button(self, tool: ToolDefinition) -> QPushButton:
         btn = QPushButton()

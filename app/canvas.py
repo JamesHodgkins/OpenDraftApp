@@ -8,9 +8,23 @@ scale rather than snapping between states.
 from math import log10, floor, ceil
 
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QPen, QColor, QPolygonF, QBrush
-from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal, Slot
+from PySide6.QtGui import QPainter, QPen, QColor, QPolygonF, QBrush, QPixmap
+from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal, Slot, QLine
 
+
+# ---------------------------------------------------------------------------
+# Colour resolution helper
+# ---------------------------------------------------------------------------
+def _resolve_color_str(color_str: str) -> QColor:
+    """Resolve a colour string to a QColor.
+
+    Accepts ``"aci:N"`` (ACI indexed) and plain ``"#rrggbb"`` hex strings.
+    """
+    try:
+        from app.colors.color import Color
+        return QColor(Color.from_string(color_str).to_hex())
+    except Exception:
+        return QColor(color_str)
 
 # ---------------------------------------------------------------------------
 # Line-style helper
@@ -39,6 +53,7 @@ from app.editor.hit_testing import (
     entity_inside_rect,
     entity_crosses_rect,
 )
+from app.ui.dynamic_input_widget import DynamicInputWidget
 
 
 class CADCanvas(QWidget):
@@ -121,6 +136,22 @@ class CADCanvas(QWidget):
         # ---- Hover state ---------------------------------------------------
         # Entity id currently under the cursor (None when nothing is hovered).
         self._hovered_entity_id: Optional[str] = None
+
+        # ---- Render cache (rubber band optimisation) -------------------------
+        # Captured scene pixmap (grid + entities, no rubber band) reused during
+        # selection drags so we only redraw the selection rect each frame.
+        self._scene_cache: Optional[QPixmap] = None
+
+        # ---- Dynamic input widget ------------------------------------------
+        # Shows input fields following the cursor during point/value input
+        self._dynamic_input = DynamicInputWidget(parent=self)
+        self._dynamic_input.hide()
+        self._dynamic_input.input_submitted.connect(self._on_dynamic_input_submitted)
+        self._dynamic_input.input_cancelled.connect(self._on_dynamic_input_cancelled)
+
+        # Connect to editor signals to update dynamic input state
+        if self._editor is not None:
+            self._editor.input_mode_changed.connect(self._on_editor_input_mode_changed)
 
     # ----------------------
     # Coordinate transforms
@@ -209,6 +240,9 @@ class CADCanvas(QWidget):
         # start panning with middle mouse button
         if event.button() == Qt.MiddleButton:
             self._panning = True
+            # User-initiated pan should break origin anchoring so subsequent
+            # resizes preserve the current camera offset.
+            self._origin_locked = False
             self._last_mouse_pos = event.pos()
             self.setCursor(Qt.ClosedHandCursor)
 
@@ -224,6 +258,9 @@ class CADCanvas(QWidget):
             dy = posf.y() - self._sel_origin_screen.y()
             if not self._sel_dragging and (dx * dx + dy * dy) > self._sel_drag_threshold ** 2:
                 self._sel_dragging = True
+                # Snapshot the current scene (no rubber band yet) so paintEvent
+                # can reuse it every frame instead of doing a full redraw.
+                self._scene_cache = self.grab()
             if self._sel_dragging:
                 self.update()
 
@@ -253,6 +290,12 @@ class CADCanvas(QWidget):
         if self._editor is not None:
             preview_pt = self._snap_result.point if self._snap_result else raw
             self._preview_entities = self._editor.get_dynamic(preview_pt)
+
+        # ---- Dynamic input widget update ------------------------------------
+        # Update dynamic input position and cursor coordinates whenever mouse moves
+        if snap_active or (self._editor is not None and getattr(self._editor, "_input_mode", "none") in ("integer", "float", "string")):
+            self._dynamic_input.update_cursor_position(display)
+            self._dynamic_input.update_screen_position(event.pos() if hasattr(event, "pos") else posf.toPoint())
 
         # ---- Hover hit-test (idle mode only) --------------------------------
         if self._idle and self._document is not None and not self._sel_dragging:
@@ -295,6 +338,7 @@ class CADCanvas(QWidget):
             self._sel_current_screen = None
             self._sel_origin_world = None
             self._sel_dragging = False
+            self._scene_cache = None
             self.update()
 
         if event.button() == Qt.MiddleButton:
@@ -409,6 +453,10 @@ class CADCanvas(QWidget):
         world_before = self.screen_to_world(cursor_pos)
 
         # apply zoom
+        # Zoom is an interactive camera change — disable origin anchoring so
+        # the view stays where the user zoomed/panned when the widget is
+        # later resized.
+        self._origin_locked = False
         self.scale *= factor
         # clamp scale to reasonable range
         self.scale = max(0.0001, min(self.scale, 1e6))
@@ -422,6 +470,17 @@ class CADCanvas(QWidget):
     # Drawing
     # ----------------------
     def paintEvent(self, event) -> None:  # noqa: N802
+        # Fast path: during a rubber band selection drag the view transform
+        # does not change, so we can reuse the cached scene and only repaint
+        # the selection rectangle on top.  This avoids re-rendering the grid
+        # and all entities on every mouse-move event during the drag.
+        if self._sel_dragging and self._scene_cache is not None:
+            painter = QPainter(self)
+            painter.drawPixmap(0, 0, self._scene_cache)
+            if self._sel_origin_screen is not None and self._sel_current_screen is not None:
+                self._draw_selection_rect(painter)
+            return
+
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor("#1E1E1E"))
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -455,36 +514,49 @@ class CADCanvas(QWidget):
                     vp_min_x, vp_min_y, vp_max_x, vp_max_y
                 ):
                     continue
-                # Resolve pen — priority: hover > selected > normal
+                # Resolve pen defaults from layer
                 is_sel   = e.id in sel_ids
                 is_hover = e.id == hover_id
-                if is_hover and is_sel:
-                    # Hovered + selected: solid bright blue
-                    color     = QColor(80, 180, 255)
-                    thickness = 2.0
-                    style     = Qt.SolidLine
-                elif is_hover:
-                    # Hovered only: amber/gold highlight
-                    color     = QColor(255, 200, 0)
-                    thickness = 2.0
-                    style     = Qt.SolidLine
-                elif is_sel:
-                    # Selected only: bright blue dashed
-                    color     = QColor(0, 150, 255)
-                    thickness = 2.0
-                    style     = Qt.DashLine
-                elif layer is not None:
-                    color     = QColor(layer.color)
+                if layer is not None:
+                    color     = _resolve_color_str(layer.color)
                     thickness = layer.thickness
                     style     = _line_style_to_qt(layer.line_style)
                 else:
                     color     = QColor(220, 220, 220)
                     thickness = 1.0
                     style     = Qt.SolidLine
+
+                # Apply ALL per-entity overrides unconditionally so the true
+                # appearance is always visible (even under hover/selection).
+                ew = getattr(e, "line_weight", None)
+                if ew is not None:
+                    thickness = ew
+                ec = getattr(e, "color", None)
+                if ec is not None:
+                    color = _resolve_color_str(ec)
+                es = getattr(e, "line_style", None)
+                if es is not None:
+                    style = _line_style_to_qt(es)
+
+                # ---- Base pass: draw entity with its true pen ----
                 pen = QPen(color, thickness)
                 pen.setStyle(style)
                 painter.setPen(pen)
                 self._draw_entity(painter, e)
+
+                # ---- Overlay pass: semi-transparent highlight for hover/selection ----
+                if is_hover or is_sel:
+                    if is_hover and is_sel:
+                        overlay_color = QColor(80, 180, 255, 90)
+                    elif is_hover:
+                        overlay_color = QColor(255, 200, 0, 90)
+                    else:
+                        overlay_color = QColor(0, 150, 255, 90)
+                    overlay_thickness = max(thickness + 4.0, 6.0)
+                    overlay_pen = QPen(overlay_color, overlay_thickness)
+                    overlay_pen.setStyle(style)
+                    painter.setPen(overlay_pen)
+                    self._draw_entity(painter, e)
 
         # Draw dynamic / rubberband preview entities
         if self._preview_entities:
@@ -497,7 +569,7 @@ class CADCanvas(QWidget):
         if self._snap_result is not None:
             self._draw_snap_marker(painter, self._snap_result)
 
-        # Draw selection rectangle overlay
+        # Draw selection rectangle overlay (only reached on full redraws)
         if self._sel_dragging and self._sel_origin_screen is not None and self._sel_current_screen is not None:
             self._draw_selection_rect(painter)
 
@@ -616,6 +688,72 @@ class CADCanvas(QWidget):
         except Exception:
             import traceback; traceback.print_exc()
 
+    # ------------------------------------------------------------------
+    # Testing helpers
+    # ------------------------------------------------------------------
+    def _pen_for_entity(self, e, sel_ids: set, hover_id: Optional[str]):
+        """Compute the *base* QPen that *paintEvent* would use for *e*.
+
+        Returns the true resolved pen (with all property overrides applied).
+        Hover/selection is rendered as a separate semi-transparent overlay
+        pass in ``paintEvent``, so this method returns only the base pen.
+
+        For test convenience the overlay pen is available via
+        ``_overlay_pen_for_entity``.
+        """
+        # resolve layer
+        layer = self._document.get_layer(e.layer) if self._document else None
+        if layer is not None:
+            color = QColor(layer.color)
+            thickness = layer.thickness
+            style = _line_style_to_qt(layer.line_style)
+        else:
+            color = QColor(220, 220, 220)
+            thickness = 1.0
+            style = Qt.SolidLine
+
+        # Apply ALL per-entity overrides unconditionally.
+        ew = getattr(e, "line_weight", None)
+        if ew is not None:
+            thickness = ew
+        ec = getattr(e, "color", None)
+        if ec is not None:
+            color = QColor(ec)
+        es = getattr(e, "line_style", None)
+        if es is not None:
+            style = _line_style_to_qt(es)
+
+        pen = QPen(color, thickness)
+        pen.setStyle(style)
+        return pen
+
+    def _overlay_pen_for_entity(self, e, sel_ids: set, hover_id: Optional[str]) -> Optional[QPen]:
+        """Compute the semi-transparent overlay QPen for hover/selection.
+
+        Returns ``None`` when the entity is neither selected nor hovered.
+        """
+        is_sel = e.id in sel_ids
+        is_hover = e.id == hover_id
+        if not (is_sel or is_hover):
+            return None
+
+        # Resolve thickness from base pen computation.
+        base_pen = self._pen_for_entity(e, sel_ids, hover_id)
+        thickness = base_pen.widthF()
+        style = base_pen.style()
+
+        if is_hover and is_sel:
+            overlay_color = QColor(80, 180, 255, 90)
+        elif is_hover:
+            overlay_color = QColor(255, 200, 0, 90)
+        else:
+            overlay_color = QColor(0, 150, 255, 90)
+
+        overlay_thickness = max(thickness + 4.0, 6.0)
+        overlay_pen = QPen(overlay_color, overlay_thickness)
+        overlay_pen.setStyle(style)
+        return overlay_pen
+
     def _draw_grid(self, painter: QPainter) -> None:
         """
         Draw a smooth multi-level adaptive grid.
@@ -638,20 +776,27 @@ class CADCanvas(QWidget):
         wy_min, wy_max = min(tl.y(), br.y()), max(tl.y(), br.y())
 
         # ── Fade thresholds (pixels) ──────────────────────────────────────
-        # A grid level is invisible when its lines are < FADE_IN px apart
+        # A grid level is invisible when its lines are <= FADE_IN px apart
         # and fully opaque when they are >= FADE_FULL px apart.
-        FADE_IN   = 14.0
-        FADE_FULL = 70.0
+        # Lower FADE_IN makes finer (closer) grid lines become visible
+        # sooner (i.e. at smaller pixel spacings).  Lowering FADE_FULL
+        # brings levels to full opacity earlier to preserve readability.
+        FADE_IN   = 2.0   # was 14.0 — show finer grids earlier
+        FADE_FULL = 50.0  # was 70.0 — reach full opacity sooner
 
         def alpha_for_spacing(world_spacing: float) -> float:
             px = world_spacing * self.scale
+            # Always give extremely compressed grids a faint visibility so
+            # very fine structure remains hinted even when spacing < FADE_IN.
             if px <= FADE_IN:
-                return 0.0
+                return 0.02
             if px >= FADE_FULL:
                 return 1.0
-            # Smooth S-curve (smoothstep) for a more natural transition
+            # Gentler power curve to keep small-spacing levels more visible
+            # across the transition.  Using an exponent < 1 biases the curve
+            # upwards so t values produce higher alpha than a linear ramp.
             t = (px - FADE_IN) / (FADE_FULL - FADE_IN)
-            return t * t * (3.0 - 2.0 * t)
+            return max(0.0, min(1.0, t ** 0.6))
 
         # ── Build the list of nice spacings to consider ───────────────────
         # Include all levels whose pixel spacing is above FADE_IN (invisible
@@ -666,11 +811,10 @@ class CADCanvas(QWidget):
             low_exp = int(floor(log10(min_world))) - 1
         high_exp = int(floor(log10(max(max_world, 1e-9)))) + 2
 
-        # Only mantissas 1 and 5 so every transition ratio is either ×5 or ×2.
-        # This ensures every coarser grid line falls exactly ON a finer grid
-        # line (clean subdivision) — no misalignment at any transition.
-        # The 1,2,5 sequence has ×2.5 gaps (2→5) where lines fall *between*
-        # each other, causing the "every other transition misaligns" problem.
+        # Use mantissas 1 and 5 to guarantee coarser levels fall exactly on
+        # finer levels (clean subdivision).  This preserves alignment when
+        # switching between grid levels while the alpha curve below keeps
+        # finer grids visible for longer.
         nice_spacings: list[float] = []
         for exp in range(low_exp, high_exp + 1):
             for mant in (1, 5):
@@ -678,6 +822,19 @@ class CADCanvas(QWidget):
                 if min_world * 0.5 <= s <= max_world * 2.0:
                     nice_spacings.append(s)
         nice_spacings.sort()
+
+        # ── Cap to the 4 most visible levels ──────────────────────────────
+        # Computing and drawing 20+ levels on every frame is expensive.
+        # Sort by alpha (descending) and keep only the top 4 so the dominant
+        # levels with the most visual weight are always rendered, while nearly
+        # invisible micro-levels are elided.
+        if len(nice_spacings) > 4:
+            nice_spacings = sorted(
+                nice_spacings,
+                key=lambda s: alpha_for_spacing(s),
+                reverse=True,
+            )[:4]
+            nice_spacings.sort()  # restore spatial order (finest first)
 
         # ── Draw each level, finest first (coarser paints on top) ─────────
         # Brightness: coarser (larger px_size) should be visibly brighter.
@@ -701,31 +858,50 @@ class CADCanvas(QWidget):
             pen = QPen(QColor(brightness, brightness, brightness, a_int), 1)
             painter.setPen(pen)
 
-            # Vertical lines
-            start_x = floor(wx_min / spacing) * spacing
-            x = start_x
-            guard = int((wx_max - wx_min) / spacing) + 4
-            i = 0
-            while x <= wx_max + spacing and i < guard:
-                idx = int(round(x / spacing))
-                if idx != 0:   # axis is drawn separately
-                    sx = (x - self.offset.x()) * self.scale
-                    painter.drawLine(int(sx), 0, int(sx), h)
-                x += spacing
-                i += 1
+            # Vertical / Horizontal lines
+            # Compute rough counts and apply a cap so extremely dense views
+            # don't issue thousands of draw calls per frame. If the total
+            # lines would exceed MAX_LINES_PER_LEVEL we sample every Nth
+            # line (stride) to keep a visual hint while bounding work.
+            MAX_LINES_PER_LEVEL = 400
 
-            # Horizontal lines
+            start_x = floor(wx_min / spacing) * spacing
+            num_vert = int((wx_max - wx_min) / spacing) + 4
+
             start_y = floor(wy_min / spacing) * spacing
-            y = start_y
-            guard = int((wy_max - wy_min) / spacing) + 4
-            i = 0
-            while y <= wy_max + spacing and i < guard:
+            num_horiz = int((wy_max - wy_min) / spacing) + 4
+
+            total_lines = num_vert + num_horiz
+            stride = max(1, int(total_lines / MAX_LINES_PER_LEVEL))
+
+            # Build batched line lists and draw them once to reduce overhead
+            vert_lines = []
+            horiz_lines = []
+
+            for iv in range(0, num_vert, stride):
+                x = start_x + iv * spacing
+                if x > wx_max + spacing:
+                    break
+                idx = int(round(x / spacing))
+                if idx == 0:
+                    continue
+                sx = int((x - self.offset.x()) * self.scale)
+                vert_lines.append(QLine(sx, 0, sx, h))
+
+            for ih in range(0, num_horiz, stride):
+                y = start_y + ih * spacing
+                if y > wy_max + spacing:
+                    break
                 idx = int(round(y / spacing))
-                if idx != 0:
-                    sy = (self.offset.y() - y) * self.scale
-                    painter.drawLine(0, int(sy), w, int(sy))
-                y += spacing
-                i += 1
+                if idx == 0:
+                    continue
+                sy = int((self.offset.y() - y) * self.scale)
+                horiz_lines.append(QLine(0, sy, w, sy))
+
+            if vert_lines:
+                painter.drawLines(vert_lines)
+            if horiz_lines:
+                painter.drawLines(horiz_lines)
 
         # ── World-origin axes (always on top) ─────────────────────────────
         ox = (0.0 - self.offset.x()) * self.scale
@@ -735,3 +911,42 @@ class CADCanvas(QWidget):
         painter.drawLine(int(ox), 0, int(ox), h)
         painter.drawLine(0, int(oy), w, int(oy))
 
+    # ----------------------------------------------------------------
+    # Dynamic input handling
+    # ----------------------------------------------------------------
+
+    @Slot(str)
+    def _on_editor_input_mode_changed(self, mode: str) -> None:
+        """Handle editor input mode changes to show/hide dynamic input widget."""
+        if mode == "none":
+            self._dynamic_input.clear()
+        elif mode in ("point", "integer", "float", "string"):
+            base_point = None
+            if mode == "point" and self._editor is not None:
+                base_point = self._editor.snap_from_point
+            self._dynamic_input.set_input_mode(mode, Vec2(0, 0), base_point)
+            # Show the widget on the screen
+            self._dynamic_input.show()
+            self._dynamic_input.raise_()
+
+    @Slot(object)
+    def _on_dynamic_input_submitted(self, value: object) -> None:
+        """Forward accepted dynamic input to the editor."""
+        if self._editor is None:
+            return
+
+        mode = self._editor._input_mode
+        if mode == "point":
+            self._editor.provide_point(value)
+        elif mode == "integer":
+            self._editor.provide_integer(int(value))
+        elif mode == "float":
+            self._editor.provide_float(float(value))
+        elif mode == "string":
+            self._editor.provide_string(str(value))
+
+    @Slot()
+    def _on_dynamic_input_cancelled(self) -> None:
+        """Forward cancellation to editor."""
+        if self._editor is not None:
+            self.cancelRequested.emit()

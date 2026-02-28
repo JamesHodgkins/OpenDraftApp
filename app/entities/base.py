@@ -199,6 +199,11 @@ class BaseEntity:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     type: str = ""
     layer: str = "default"
+    # Per-entity style overrides.  ``None`` means "ByLayer" — inherit from
+    # the layer's settings.  Set to a concrete value to override.
+    color: Optional[str]         = field(default=None, compare=False)
+    line_weight: Optional[float] = field(default=None, compare=False)
+    line_style: Optional[str]    = field(default=None, compare=False)
 
     # ------------------------------------------------------------------
     # Auto-registration
@@ -218,14 +223,44 @@ class BaseEntity:
 
     def _base_dict(self) -> Dict[str, Any]:
         """Return the base fields shared by every entity."""
-        return {"id": self.id, "type": self.type, "layer": self.layer}
+        result: Dict[str, Any] = {"id": self.id, "type": self.type, "layer": self.layer}
+        if self.color is not None:
+            result["color"] = self.color
+        if self.line_weight is not None:
+            result["lineWeight"] = self.line_weight
+        if self.line_style is not None:
+            result["lineStyle"] = self.line_style
+        return result
 
     def to_dict(self) -> Dict[str, Any]:
         return self._base_dict()
 
+    @staticmethod
+    def _base_kwargs(d: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract the common constructor kwargs from a serialised dict.
+
+        Subclass ``from_dict`` implementations can unpack the result
+        (``**cls._base_kwargs(d)``) to avoid repeating the ``id`` /
+        ``layer`` / ``line_weight`` / ``line_style`` extraction.
+        """
+        kwargs: Dict[str, Any] = {
+            "id": d.get("id", str(uuid.uuid4())),
+            "layer": d.get("layer", "default"),
+        }
+        ec = d.get("color")
+        lw = d.get("lineWeight")
+        ls = d.get("lineStyle")
+        if ec is not None:
+            kwargs["color"] = str(ec)
+        if lw is not None:
+            kwargs["line_weight"] = float(lw)
+        if ls is not None:
+            kwargs["line_style"] = str(ls)
+        return kwargs
+
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BaseEntity":
-        return cls(id=d.get("id", str(uuid.uuid4())), layer=d.get("layer", "default"))
+        return cls(**cls._base_kwargs(d))
 
     def __repr__(self) -> str:          # noqa: D105
         return f"<{self.__class__.__name__} id={self.id!r}>"

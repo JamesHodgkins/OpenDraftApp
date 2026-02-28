@@ -135,8 +135,7 @@ class PolylineEntity(BaseEntity):
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "PolylineEntity":
         return cls(
-            id=d.get("id", str(uuid.uuid4())),
-            layer=d.get("layer", "default"),
+            **cls._base_kwargs(d),
             points=[Vec2.from_dict(p) for p in d.get("points", [])],
             closed=bool(d.get("closed", False)),
         )
