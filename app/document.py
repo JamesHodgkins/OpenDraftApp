@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from PySide6.QtCore import QObject, Signal as _Signal
+import warnings
 
 from app.entities import BaseEntity, entity_from_dict
 
@@ -133,8 +134,14 @@ class DocumentStore:
 
     def remove_change_listener(self, fn: Callable[[], None]) -> None:
         """Unregister a previously registered change listener."""
+        # PySide6 may emit a RuntimeWarning when disconnecting a slot that
+        # isn't connected; suppress that specific warning here so tests remain quiet.
         try:
-            self._notifier.changed.disconnect(fn)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", message="Failed to disconnect", category=RuntimeWarning
+                )
+                self._notifier.changed.disconnect(fn)
         except RuntimeError:
             pass  # was not connected
 
