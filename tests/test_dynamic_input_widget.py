@@ -1,18 +1,18 @@
-"""Tests for the custom DraftmateWidget input behaviour."""
+"""Tests for the custom DynamicInputWidget input behaviour."""
 from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent
 
-from app.ui.draftmate_widget import DraftmateWidget, InputFormat
+from app.ui.dynamic_input_widget import DynamicInputWidget, InputFormat
 from app.entities import Vec2
 
 
 @pytest.fixture
 
 def widget(qtbot):
-    w = DraftmateWidget()
+    w = DynamicInputWidget()
     w.set_input_mode("point", Vec2(0, 0))
     qtbot.addWidget(w)
     return w

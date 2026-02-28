@@ -53,7 +53,7 @@ from app.editor.hit_testing import (
     entity_inside_rect,
     entity_crosses_rect,
 )
-from app.ui.draftmate_widget import DraftmateWidget
+from app.ui.dynamic_input_widget import DynamicInputWidget
 
 
 class CADCanvas(QWidget):
@@ -142,9 +142,9 @@ class CADCanvas(QWidget):
         # selection drags so we only redraw the selection rect each frame.
         self._scene_cache: Optional[QPixmap] = None
 
-        # ---- Draftmate widget -----------------------------------------------
+        # ---- Dynamic input widget --------------------------------------------
         # Custom-painted input fields following the cursor during point/value input
-        self._dynamic_input = DraftmateWidget(parent=self)
+        self._dynamic_input = DynamicInputWidget(parent=self)
         self._dynamic_input.hide()
         self._dynamic_input.input_submitted.connect(self._on_dynamic_input_submitted)
         self._dynamic_input.input_cancelled.connect(self._on_dynamic_input_cancelled)
@@ -355,7 +355,7 @@ class CADCanvas(QWidget):
         """Intercept Tab/Shift-Tab before Qt's focus-chain handles them.
 
         Qt processes Tab at the QWidget.event() level, before keyPressEvent
-        is called.  When the Draftmate widget is visible we must consume
+        is called.  When the dynamic input widget is visible we must consume
         Tab/Backtab here so they never reach the focus machinery.
         """
         if event.type() == event.Type.KeyPress:
@@ -400,7 +400,7 @@ class CADCanvas(QWidget):
             return
 
         if self._dynamic_input.isVisible():
-            # Forward all non-Escape keys to the Draftmate widget while it
+            # Forward all non-Escape keys to the dynamic input widget while it
             # is active so the user can type values without clicking.
             self._dynamic_input.keyPressEvent(event)
         else:
@@ -963,7 +963,7 @@ class CADCanvas(QWidget):
             self._dynamic_input.show()
             self._dynamic_input.raise_()
             # Ensure the canvas has keyboard focus so keyPressEvent fires
-            # and forwards typed characters to the Draftmate widget.
+            # and forwards typed characters to the dynamic input widget.
             self.setFocus()
 
     @Slot(object)

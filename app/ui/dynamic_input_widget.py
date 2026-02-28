@@ -1,192 +1,156 @@
 """
-Dynamic input widget — appears near cursor during point/value input.
+Dynamic input — custom-painted dynamic input widget that follows the cursor.
 
-Displays input fields that follow the cursor position and allow the user
-to override the default value with typed input. Supports multiple input
-formats (relative, absolute, polar for vectors; direct values for scalars).
+Replaces native QLineEdit controls with fully custom-drawn input fields.
+Each field has an "active" state; key presses are routed to the active field
+without any text selection behaviour.  When a field has no user input it
+displays the current cursor world position (cartesian or polar).
+
+Supports the same input format tokens as the old dynamic input:
+  - ``#``  prefix  → absolute coordinates
+  - ``<``  token   → polar  (distance < angle)
+  - plain digits   → relative  (dX, dY)
+
+Tab / Shift-Tab cycles focus between the two fields in point mode.
 """
 from __future__ import annotations
 
-from typing import Optional, Callable, Any
 from enum import Enum
+from math import atan2, degrees, sqrt
+from typing import Optional
 
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame
-)
 from PySide6.QtCore import (
-    Qt, QPoint, QRect, QSize, Signal, Slot, QTimer, QObject, QEvent
+    QPoint,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+    Slot,
 )
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QKeyEvent,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
+from PySide6.QtWidgets import QApplication, QWidget
 
-from app.entities import Vec2
 from app.editor.dynamic_input_parser import DynamicInputParser
+from app.entities import Vec2
 
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 class InputFormat(Enum):
     RELATIVE = "relative"
     ABSOLUTE = "absolute"
-    POLAR    = "polar"
+    POLAR = "polar"
 
 
-class FieldTabFilter(QObject):
-    """Event filter that handles Tab/Shift+Tab navigation between input fields.
-    
-    This filter ensures that Tab key presses don't escape the dynamic input
-    widget but instead cycle between the two input fields.
-    """
+# Colours
+_BG = QColor("#2B2B2B")
+_FIELD_BG = QColor("#1A1A1A")
+_FIELD_BORDER = QColor("#444444")
+_FIELD_ACTIVE_BORDER = QColor("#0E639C")
+_TEXT_COLOR = QColor("#FFFFFF")
+_PLACEHOLDER_COLOR = QColor("#888888")
+_LABEL_COLOR = QColor("#BBBBBB")
+_CURSOR_COLOR = QColor("#FFFFFF")
+_SEPARATOR_COLOR = QColor("#555555")
 
-    def __init__(self, field_1: QLineEdit, field_2: QLineEdit, parent_widget: "DynamicInputWidget") -> None:
-        super().__init__()
-        self.field_1 = field_1
-        self.field_2 = field_2
-        self.parent_widget = parent_widget
+# Geometry
+_FIELD_W = 68
+_FIELD_H = 22
+_LABEL_W = 28
+_FIELD_GAP = 4        # gap between label and field
+_GROUP_GAP = 8        # gap between the two field groups
+_PAD_X = 8            # horizontal padding inside widget
+_PAD_Y = 6            # vertical padding inside widget
+_FIELD_PAD_X = 4      # text inset inside a field
+_CORNER_R = 4         # widget corner radius
+_FIELD_CORNER_R = 3   # field corner radius
 
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        """Intercept Tab / Shift+Tab so focus never escapes the two fields."""
-        if event.type() != QEvent.KeyPress:
-            return super().eventFilter(obj, event)
-
-        key = event.key()
-        if key not in (Qt.Key_Tab, Qt.Key_Backtab):
-            return super().eventFilter(obj, event)
-
-        pw = self.parent_widget
-        if pw._input_mode != "point":
-            return True  # absorb Tab in scalar mode
-
-        forward = key == Qt.Key_Tab  # Backtab == Shift+Tab
-
-        if forward:
-            if obj is self.field_1:
-                self.field_2.setFocus()
-                self.field_2.selectAll()
-            else:
-                self.field_1.setFocus()
-                self.field_1.selectAll()
-        else:
-            if obj is self.field_2:
-                self.field_1.setFocus()
-                self.field_1.selectAll()
-            else:
-                self.field_2.setFocus()
-                self.field_2.selectAll()
-
-        return True
+# Cursor blink
+_CURSOR_BLINK_MS = 530
 
 
+# ---------------------------------------------------------------------------
+# Internal data for a single "field"
+# ---------------------------------------------------------------------------
+class _Field:
+    """Lightweight data holder for one input field."""
+
+    __slots__ = ("label", "text", "placeholder", "active", "user_edited", "rect")
+
+    def __init__(self, label: str = "") -> None:
+        self.label: str = label
+        self.text: str = ""              # user-typed content
+        self.placeholder: str = ""       # world-pos default when empty
+        self.active: bool = False
+        self.user_edited: bool = False   # True once the user types anything
+        self.rect: QRectF = QRectF()     # painted bounds (set during paint)
+
+
+# ---------------------------------------------------------------------------
+# DynamicInputWidget
+# ---------------------------------------------------------------------------
 class DynamicInputWidget(QWidget):
-    """Widget that appears next to cursor for dynamic input during commands.
+    """Custom-painted dynamic input widget displayed near the cursor.
 
-    Displays one or more input fields depending on the input mode:
-    - Point mode: 2 fields (for vector input)
-    - Integer/Float mode: 1 field (for scalar input)
-    - String mode: 1 field
-
-    User can cycle between input formats (for vectors) using Tab.
+    The widget owns zero native child widgets; everything is drawn via
+    QPainter and keyboard input is routed explicitly to the active field.
     """
 
     # Emitted when input is submitted (user presses Enter)
-    input_submitted = Signal(object)  # Vec2, int, float, or str
+    input_submitted = Signal(object)  # Vec2, int, float or str
     # Emitted when input is cancelled (user presses Escape)
     input_cancelled = Signal()
 
-    # Offset from cursor where the widget appears (in screen pixels)
-    CURSOR_OFFSET_X = 15
-    CURSOR_OFFSET_Y = -20
-
-    # Maximum distance from cursor before widget hides automatically
-    HIDE_DISTANCE = 200
+    CURSOR_OFFSET_X = 20
+    CURSOR_OFFSET_Y = 20
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground, False)
-        # Mouse events pass through the widget to the canvas underneath so that
-        # hovering over the input box never interrupts cursor tracking.
+        # No window flags — as a child widget we already have no frame.
+        # Keeping it a true child ensures focus and event routing work
+        # properly through the parent canvas.
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        # Focus stays on the canvas; it forwards key events to us directly.
+        self.setFocusPolicy(Qt.NoFocus)
 
-        # Current input mode and state
-        self._input_mode: str = "none"  # "none", "point", "integer", "float", "string"
+        # ---- Fonts -----------------------------------------------------------
+        self._font = QFont("Consolas", 10)
+        self._font.setStyleHint(QFont.Monospace)
+        self._label_font = QFont("Segoe UI", 9, QFont.Bold)
+        self._fm = QFontMetricsF(self._font)
+
+        # ---- State -----------------------------------------------------------
+        self._input_mode: str = "none"   # "none" | "point" | "integer" | "float" | "string"
         self._input_format = InputFormat.RELATIVE
-        self._current_pos = Vec2(0, 0)
-        self._base_point: Optional[Vec2] = None  # For relative/polar input
+        self._current_pos = Vec2(0, 0)   # world cursor position
+        self._base_point: Optional[Vec2] = None
 
-        # UI components
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(8, 6, 8, 6)
-        self._layout.setSpacing(4)
+        # Two fields (second hidden in scalar modes)
+        self._field_1 = _Field("dX")
+        self._field_2 = _Field("dY")
+        self._field_1.active = True      # field 1 starts active
 
-        # For point input: two fields (e.g., "dx" and "dy")
-        self._field_layout = QHBoxLayout()
-        self._field_layout.setContentsMargins(0, 0, 0, 0)
-        self._field_layout.setSpacing(6)
+        # Cursor blink timer
+        self._cursor_visible = True
+        self._blink_timer = QTimer(self)
+        self._blink_timer.timeout.connect(self._toggle_cursor)
+        self._blink_timer.setInterval(_CURSOR_BLINK_MS)
 
-        self._label_1 = QLabel("")
-        self._field_1 = QLineEdit()
-        self._field_1.setMaximumWidth(70)
-        self._field_1.returnPressed.connect(self._on_submit)
-        self._field_1.setFocus()
-
-        self._label_2 = QLabel("")
-        self._field_2 = QLineEdit()
-        self._field_2.setMaximumWidth(70)
-        self._field_2.returnPressed.connect(self._on_submit)
-
-        # Install Tab key event filter on both fields to lock focus between them
-        self._tab_filter = FieldTabFilter(self._field_1, self._field_2, self)
-        self._field_1.installEventFilter(self._tab_filter)
-        self._field_2.installEventFilter(self._tab_filter)
-
-        # Track when the user has manually typed into each field so that
-        # mouse-move updates don't overwrite what they've typed.
-        # textEdited fires only on user input, never on programmatic setText.
-        self._field_1_user_edited = False
-        self._field_2_user_edited = False
-        self._field_1.textEdited.connect(self._on_field1_edited)
-        self._field_2.textEdited.connect(self._on_field2_edited)
-
-        self._field_layout.addWidget(self._label_1)
-        self._field_layout.addWidget(self._field_1)
-        self._field_layout.addWidget(self._label_2)
-        self._field_layout.addWidget(self._field_2)
-        self._field_layout.addStretch()
-
-        self._layout.addLayout(self._field_layout)
-
-        # Styling
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #2E2E2E;
-                border: 1px solid #555;
-                border-radius: 4px;
-            }
-            QLineEdit {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                border: 1px solid #444;
-                border-radius: 2px;
-                padding: 2px 4px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 11px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #0E639C;
-                color: #FFFFFF;
-            }
-            QLabel {
-                color: #CCCCCC;
-                font-size: 11px;
-                font-weight: bold;
-            }
-        """)
-
-        # Keyboard input handling
-        self.setFocusPolicy(Qt.StrongFocus)
-
-        # Timer for auto-hide if cursor moves too far
-        self._hide_timer = QTimer()
-        self._hide_timer.timeout.connect(self._check_cursor_distance)
-        self._hide_timer.setInterval(100)
+    # ------------------------------------------------------------------
+    # Public API — mirrors the old DynamicInputWidget interface
+    # ------------------------------------------------------------------
 
     def set_input_mode(
         self,
@@ -194,253 +158,389 @@ class DynamicInputWidget(QWidget):
         current_pos: Vec2,
         base_point: Optional[Vec2] = None,
     ) -> None:
-        """Set the input mode and update the UI accordingly.
-
-        Parameters
-        ----------
-        mode:
-            "point", "integer", "float", or "string".
-
-        current_pos:
-            Current world position (usually cursor position).
-
-        base_point:
-            Reference point for relative coordinates (in point mode).
-        """
+        """Activate the widget for *mode* ("point", "integer", "float", "string")."""
         self._input_mode = mode
         self._current_pos = current_pos
         self._base_point = base_point if base_point is not None else Vec2(0, 0)
 
-        # Reset input format and user-edit flags when mode changes
+        # Reset fields
         self._input_format = InputFormat.RELATIVE
-        self._field_1_user_edited = False
-        self._field_2_user_edited = False
+        for f in (self._field_1, self._field_2):
+            f.text = ""
+            f.user_edited = False
+        self._field_1.active = True
+        self._field_2.active = False
 
         if mode == "point":
-            self._setup_vector_input()
-        elif mode in ("integer", "float", "string"):
-            self._setup_scalar_input(mode)
+            self._apply_labels()
+        elif mode in ("integer", "float"):
+            self._field_1.label = "Val"
+        elif mode == "string":
+            self._field_1.label = "Text"
         else:
             self.hide()
             return
 
-        self._update_field_values()
+        self._update_placeholders()
+        self._resize_to_content()
         self.show()
-        # Defer focus + selection until after Qt processes the show event,
-        # otherwise selectAll() has no effect on a freshly shown widget.
-        QTimer.singleShot(0, self._focus_field_1)
-        self._hide_timer.start()
-
-    def _focus_field_1(self) -> None:
-        """Give keyboard focus to field 1 and select all its text."""
-        self._field_1.setFocus()
-        self._field_1.selectAll()
-
-    def _setup_vector_input(self) -> None:
-        """Configure UI for point (vector) input."""
-        self._input_format = InputFormat.RELATIVE
-        self._apply_labels()
-        self._label_2.show()
-        self._field_2.show()
-
-    def _setup_scalar_input(self, mode: str) -> None:
-        """Configure UI for scalar (integer/float/string) input."""
-        self._label_1.setText("Text" if mode == "string" else "Value")
-        self._label_2.hide()
-        self._field_2.hide()
-
-    def _update_field_values(self, force: bool = False) -> None:
-        """Update the displayed values based on current position and format.
-
-        Fields the user has manually edited are left untouched unless *force*
-        is True (used when switching coordinate formats).
-        """
-        if self._input_mode == "point":
-            val1, val2 = DynamicInputParser.format_vector_for_display(
-                self._current_pos,
-                format_type=self._input_format.value,
-                base_point=self._base_point,
-            )
-            if force or not self._field_1_user_edited:
-                self._field_1.setText(val1)
-            if force or not self._field_2_user_edited:
-                self._field_2.setText(val2)
-        else:
-            # For scalar inputs, only update if the user hasn't started typing
-            if force or not self._field_1_user_edited:
-                self._field_1.clear()
-
-    def _apply_labels(self) -> None:
-        """Set label text to match the current coordinate format."""
-        if self._input_format == InputFormat.POLAR:
-            self._label_1.setText("Dist")
-            self._label_2.setText("Ang")
-        elif self._input_format == InputFormat.ABSOLUTE:
-            self._label_1.setText("X")
-            self._label_2.setText("Y")
-        else:
-            self._label_1.setText("dX")
-            self._label_2.setText("dY")
-
-    @Slot(str)
-    def _on_field1_edited(self, text: str) -> None:
-        """Detect '#' and '<' tokens to switch coordinate format."""
-        self._field_1_user_edited = True
-
-        if self._input_mode != "point":
-            return
-
-        if "<" in text:
-            # Split on first '<': left → Dist field, right → Ang field
-            left, _, right = text.partition("<")
-            self._switch_format(InputFormat.POLAR)
-            self._field_1.blockSignals(True)
-            self._field_1.setText(left)
-            self._field_1.blockSignals(False)
-            self._field_2.blockSignals(True)
-            self._field_2.setText(right)
-            self._field_2.blockSignals(False)
-            self._field_2_user_edited = bool(right)
-            self._field_2.setFocus()
-            if right:
-                self._field_2.setCursorPosition(len(right))
-            return
-
-        if text.startswith("#"):
-            # '#' prefix switches to absolute; strip the '#' from the field
-            self._switch_format(InputFormat.ABSOLUTE)
-            self._field_1.blockSignals(True)
-            self._field_1.setText(text[1:])
-            self._field_1.blockSignals(False)
-            return
-
-        # Field cleared without a token → reset to relative
-        if not text and self._input_format != InputFormat.POLAR:
-            self._switch_format(InputFormat.RELATIVE)
-
-    @Slot(str)
-    def _on_field2_edited(self, _text: str) -> None:
-        self._field_2_user_edited = True
-
-    def _switch_format(self, fmt: InputFormat) -> None:
-        """Change coordinate format and update labels (does NOT touch field text)."""
-        if self._input_format == fmt:
-            return
-        self._input_format = fmt
-        self._apply_labels()
+        self.raise_()
+        self._blink_timer.start()
+        self._cursor_visible = True
+        self.update()
 
     def update_cursor_position(self, pos: Vec2) -> None:
-        """Update the widget position and displayed values as cursor moves.
-
-        Parameters
-        ----------
-        pos:
-            Current world-space cursor position.
-        """
+        """Called when the mouse moves — refreshes placeholder values."""
         if self._input_mode == "none" or not self.isVisible():
             return
-
         self._current_pos = pos
-        self._update_field_values()  # respects user-edited flags
+        self._update_placeholders()
+        self.update()
 
     def update_screen_position(self, screen_pos: QPoint) -> None:
-        """Update the screen position of the widget.
-
-        Parameters
-        ----------
-        screen_pos:
-            Current cursor screen position (widget will appear nearby).
-        """
-        # On Windows, move() can trigger a WM_KILLFOCUS on the focused child
-        # (QLineEdit), silently dropping the caret. Save and restore focus.
-        focused = QApplication.focusWidget()
-        had_child_focus = focused is not None and self.isAncestorOf(focused)
-
+        """Reposition the widget near the cursor."""
         self.move(
             screen_pos.x() + self.CURSOR_OFFSET_X,
             screen_pos.y() + self.CURSOR_OFFSET_Y,
         )
 
-        if had_child_focus:
-            focused.setFocus()
+    def clear(self) -> None:
+        """Reset and hide."""
+        self._field_1.text = ""
+        self._field_2.text = ""
+        self._field_1.user_edited = False
+        self._field_2.user_edited = False
+        self._input_mode = "none"
+        self._blink_timer.stop()
+        self.hide()
 
-    def keyPressEvent(self, event) -> None:  # noqa: N802
-        """Handle keyboard input."""
-        if event.key() == Qt.Key_Escape:
+    # ------------------------------------------------------------------
+    # Size
+    # ------------------------------------------------------------------
+
+    def _resize_to_content(self) -> None:
+        """Set widget size based on current mode."""
+        if self._input_mode == "point":
+            w = _PAD_X * 2 + _LABEL_W + _FIELD_GAP + _FIELD_W + _GROUP_GAP + _LABEL_W + _FIELD_GAP + _FIELD_W
+        else:
+            w = _PAD_X * 2 + _LABEL_W + _FIELD_GAP + _FIELD_W
+        h = _PAD_Y * 2 + _FIELD_H
+        self.setFixedSize(w, h)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        if self._input_mode == "point":
+            w = _PAD_X * 2 + _LABEL_W + _FIELD_GAP + _FIELD_W + _GROUP_GAP + _LABEL_W + _FIELD_GAP + _FIELD_W
+        else:
+            w = _PAD_X * 2 + _LABEL_W + _FIELD_GAP + _FIELD_W
+        h = _PAD_Y * 2 + _FIELD_H
+        return QSize(w, h)
+
+    # ------------------------------------------------------------------
+    # Painting
+    # ------------------------------------------------------------------
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        # --- background rounded rect ---
+        bg_rect = QRectF(0, 0, self.width(), self.height())
+        path = QPainterPath()
+        path.addRoundedRect(bg_rect, _CORNER_R, _CORNER_R)
+        p.fillPath(path, _BG)
+        p.setPen(QPen(_FIELD_BORDER, 1))
+        p.drawPath(path)
+
+        # --- fields ---
+        x = _PAD_X
+        y = _PAD_Y
+        self._paint_field(p, self._field_1, x, y)
+
+        if self._input_mode == "point":
+            x += _LABEL_W + _FIELD_GAP + _FIELD_W + _GROUP_GAP
+            # separator line
+            sep_x = x - _GROUP_GAP / 2
+            p.setPen(QPen(_SEPARATOR_COLOR, 1))
+            p.drawLine(int(sep_x), int(y + 2), int(sep_x), int(y + _FIELD_H - 2))
+
+            self._paint_field(p, self._field_2, x, y)
+
+        p.end()
+
+    def _paint_field(self, p: QPainter, field: _Field, x: float, y: float) -> None:
+        """Draw one label + field at (x, y)."""
+        # --- label ---
+        p.setFont(self._label_font)
+        p.setPen(QPen(_LABEL_COLOR))
+        label_rect = QRectF(x, y, _LABEL_W, _FIELD_H)
+        p.drawText(label_rect, Qt.AlignVCenter | Qt.AlignRight, field.label)
+
+        # --- field box ---
+        fx = x + _LABEL_W + _FIELD_GAP
+        field_rect = QRectF(fx, y, _FIELD_W, _FIELD_H)
+        field.rect = field_rect
+
+        box_path = QPainterPath()
+        box_path.addRoundedRect(field_rect, _FIELD_CORNER_R, _FIELD_CORNER_R)
+        p.fillPath(box_path, _FIELD_BG)
+
+        border_color = _FIELD_ACTIVE_BORDER if field.active else _FIELD_BORDER
+        p.setPen(QPen(border_color, 1.0 if not field.active else 1.5))
+        p.drawPath(box_path)
+
+        # --- text or placeholder ---
+        p.setFont(self._font)
+        text_rect = QRectF(fx + _FIELD_PAD_X, y, _FIELD_W - _FIELD_PAD_X * 2, _FIELD_H)
+
+        if field.text:
+            p.setPen(QPen(_TEXT_COLOR))
+            p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, field.text)
+        else:
+            p.setPen(QPen(_PLACEHOLDER_COLOR))
+            p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, field.placeholder)
+
+        # --- cursor ---
+        if field.active and self._cursor_visible:
+            p.setFont(self._font)
+            if field.text:
+                tw = self._fm.horizontalAdvance(field.text)
+            else:
+                tw = 0
+            cx = fx + _FIELD_PAD_X + tw + 1
+            cy_top = y + 4
+            cy_bot = y + _FIELD_H - 4
+            if cx < fx + _FIELD_W - _FIELD_PAD_X:
+                p.setPen(QPen(_CURSOR_COLOR, 1))
+                p.drawLine(int(cx), int(cy_top), int(cx), int(cy_bot))
+
+    # ------------------------------------------------------------------
+    # Keyboard handling
+    # ------------------------------------------------------------------
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        key = event.key()
+
+        # --- Escape → cancel -------------------------------------------------
+        if key == Qt.Key_Escape:
             self.input_cancelled.emit()
-            self.hide()
-            self._hide_timer.stop()
+            self.clear()
+            return
+
+        # --- 'd' resets to relative (dX/dY) when in point mode ---------------
+        if key == Qt.Key_D and self._input_mode == "point":
+            # switch format and clear any typed text, mimicking user intent
+            self._switch_format(InputFormat.RELATIVE)
+            self._field_1.text = ""
+            self._field_1.user_edited = False
+            self._field_2.text = ""
+            self._field_2.user_edited = False
+            self._set_active(self._field_1)
+            self._update_placeholders()
+            self.update()
+            return
+
+        # --- Enter / Return → submit ----------------------------------------
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            self._on_submit()
+            return
+
+        # --- Tab / Shift-Tab → cycle fields ----------------------------------
+        if key in (Qt.Key_Tab, Qt.Key_Backtab):
+            if self._input_mode == "point":
+                self._toggle_active_field()
+            return
+
+        # --- Backspace -------------------------------------------------------
+        if key == Qt.Key_Backspace:
+            af = self._active_field()
+            if af.text:
+                af.text = af.text[:-1]
+                if not af.text:
+                    af.user_edited = False
+            self._restart_blink()
+            self.update()
+            return
+
+        # --- Delete (clear field) --------------------------------------------
+        if key == Qt.Key_Delete:
+            af = self._active_field()
+            af.text = ""
+            af.user_edited = False
+            self._restart_blink()
+            self.update()
+            return
+
+        # --- Printable text input -------------------------------------------
+        text = event.text()
+        if text and text.isprintable():
+            self._insert_text(text)
+            self._restart_blink()
+            self.update()
             return
 
         super().keyPressEvent(event)
 
-    def focusOutEvent(self, event) -> None:  # noqa: N802
-        """Hide only if focus has moved completely outside this widget."""
-        # isAncestorOf() returns True when focus moved to a child (e.g. the
-        # other QLineEdit), so in that case we must NOT hide.
-        focused_widget = QApplication.focusWidget()
-        if focused_widget is not None and self.isAncestorOf(focused_widget):
-            super().focusOutEvent(event)
-            return
-        self.hide()
-        self._hide_timer.stop()
-        super().focusOutEvent(event)
+    # ------------------------------------------------------------------
+    # Text insertion & format detection
+    # ------------------------------------------------------------------
 
-    def _check_cursor_distance(self) -> None:
-        """Auto-hide if cursor moves too far from the widget."""
-        # This is a safety feature; for now, we just keep the timer running
-        # and rely on parent to update position. Real implementation would
-        # check distance from widget to last known cursor position.
-        pass
+    def _insert_text(self, chars: str) -> None:
+        """Insert *chars* into the active field, detecting format tokens."""
+        af = self._active_field()
+
+        for ch in chars:
+            # --- '#' when typed first in field 1 → absolute ---
+            if ch == "#" and af is self._field_1 and not af.text:
+                self._switch_format(InputFormat.ABSOLUTE)
+                continue  # consume the '#'
+
+            # --- '<' in field 1 → polar (splits into two fields) ---
+            if ch == "<" and af is self._field_1 and self._input_mode == "point":
+                # everything already typed becomes the distance
+                self._switch_format(InputFormat.POLAR)
+                self._field_2.text = ""
+                self._field_2.user_edited = False
+                self._set_active(self._field_2)
+                continue
+
+            # --- comma/space moves focus to second field in point mode -------
+            if ch in (",", " ") and af is self._field_1 and self._input_mode == "point":
+                # switch without inserting the separator character
+                self._set_active(self._field_2)
+                continue
+
+            af.text += ch
+            af.user_edited = True
+
+    # ------------------------------------------------------------------
+    # Field management helpers
+    # ------------------------------------------------------------------
+
+    def _active_field(self) -> _Field:
+        return self._field_1 if self._field_1.active else self._field_2
+
+    def _set_active(self, field: _Field) -> None:
+        self._field_1.active = (field is self._field_1)
+        self._field_2.active = (field is self._field_2)
+        self._restart_blink()
+
+    def _toggle_active_field(self) -> None:
+        if self._field_1.active:
+            self._set_active(self._field_2)
+        else:
+            self._set_active(self._field_1)
+        self.update()
+
+    # ------------------------------------------------------------------
+    # Format / labels
+    # ------------------------------------------------------------------
+
+    def _apply_labels(self) -> None:
+        if self._input_format == InputFormat.POLAR:
+            self._field_1.label = "Dist"
+            self._field_2.label = "Ang"
+        elif self._input_format == InputFormat.ABSOLUTE:
+            self._field_1.label = "X"
+            self._field_2.label = "Y"
+        else:
+            self._field_1.label = "dX"
+            self._field_2.label = "dY"
+
+    def _switch_format(self, fmt: InputFormat) -> None:
+        if self._input_format == fmt:
+            return
+        self._input_format = fmt
+        self._apply_labels()
+        self._update_placeholders()
+        self.update()
+
+    # ------------------------------------------------------------------
+    # Placeholders (default display)
+    # ------------------------------------------------------------------
+
+    def _update_placeholders(self) -> None:
+        """Recalculate placeholder text from the current world position."""
+        if self._input_mode == "point":
+            if self._input_format == InputFormat.ABSOLUTE:
+                self._field_1.placeholder = f"{self._current_pos.x:.2f}"
+                self._field_2.placeholder = f"{self._current_pos.y:.2f}"
+            elif self._input_format == InputFormat.POLAR:
+                bp = self._base_point or Vec2(0, 0)
+                dx = self._current_pos.x - bp.x
+                dy = self._current_pos.y - bp.y
+                dist = sqrt(dx * dx + dy * dy)
+                angle = degrees(atan2(dy, dx))
+                self._field_1.placeholder = f"{dist:.2f}"
+                self._field_2.placeholder = f"{angle:.1f}\u00B0"
+            else:  # RELATIVE
+                bp = self._base_point or Vec2(0, 0)
+                dx = self._current_pos.x - bp.x
+                dy = self._current_pos.y - bp.y
+                self._field_1.placeholder = f"{dx:.2f}"
+                self._field_2.placeholder = f"{dy:.2f}"
+        elif self._input_mode in ("integer", "float"):
+            self._field_1.placeholder = ""
+        elif self._input_mode == "string":
+            self._field_1.placeholder = ""
+
+    # ------------------------------------------------------------------
+    # Submission
+    # ------------------------------------------------------------------
 
     @Slot()
     def _on_submit(self) -> None:
-        """Parse and submit the current input."""
-        self._hide_timer.stop()
+        self._blink_timer.stop()
 
         if self._input_mode == "point":
             result = self._parse_vector_input()
         elif self._input_mode == "integer":
             try:
-                result = int(self._field_1.text())
+                result = int(self._field_1.text) if self._field_1.text else None
             except ValueError:
-                self.input_cancelled.emit()
-                self.hide()
-                return
+                result = None
         elif self._input_mode == "float":
             try:
-                result = float(self._field_1.text())
+                result = float(self._field_1.text) if self._field_1.text else None
             except ValueError:
-                self.input_cancelled.emit()
-                self.hide()
-                return
+                result = None
         elif self._input_mode == "string":
-            result = self._field_1.text()
+            result = self._field_1.text if self._field_1.text else None
         else:
             result = None
 
         if result is not None:
             self.input_submitted.emit(result)
-            self.hide()
+            self.clear()
         else:
-            self.input_cancelled.emit()
-            self.hide()
+            # If no user text was typed, submit the current cursor position
+            if self._input_mode == "point":
+                self.input_submitted.emit(self._current_pos)
+                self.clear()
+            else:
+                self.input_cancelled.emit()
+                self.clear()
 
     def _parse_vector_input(self) -> Optional[Vec2]:
-        """Parse vector input from the two fields."""
-        field1_text = self._field_1.text()
-        field2_text = self._field_2.text()
+        """Parse the two fields into a Vec2, respecting the current format."""
+        t1 = self._field_1.text
+        t2 = self._field_2.text
 
-        if not field1_text or not field2_text:
+        # If nothing was typed, return None (caller will use current_pos)
+        if not t1 and not t2:
             return None
 
-        # Reconstruct the input string based on format
+        # Use placeholder (world-pos default) for any un-typed field
+        if not t1:
+            t1 = self._field_1.placeholder.rstrip("\u00B0")
+        if not t2:
+            t2 = self._field_2.placeholder.rstrip("\u00B0")
+
         if self._input_format == InputFormat.ABSOLUTE:
-            input_str = f"#{field1_text},{field2_text}"
+            input_str = f"#{t1},{t2}"
         elif self._input_format == InputFormat.POLAR:
-            input_str = f"{field1_text}<{field2_text}"
-        else:  # RELATIVE
-            input_str = f"{field1_text},{field2_text}"
+            input_str = f"{t1}<{t2}"
+        else:
+            input_str = f"{t1},{t2}"
 
         return DynamicInputParser.parse_vector(
             input_str,
@@ -448,13 +548,23 @@ class DynamicInputWidget(QWidget):
             base_point=self._base_point,
         )
 
-    def clear(self) -> None:
-        """Clear all fields and reset state."""
-        self._field_1.clear()
-        self._field_2.clear()
-        self._input_mode = "none"
-        self._hide_timer.stop()
-        self.hide()
+    # ------------------------------------------------------------------
+    # Cursor blink
+    # ------------------------------------------------------------------
 
-    def sizeHint(self) -> QSize:  # noqa: N802
-        return QSize(220, 36)
+    def _toggle_cursor(self) -> None:
+        self._cursor_visible = not self._cursor_visible
+        self.update()
+
+    def _restart_blink(self) -> None:
+        """Reset blink so cursor is visible immediately after a keypress."""
+        self._cursor_visible = True
+        self._blink_timer.start()
+
+    # ------------------------------------------------------------------
+    # Focus handling
+    # ------------------------------------------------------------------
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        # Focus is managed by the canvas — never hide here.
+        super().focusOutEvent(event)
