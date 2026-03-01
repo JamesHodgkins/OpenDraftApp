@@ -46,6 +46,17 @@ from app.entities import BaseEntity, Vec2
 from app.editor.base_command import CommandBase, CommandCancelled
 from app.editor.command_registry import get_command
 from app.editor.selection import SelectionSet
+from app.editor.undo import (
+    AddEntityUndoCommand,
+    AddLayerUndoCommand,
+    RemoveEntitiesUndoCommand,
+    RemoveLayerUndoCommand,
+    RenameLayerUndoCommand,
+    SetActiveLayerUndoCommand,
+    SetEntityPropertiesUndoCommand,
+    SetLayerPropertyUndoCommand,
+    UndoStack,
+)
 
 
 # Sentinel placed in the queue by cancel() to unblock a waiting command.
@@ -70,6 +81,7 @@ class Editor(QObject):
     entity_added      = Signal(object) # BaseEntity instance
     entity_removed    = Signal(str)    # entity id
     document_changed  = Signal()       # generic redraw trigger
+    undo_state_changed = Signal()      # undo/redo availability changed
 
     def __init__(
         self,
@@ -90,6 +102,10 @@ class Editor(QObject):
 
         # Selection set — tracks currently selected entity IDs.
         self.selection = SelectionSet(parent=self)
+
+        # Undo / redo history.
+        self._undo_stack = UndoStack(parent=self)
+        self._undo_stack.state_changed.connect(self.undo_state_changed.emit)
 
         # Wire DocumentStore change notifications → document_changed signal so
         # any direct mutation of the document (e.g. from LayerManagerDialog)
@@ -309,6 +325,9 @@ class Editor(QObject):
         the document are also applied to the new entity so that "ByLayer"
         objects inherit the pending style described in the Properties panel.
 
+        The addition is recorded on the undo stack so it can be reversed
+        with :meth:`undo`.
+
         Returns the entity (for chaining).
         """
         doc = self._document
@@ -323,6 +342,10 @@ class Editor(QObject):
         doc.add_entity(entity)
         self.entity_added.emit(entity)
         self.document_changed.emit()
+
+        # Record on the undo stack (entity is already in the document).
+        self._undo_stack.push(AddEntityUndoCommand(doc, entity))
+
         return entity
 
     def remove_entity(self, entity_id: str) -> Optional[BaseEntity]:
@@ -344,23 +367,197 @@ class Editor(QObject):
         """Remove all currently selected entities from the document.
 
         The selection set is cleared regardless of whether the entities
-        actually existed in the document.  Emitted signals are handled
-        by :meth:`remove_entity`, so callers can listen to
-        ``entity_removed`` if they need to track individual removals.
+        actually existed in the document.  The removal is recorded on the
+        undo stack as a single :class:`RemoveEntitiesUndoCommand` so the
+        whole deletion can be reversed with one ``Ctrl+Z``.
 
         Returns a list of the removed entity objects (preserving the order
         in the selection set at the time of deletion).
         """
+        doc = self._document
         removed_entities: list[BaseEntity] = []
-        # copy ids because removal mutates the selection set
+        removed_indices: list[int] = []
+
+        # Collect entities and their indices *before* any removal.
         for eid in list(self.selection.ids):
-            ent = self.remove_entity(eid)
-            if ent is not None:
-                removed_entities.append(ent)
+            for i, ent in enumerate(doc.entities):
+                if ent.id == eid:
+                    removed_entities.append(ent)
+                    removed_indices.append(i)
+                    break
+
+        # Now remove them through the normal path (emits signals).
+        for ent in removed_entities:
+            self.remove_entity(ent.id)
+
+        # Record a single undo command for the entire batch.
+        if removed_entities:
+            self._undo_stack.push(
+                RemoveEntitiesUndoCommand(doc, removed_entities, removed_indices)
+            )
+
         # clear selection regardless of success so user isn't left with stale
         # IDs that no longer exist.
         self.selection.clear()
         return removed_entities
+
+    # ------------------------------------------------------------------
+    # Undo / redo
+    # ------------------------------------------------------------------
+
+    @property
+    def undo_stack(self) -> UndoStack:
+        """The editor's undo/redo history stack."""
+        return self._undo_stack
+
+    def undo(self) -> bool:
+        """Undo the last recorded action.
+
+        Returns ``True`` if an action was undone.
+        """
+        ok = self._undo_stack.undo()
+        if ok:
+            self.document_changed.emit()
+        return ok
+
+    def redo(self) -> bool:
+        """Redo the previously undone action.
+
+        Returns ``True`` if an action was redone.
+        """
+        ok = self._undo_stack.redo()
+        if ok:
+            self.document_changed.emit()
+        return ok
+
+    # ------------------------------------------------------------------
+    # Undoable property helpers (called from UI code)
+    # ------------------------------------------------------------------
+
+    def set_entity_properties(
+        self,
+        entity_ids: list[str],
+        attr: str,
+        new_value,
+        *,
+        description: str = "Change properties",
+    ) -> None:
+        """Set *attr* to *new_value* on every entity in *entity_ids*.
+
+        Records the change on the undo stack so it can be reversed.
+        """
+        doc = self._document
+        changes = []
+        for eid in entity_ids:
+            ent = doc.get_entity(eid)
+            if ent is not None:
+                old_val = getattr(ent, attr, None)
+                setattr(ent, attr, new_value)
+                changes.append((eid, attr, old_val, new_value))
+        if changes:
+            self._undo_stack.push(
+                SetEntityPropertiesUndoCommand(doc, changes, description)
+            )
+            doc._notify()
+            self.document_changed.emit()
+
+    def set_layer_property(
+        self,
+        layer_name: str,
+        attr: str,
+        new_value,
+        *,
+        description: str = "Change layer property",
+    ) -> None:
+        """Set *attr* on the layer named *layer_name*.
+
+        Records the change on the undo stack.
+        """
+        doc = self._document
+        lyr = doc.get_layer(layer_name)
+        if lyr is None:
+            return
+        old_val = getattr(lyr, attr, None)
+        setattr(lyr, attr, new_value)
+        self._undo_stack.push(
+            SetLayerPropertyUndoCommand(
+                doc, layer_name, attr, old_val, new_value, description
+            )
+        )
+        doc._notify()
+        self.document_changed.emit()
+
+    def rename_layer(self, old_name: str, new_name: str) -> None:
+        """Rename a layer and record it on the undo stack."""
+        doc = self._document
+        lyr = doc.get_layer(old_name)
+        if lyr is None:
+            return
+        lyr.name = new_name
+        if doc.active_layer == old_name:
+            doc.active_layer = new_name
+        self._undo_stack.push(RenameLayerUndoCommand(doc, old_name, new_name))
+        doc._notify()
+        self.document_changed.emit()
+
+    def add_layer(self, layer) -> None:
+        """Add a layer and record it on the undo stack."""
+        doc = self._document
+        doc.add_layer(layer)
+        self._undo_stack.push(AddLayerUndoCommand(doc, layer))
+        self.document_changed.emit()
+
+    def remove_layer_undoable(
+        self,
+        layer_name: str,
+        *,
+        reassign_to: str = "default",
+    ) -> bool:
+        """Remove a layer, reassign its entities, and record on undo stack.
+
+        Returns ``True`` if the layer was actually removed.
+        """
+        doc = self._document
+        lyr = doc.get_layer(layer_name)
+        if lyr is None or layer_name == "default":
+            return False
+
+        # Find the index before removal.
+        layer_index = next(
+            (i for i, l in enumerate(doc.layers) if l.name == layer_name), 0
+        )
+
+        # Collect entities to reassign.
+        reassigned = []
+        for ent in doc.entities:
+            if ent.layer == layer_name:
+                reassigned.append((ent.id, ent.layer))
+                ent.layer = reassign_to
+
+        was_active = doc.active_layer == layer_name
+        doc.remove_layer(layer_name)
+        if was_active:
+            doc.active_layer = reassign_to
+
+        self._undo_stack.push(
+            RemoveLayerUndoCommand(
+                doc, lyr, layer_index, reassigned, was_active
+            )
+        )
+        doc._notify()
+        self.document_changed.emit()
+        return True
+
+    def set_active_layer(self, new_name: str) -> None:
+        """Change the active layer and record it on the undo stack."""
+        doc = self._document
+        old_name = doc.active_layer
+        if old_name == new_name:
+            return
+        doc.active_layer = new_name
+        self._undo_stack.push(SetActiveLayerUndoCommand(doc, old_name, new_name))
+        doc._notify()
+        self.document_changed.emit()
 
     # -------------------------------------------------------------- internals
 

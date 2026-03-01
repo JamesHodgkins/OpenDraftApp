@@ -6,9 +6,11 @@ Ribbon configuration data lives in :mod:`app.config.ribbon_config`.
 """
 from typing import Optional
 
+from pathlib import Path
+
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtGui import QShortcut, QKeySequence, QIcon
 
 from controls.ribbon import RibbonPanel
 from app.canvas import CADCanvas
@@ -33,6 +35,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenDraft 2D CAD App")
+        _icon = Path(__file__).parent.parent / "assets" / "svg" / "badge_logo.svg"
+        self.setWindowIcon(QIcon(str(_icon)))
 
         # ---- Core subsystems (created before widgets so canvas can receive
         #      proper constructor arguments instead of post-hoc attr injection) ---
@@ -62,6 +66,13 @@ class MainWindow(QMainWindow):
         # inside ribbon controls so users can press Esc to clear selection
         # or cancel commands without clicking the viewport first.
         esc_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
+
+        # Undo / Redo global shortcuts (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z).
+        undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
+        undo_shortcut.activated.connect(self.editor.undo)
+        redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
+        redo_shortcut.activated.connect(self.editor.redo)
+
         def _handle_escape():
             if self.editor is None:
                 return
@@ -234,7 +245,8 @@ class MainWindow(QMainWindow):
     # -----------------------------------------------------------------------
 
     # Actions handled directly by MainWindow (not forwarded to the editor)
-    _LOCAL_ACTIONS = {"toggleLayerModal", "togglePropertiesPanel", "toggleSettingsModal"}
+    _LOCAL_ACTIONS = {"toggleLayerModal", "togglePropertiesPanel", "toggleSettingsModal",
+                       "undo", "redo"}
 
     def _on_action(self, name: str) -> None:
         """Route ribbon actions to the correct handler.
@@ -244,6 +256,10 @@ class MainWindow(QMainWindow):
         """
         if name == "toggleLayerModal":
             self._toggle_layer_modal()
+        elif name == "undo":
+            self.editor.undo()
+        elif name == "redo":
+            self.editor.redo()
         elif name in self._LOCAL_ACTIONS:
             # Placeholder — implement additional local actions here.
             pass
@@ -257,7 +273,7 @@ class MainWindow(QMainWindow):
         preserving scroll position and column widths between sessions.
         """
         if self._layer_dlg is None:
-            self._layer_dlg = LayerManagerDialog(self._doc, parent=self)
+            self._layer_dlg = LayerManagerDialog(self._doc, parent=self, editor=self.editor)
             # Live-refresh the canvas whenever a layer property changes
             self._layer_dlg.layers_changed.connect(self._canvas.refresh)
             # Repopulate the layer combo if layers are added/removed/renamed

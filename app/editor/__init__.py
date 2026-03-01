@@ -15,6 +15,18 @@ from app.editor.command_registry import command, get_command, registered_command
 from app.editor.editor import Editor
 from app.editor.osnap_engine import OsnapEngine, SnapResult, SnapType
 from app.editor.selection import SelectionSet
+from app.editor.undo import (
+    AddEntityUndoCommand,
+    AddLayerUndoCommand,
+    RemoveEntitiesUndoCommand,
+    RemoveLayerUndoCommand,
+    RenameLayerUndoCommand,
+    SetActiveLayerUndoCommand,
+    SetEntityPropertiesUndoCommand,
+    SetLayerPropertyUndoCommand,
+    UndoCommand,
+    UndoStack,
+)
 
 __all__ = [
     "Editor",
@@ -24,6 +36,16 @@ __all__ = [
     "SnapResult",
     "SnapType",
     "SelectionSet",
+    "UndoCommand",
+    "UndoStack",
+    "AddEntityUndoCommand",
+    "AddLayerUndoCommand",
+    "RemoveEntitiesUndoCommand",
+    "RemoveLayerUndoCommand",
+    "RenameLayerUndoCommand",
+    "SetActiveLayerUndoCommand",
+    "SetEntityPropertiesUndoCommand",
+    "SetLayerPropertyUndoCommand",
     "command",
     "get_command",
     "registered_commands",

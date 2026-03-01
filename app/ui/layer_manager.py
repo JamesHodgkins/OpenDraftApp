@@ -78,12 +78,13 @@ class LayerManagerDialog(QDialog):
         QPushButton:pressed { background: #222; }
     """
 
-    def __init__(self, document: DocumentStore, parent=None) -> None:
+    def __init__(self, document: DocumentStore, parent=None, editor=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Layer Manager")
         self.setMinimumSize(680, 320)
         self.setStyleSheet(self._DIALOG_STYLE)
         self._doc = document
+        self._editor = editor
         self._build_ui()
         self._populate()
 
@@ -212,10 +213,16 @@ class LayerManagerDialog(QDialog):
         style_combo.setProperty("layerName", layer.name)
         def _on_style_change(text):
             ln = style_combo.property("layerName")
-            l = self._doc.get_layer(ln)
-            if l is None:
-                return
-            l.line_style = text
+            if self._editor is not None:
+                self._editor.set_layer_property(
+                    ln, "line_style", text,
+                    description=f"Layer '{ln}' line style",
+                )
+            else:
+                l = self._doc.get_layer(ln)
+                if l is None:
+                    return
+                l.line_style = text
             self.layers_changed.emit()
         style_combo.currentTextChanged.connect(_on_style_change)
         self._table.setCellWidget(row, self.COL_STYLE, style_combo)
@@ -236,14 +243,21 @@ class LayerManagerDialog(QDialog):
         weight_combo.setProperty("layerName", layer.name)
         def _on_weight_change(text):
             ln = weight_combo.property("layerName")
-            l = self._doc.get_layer(ln)
-            if l is None:
-                return
             try:
-                l.thickness = float(text)
-                self.layers_changed.emit()
-            except Exception:
-                pass
+                new_val = float(text)
+            except (ValueError, TypeError):
+                return
+            if self._editor is not None:
+                self._editor.set_layer_property(
+                    ln, "thickness", new_val,
+                    description=f"Layer '{ln}' weight",
+                )
+            else:
+                l = self._doc.get_layer(ln)
+                if l is None:
+                    return
+                l.thickness = new_val
+            self.layers_changed.emit()
         weight_combo.currentTextChanged.connect(_on_weight_change)
         self._table.setCellWidget(row, self.COL_WEIGHT, weight_combo)
 
@@ -261,7 +275,10 @@ class LayerManagerDialog(QDialog):
 
         if col == self.COL_ACTIVE:
             if item.checkState() == Qt.Checked:
-                self._doc.active_layer = layer_name
+                if self._editor is not None:
+                    self._editor.set_active_layer(layer_name)
+                else:
+                    self._doc.active_layer = layer_name
                 # Uncheck all other rows
                 self._table.blockSignals(True)
                 for r in range(self._table.rowCount()):
@@ -277,7 +294,14 @@ class LayerManagerDialog(QDialog):
                 self._table.blockSignals(False)
 
         elif col == self.COL_VISIBLE:
-            layer.visible = item.checkState() == Qt.Checked
+            new_vis = item.checkState() == Qt.Checked
+            if self._editor is not None:
+                self._editor.set_layer_property(
+                    layer_name, "visible", new_vis,
+                    description=f"Layer '{layer_name}' visibility",
+                )
+            else:
+                layer.visible = new_vis
             self.layers_changed.emit()
 
         elif col == self.COL_NAME:
@@ -290,10 +314,13 @@ class LayerManagerDialog(QDialog):
                 item.setText(layer_name)
                 self._table.blockSignals(False)
                 return
-            # Apply the rename
-            layer.name = new_name
-            if self._doc.active_layer == layer_name:
-                self._doc.active_layer = new_name
+            # Apply the rename (undoable)
+            if self._editor is not None:
+                self._editor.rename_layer(layer_name, new_name)
+            else:
+                layer.name = new_name
+                if self._doc.active_layer == layer_name:
+                    self._doc.active_layer = new_name
             # Update the stored key in every cell of this row and any widgets
             self._table.blockSignals(True)
             for c in range(self._table.columnCount()):
@@ -329,7 +356,14 @@ class LayerManagerDialog(QDialog):
             if dlg.exec() == QDialog.Accepted:
                 chosen = dlg.chosen_color()
                 if chosen is not None:
-                    layer.color = chosen.to_string()
+                    color_str = chosen.to_string()
+                    if self._editor is not None:
+                        self._editor.set_layer_property(
+                            layer_name, "color", color_str,
+                            description=f"Layer '{layer_name}' colour",
+                        )
+                    else:
+                        layer.color = color_str
                     resolved = chosen.to_hex()
                     self._table.blockSignals(True)
                     item.setBackground(QColor(resolved))
@@ -351,7 +385,10 @@ class LayerManagerDialog(QDialog):
             idx += 1
             name = f"{base} {idx}"
         layer = Layer(name=name)
-        self._doc.add_layer(layer)
+        if self._editor is not None:
+            self._editor.add_layer(layer)
+        else:
+            self._doc.add_layer(layer)
         self._table.blockSignals(True)
         self._append_row(layer)
         self._table.blockSignals(False)
@@ -380,20 +417,32 @@ class LayerManagerDialog(QDialog):
         if result != QMessageBox.Yes:
             return
 
-        # Reassign entities
-        for e in list(self._doc.entities_on_layer(layer_name)):
-            e.layer = "default"
+        if self._editor is not None:
+            was_active = self._doc.active_layer == layer_name
+            self._editor.remove_layer_undoable(layer_name, reassign_to="default")
+            if was_active:
+                # Fix the Active checkboxes in the table
+                self._table.blockSignals(True)
+                for r in range(self._table.rowCount()):
+                    lname = self._table.item(r, self.COL_ACTIVE).data(Qt.UserRole)
+                    state = Qt.Checked if lname == "default" else Qt.Unchecked
+                    self._table.item(r, self.COL_ACTIVE).setCheckState(state)
+                self._table.blockSignals(False)
+        else:
+            # Reassign entities
+            for e in list(self._doc.entities_on_layer(layer_name)):
+                e.layer = "default"
 
-        self._doc.remove_layer(layer_name)
-        if self._doc.active_layer == layer_name:
-            self._doc.active_layer = "default"
-            # Fix the Active checkboxes in the table
-            self._table.blockSignals(True)
-            for r in range(self._table.rowCount()):
-                lname = self._table.item(r, self.COL_ACTIVE).data(Qt.UserRole)
-                state = Qt.Checked if lname == "default" else Qt.Unchecked
-                self._table.item(r, self.COL_ACTIVE).setCheckState(state)
-            self._table.blockSignals(False)
+            self._doc.remove_layer(layer_name)
+            if self._doc.active_layer == layer_name:
+                self._doc.active_layer = "default"
+                # Fix the Active checkboxes in the table
+                self._table.blockSignals(True)
+                for r in range(self._table.rowCount()):
+                    lname = self._table.item(r, self.COL_ACTIVE).data(Qt.UserRole)
+                    state = Qt.Checked if lname == "default" else Qt.Unchecked
+                    self._table.item(r, self.COL_ACTIVE).setCheckState(state)
+                self._table.blockSignals(False)
 
         self._table.removeRow(row)
         self.layers_changed.emit()

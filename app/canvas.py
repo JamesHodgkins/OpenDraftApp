@@ -47,6 +47,7 @@ from typing import List, Optional
 
 from app.document import DocumentStore
 from app.entities import Vec2
+from app.entities.base import GripPoint, GripType
 from app.editor.osnap_engine import OsnapEngine, SnapResult, SnapType
 from app.editor.draftmate import (
     DraftmateEngine,
@@ -153,6 +154,21 @@ class CADCanvas(QWidget):
         # Entity id currently under the cursor (None when nothing is hovered).
         self._hovered_entity_id: Optional[str] = None
 
+        # ---- Grip editing state -------------------------------------------
+        # Size (half-width) of grip squares in screen pixels.
+        self._grip_half_size: int = 5
+        # Pixel tolerance for "is the mouse over a grip?" hit test.
+        self._grip_pick_px: float = 7.0
+        # The GripPoint currently under the cursor (None when no grip is hot).
+        self._hot_grip: Optional[GripPoint] = None
+        # The GripPoint currently being dragged (None when not dragging).
+        self._active_grip: Optional[GripPoint] = None
+        # The entity being grip-edited (a shallow copy so we can mutate it
+        # live during the drag without corrupting the document until commit).
+        self._grip_entity_snapshot = None
+        # Mouse position in world coordinates during a grip drag.
+        self._grip_drag_world: Optional[Vec2] = None
+
         # ---- Render cache (rubber band optimisation) -------------------------
         # Captured scene pixmap (grid + entities, no rubber band) reused during
         # selection drags so we only redraw the selection rect each frame.
@@ -242,6 +258,45 @@ class CADCanvas(QWidget):
             posf = event.position() if hasattr(event, "position") else event.posF()
             world_pt = self.screen_to_world(posf)
 
+            # ---- Grip: second click places the active grip ----
+            if self._active_grip is not None:
+                # Use snapped position when available.
+                if self._snap_result is not None:
+                    final_pos = self._snap_result.point
+                elif self._grip_drag_world is not None:
+                    final_pos = self._grip_drag_world
+                else:
+                    final_pos = Vec2(world_pt.x(), world_pt.y())
+                if self._document is not None:
+                    for e in self._document:
+                        if e.id == self._active_grip.entity_id:
+                            e.move_grip(self._active_grip.index, final_pos)
+                            break
+                # Reset grip state.
+                self._active_grip = None
+                self._grip_entity_snapshot = None
+                self._grip_drag_world = None
+                self._snap_result = None
+                self.setCursor(Qt.CrossCursor)
+                self.update()
+                self.setFocus()
+                return
+
+            # ---- Grip activation: first click on a hot grip starts moving it ----
+            if self._idle and self._hot_grip is not None:
+                import copy
+                grip = self._hot_grip
+                self._active_grip = grip
+                # Find the entity and snapshot it so we can mutate during move.
+                if self._document is not None:
+                    for e in self._document:
+                        if e.id == grip.entity_id:
+                            self._grip_entity_snapshot = copy.deepcopy(e)
+                            break
+                self._grip_drag_world = Vec2(world_pt.x(), world_pt.y())
+                self.setFocus()
+                return
+
             if self._idle:
                 # ---- Selection mode ----
                 self._sel_origin_screen = QPointF(posf)
@@ -281,6 +336,49 @@ class CADCanvas(QWidget):
         world_pt = self.screen_to_world(posf)
         raw = Vec2(world_pt.x(), world_pt.y())
 
+        # ---- Active grip move (click-click mode) --------------------------
+        if self._active_grip is not None:
+            # Run OSNAP so the grip can snap to geometry while moving.
+            if self._document is not None and self._osnap_master:
+                # Exclude the entity being edited from snap candidates so
+                # it doesn't snap to its own (original) geometry.
+                snap_entities = [
+                    ent for ent in self._document.entities
+                    if ent.id != self._active_grip.entity_id
+                ]
+                self._snap_result = self._osnap.snap(
+                    raw, snap_entities, self.scale,
+                )
+            else:
+                self._snap_result = None
+
+            # Use snapped position when available.
+            if self._snap_result is not None:
+                display_grip = self._snap_result.point
+            else:
+                display_grip = raw
+            self._grip_drag_world = display_grip
+
+            # Apply the grip movement live to the snapshot so the entity
+            # redraws at the new position during the move.
+            if self._grip_entity_snapshot is not None:
+                import copy
+                # Re-snapshot from the original document entity each frame
+                # so cumulative floating-point drift doesn't accumulate.
+                for e in (self._document or []):
+                    if e.id == self._active_grip.entity_id:
+                        self._grip_entity_snapshot = copy.deepcopy(e)
+                        break
+                self._grip_entity_snapshot.move_grip(
+                    self._active_grip.index, display_grip)
+            self.update()
+            # Don't return — let the rest of mouseMoveEvent run so the
+            # coordinate display, crosshair, etc. stay updated.
+            try:
+                self.mouseMoved.emit(display_grip.x, display_grip.y)
+            except Exception:
+                pass
+
         # ---- Selection rectangle drag tracking ----------------------------
         if self._sel_origin_screen is not None and not self._panning:
             self._sel_current_screen = QPointF(posf)
@@ -296,9 +394,11 @@ class CADCanvas(QWidget):
 
         # ---- OSNAP --------------------------------------------------------
         # Only run snap when the editor is expecting a point input and the
-        # master snap toggle is on.
+        # master snap toggle is on.  Skip when a grip is active — the
+        # grip-move block above already ran snap.
         snap_active = (
-            self._editor is not None
+            self._active_grip is None
+            and self._editor is not None
             and getattr(self._editor, "_input_mode", "none") == "point"
             and self._document is not None
             and self._osnap_master
@@ -308,7 +408,9 @@ class CADCanvas(QWidget):
                 raw, self._document.entities, self.scale,
                 from_point=getattr(self._editor, "snap_from_point", None),
             )
-        else:
+        elif self._active_grip is None:
+            # Only clear snap when no grip is active — the grip-move block
+            # above already set _snap_result for the current frame.
             self._snap_result = None
 
         # ---- Draftmate tracking + alignment --------------------------------
@@ -345,7 +447,34 @@ class CADCanvas(QWidget):
             self._dynamic_input.update_screen_position(event.pos() if hasattr(event, "pos") else posf.toPoint())
 
         # ---- Hover hit-test (idle mode only) --------------------------------
-        if self._idle and self._document is not None and not self._sel_dragging:
+        # Skip hover/grip-hover while a grip is actively being moved.
+        if self._active_grip is not None:
+            pass  # grip move is in progress — no hover updates
+        elif self._idle and self._document is not None and not self._sel_dragging:
+            # ---- Grip hover detection (takes priority) --------------------
+            sel_ids = self._editor.selection.ids if self._editor is not None else set()
+            old_hot = self._hot_grip
+            self._hot_grip = None
+            if sel_ids:
+                grip_tol = self._grip_pick_px / self.scale
+                for e in self._document:
+                    if e.id not in sel_ids:
+                        continue
+                    for gp in e.grip_points():
+                        dx = raw.x - gp.position.x
+                        dy = raw.y - gp.position.y
+                        if (dx * dx + dy * dy) <= grip_tol * grip_tol:
+                            self._hot_grip = gp
+                            break
+                    if self._hot_grip is not None:
+                        break
+            # Update cursor shape for grip hover feedback
+            if self._hot_grip is not None and old_hot is None:
+                self.setCursor(Qt.SizeAllCursor)
+            elif self._hot_grip is None and old_hot is not None:
+                self.setCursor(Qt.CrossCursor)
+
+            # ---- Entity hover detection -----------------------------------
             tolerance = self._pick_tolerance_px / self.scale
             new_hover: Optional[str] = None
             for e in self._document:
@@ -376,6 +505,11 @@ class CADCanvas(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        # Grip placement is handled in mousePressEvent (click-click mode),
+        # so left-button release during an active grip move is a no-op.
+        if event.button() == Qt.LeftButton and self._active_grip is not None:
+            return
+
         if event.button() == Qt.LeftButton and self._sel_origin_screen is not None:
             posf = event.position() if hasattr(event, "position") else event.posF()
             shift = bool(event.modifiers() & Qt.ShiftModifier)
@@ -414,6 +548,14 @@ class CADCanvas(QWidget):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key_Escape:
+            # Cancel an active grip drag first.
+            if self._active_grip is not None:
+                self._active_grip = None
+                self._grip_entity_snapshot = None
+                self._grip_drag_world = None
+                self.update()
+                return
+
             if self._idle:
                 # No command running: clear selection (and hover)
                 changed = False
@@ -624,6 +766,15 @@ class CADCanvas(QWidget):
                     vp_min_x, vp_min_y, vp_max_x, vp_max_y
                 ):
                     continue
+
+                # If this entity is being grip-dragged, draw the snapshot
+                # (with the grip applied) instead of the real entity.
+                draw_e = e
+                if (self._active_grip is not None
+                        and self._grip_entity_snapshot is not None
+                        and e.id == self._active_grip.entity_id):
+                    draw_e = self._grip_entity_snapshot
+
                 # Resolve pen defaults from layer
                 is_sel   = e.id in sel_ids
                 is_hover = e.id == hover_id
@@ -652,7 +803,7 @@ class CADCanvas(QWidget):
                 pen = QPen(color, thickness)
                 pen.setStyle(style)
                 painter.setPen(pen)
-                self._draw_entity(painter, e)
+                self._draw_entity(painter, draw_e)
 
                 # ---- Overlay pass: semi-transparent highlight for hover/selection ----
                 if is_hover or is_sel:
@@ -666,7 +817,11 @@ class CADCanvas(QWidget):
                     overlay_pen = QPen(overlay_color, overlay_thickness)
                     overlay_pen.setStyle(style)
                     painter.setPen(overlay_pen)
-                    self._draw_entity(painter, e)
+                    self._draw_entity(painter, draw_e)
+
+        # ---- Draw grip squares for selected entities ----------------------
+        if sel_ids and self._document is not None and (self._idle or self._active_grip is not None):
+            self._draw_grips(painter, sel_ids)
 
         # Draw dynamic / rubberband preview entities
         if self._preview_entities:
@@ -832,6 +987,64 @@ class CADCanvas(QWidget):
         p1s = self.world_to_screen(p1w)
         p2s = self.world_to_screen(p2w)
         painter.drawLine(p1s, p2s)
+
+    # ------------------------------------------------------------------
+    # Grip rendering
+    # ------------------------------------------------------------------
+
+    def _draw_grips(self, painter: QPainter, sel_ids: set) -> None:
+        """Draw CAD-style grip squares for all selected entities.
+
+        Blue filled squares at each grip location; the currently hot
+        (hovered) grip is drawn red; the actively dragged grip is also red.
+        """
+        S = self._grip_half_size  # half-size in pixels
+        hot = self._hot_grip
+        active = self._active_grip
+
+        # Colours matching traditional CAD: blue = cold, red = hot/active
+        cold_fill   = QColor(0, 100, 255)      # solid blue
+        cold_border = QColor(0, 60, 180)        # darker blue outline
+        hot_fill    = QColor(255, 40, 40)       # solid red
+        hot_border  = QColor(180, 0, 0)         # darker red outline
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+
+        for e in (self._document or []):
+            if e.id not in sel_ids:
+                continue
+            # When an entity is being grip-dragged, use the snapshot so the
+            # grip squares follow the live preview position.
+            draw_e = e
+            if (active is not None
+                    and self._grip_entity_snapshot is not None
+                    and e.id == active.entity_id):
+                draw_e = self._grip_entity_snapshot
+
+            for gp in draw_e.grip_points():
+                sp = self.world_to_screen(
+                    QPointF(gp.position.x, gp.position.y))
+                sx, sy = sp.x(), sp.y()
+
+                is_hot = (hot is not None
+                          and hot.entity_id == gp.entity_id
+                          and hot.index == gp.index)
+                is_active = (active is not None
+                             and active.entity_id == gp.entity_id
+                             and active.index == gp.index)
+
+                if is_hot or is_active:
+                    painter.setPen(QPen(hot_border, 1))
+                    painter.setBrush(QBrush(hot_fill))
+                else:
+                    painter.setPen(QPen(cold_border, 1))
+                    painter.setBrush(QBrush(cold_fill))
+
+                painter.drawRect(
+                    int(sx - S), int(sy - S), S * 2, S * 2)
+
+        painter.restore()
 
     def _draw_selection_rect(self, painter: QPainter) -> None:
         """Draw the selection rectangle overlay in screen coordinates.

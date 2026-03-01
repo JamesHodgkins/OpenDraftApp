@@ -61,6 +61,20 @@ class TextEntity(BaseEntity):
         painter.drawText(sp.x(), sp.y(), self.text)
 
     # ------------------------------------------------------------------
+    # Grip editing
+    # ------------------------------------------------------------------
+
+    def grip_points(self):
+        from app.entities.base import GripPoint, GripType
+        return [
+            GripPoint(self.position, self.id, 0, GripType.ENDPOINT),
+        ]
+
+    def move_grip(self, index: int, new_pos: Vec2) -> None:
+        if index == 0:
+            self.position = new_pos
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 

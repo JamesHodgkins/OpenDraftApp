@@ -121,6 +121,52 @@ class RectangleEntity(BaseEntity):
         return False
 
     # ------------------------------------------------------------------
+    # Grip editing
+    # ------------------------------------------------------------------
+
+    def grip_points(self):
+        from app.entities.base import GripPoint, GripType
+        corners = self._corners()
+        edges = self._edges()
+        grips = []
+        # 4 corner grips (index 0-3)
+        for i, c in enumerate(corners):
+            grips.append(GripPoint(c, self.id, i, GripType.ENDPOINT))
+        # 4 edge midpoint grips (index 4-7)
+        for j, (a, b) in enumerate(edges):
+            mid = Vec2((a.x + b.x) / 2, (a.y + b.y) / 2)
+            grips.append(GripPoint(mid, self.id, 4 + j, GripType.MIDPOINT))
+        return grips
+
+    def move_grip(self, index: int, new_pos: Vec2) -> None:
+        if index < 4:
+            # Corner grip — remap corner index to p1/p2 adjustment.
+            # corners: 0=BL, 1=BR, 2=TR, 3=TL  (from _corners)
+            x1, y1, x2, y2 = self.p1.x, self.p1.y, self.p2.x, self.p2.y
+            mn_x, mn_y = min(x1, x2), min(y1, y2)
+            mx_x, mx_y = max(x1, x2), max(y1, y2)
+            nx, ny = new_pos.x, new_pos.y
+            if index == 0:    # bottom-left
+                self.p1 = Vec2(nx, ny); self.p2 = Vec2(mx_x, mx_y)
+            elif index == 1:  # bottom-right
+                self.p1 = Vec2(mn_x, ny); self.p2 = Vec2(nx, mx_y)
+            elif index == 2:  # top-right
+                self.p1 = Vec2(mn_x, mn_y); self.p2 = Vec2(nx, ny)
+            elif index == 3:  # top-left
+                self.p1 = Vec2(nx, mx_y); self.p2 = Vec2(mx_x, ny)
+        elif 4 <= index <= 7:
+            # Edge midpoint grip — move entire rectangle.
+            corners = self._corners()
+            edges = self._edges()
+            j = index - 4
+            a, b = edges[j]
+            mid = Vec2((a.x + b.x) / 2, (a.y + b.y) / 2)
+            dx = new_pos.x - mid.x
+            dy = new_pos.y - mid.y
+            self.p1 = Vec2(self.p1.x + dx, self.p1.y + dy)
+            self.p2 = Vec2(self.p2.x + dx, self.p2.y + dy)
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 

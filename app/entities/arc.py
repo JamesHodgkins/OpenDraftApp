@@ -166,6 +166,54 @@ class ArcEntity(BaseEntity):
         return False
 
     # ------------------------------------------------------------------
+    # Grip editing
+    # ------------------------------------------------------------------
+
+    def grip_points(self):
+        from app.entities.base import GripPoint, GripType
+        cx, cy, r = self.center.x, self.center.y, self.radius
+        sa, ea = self.start_angle, self.end_angle
+        span = _arc_span(sa, ea, self.ccw)
+        mid_angle = sa + span / 2
+        return [
+            GripPoint(self.center, self.id, 0, GripType.CENTER),
+            GripPoint(Vec2(cx + r * math.cos(sa), cy + r * math.sin(sa)),
+                      self.id, 1, GripType.ENDPOINT),
+            GripPoint(Vec2(cx + r * math.cos(ea), cy + r * math.sin(ea)),
+                      self.id, 2, GripType.ENDPOINT),
+            GripPoint(Vec2(cx + r * math.cos(mid_angle), cy + r * math.sin(mid_angle)),
+                      self.id, 3, GripType.MIDPOINT),
+        ]
+
+    def move_grip(self, index: int, new_pos: Vec2) -> None:
+        if index == 0:
+            # Move entire arc
+            self.center = new_pos
+        elif index == 1:
+            # Move start endpoint — adjust start angle and radius
+            self.start_angle = math.atan2(
+                new_pos.y - self.center.y, new_pos.x - self.center.x)
+            self.radius = max(1e-6, math.hypot(
+                new_pos.x - self.center.x, new_pos.y - self.center.y))
+        elif index == 2:
+            # Move end endpoint — adjust end angle and radius
+            self.end_angle = math.atan2(
+                new_pos.y - self.center.y, new_pos.x - self.center.x)
+            self.radius = max(1e-6, math.hypot(
+                new_pos.x - self.center.x, new_pos.y - self.center.y))
+        elif index == 3:
+            # Midpoint grip — move entire arc
+            span = _arc_span(self.start_angle, self.end_angle, self.ccw)
+            mid_angle = self.start_angle + span / 2
+            old_mid = Vec2(
+                self.center.x + self.radius * math.cos(mid_angle),
+                self.center.y + self.radius * math.sin(mid_angle),
+            )
+            dx = new_pos.x - old_mid.x
+            dy = new_pos.y - old_mid.y
+            self.center = Vec2(self.center.x + dx, self.center.y + dy)
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 

@@ -61,6 +61,26 @@ class DimensionEntity(BaseEntity):
         pass  # dimension rendering not yet implemented
 
     # ------------------------------------------------------------------
+    # Grip editing
+    # ------------------------------------------------------------------
+
+    def grip_points(self):
+        from app.entities.base import GripPoint, GripType
+        return [
+            GripPoint(self.p1, self.id, 0, GripType.ENDPOINT),
+            GripPoint(self.p2, self.id, 1, GripType.ENDPOINT),
+            GripPoint(self.p3, self.id, 2, GripType.ENDPOINT),
+        ]
+
+    def move_grip(self, index: int, new_pos: Vec2) -> None:
+        if index == 0:
+            self.p1 = new_pos
+        elif index == 1:
+            self.p2 = new_pos
+        elif index == 2:
+            self.p3 = new_pos
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 

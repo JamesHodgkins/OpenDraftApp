@@ -85,6 +85,31 @@ class LineEntity(BaseEntity):
         return _geo_seg_intersects_rect(self.p1, self.p2, rmin, rmax)
 
     # ------------------------------------------------------------------
+    # Grip editing
+    # ------------------------------------------------------------------
+
+    def grip_points(self):
+        from app.entities.base import GripPoint, GripType
+        mid = Vec2((self.p1.x + self.p2.x) / 2, (self.p1.y + self.p2.y) / 2)
+        return [
+            GripPoint(self.p1, self.id, 0, GripType.ENDPOINT),
+            GripPoint(self.p2, self.id, 1, GripType.ENDPOINT),
+            GripPoint(mid,     self.id, 2, GripType.MIDPOINT),
+        ]
+
+    def move_grip(self, index: int, new_pos: Vec2) -> None:
+        if index == 0:
+            self.p1 = new_pos
+        elif index == 1:
+            self.p2 = new_pos
+        elif index == 2:
+            # Move entire line
+            dx = new_pos.x - (self.p1.x + self.p2.x) / 2
+            dy = new_pos.y - (self.p1.y + self.p2.y) / 2
+            self.p1 = Vec2(self.p1.x + dx, self.p1.y + dy)
+            self.p2 = Vec2(self.p2.x + dx, self.p2.y + dy)
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 

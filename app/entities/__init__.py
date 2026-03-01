@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from app.entities.base import BaseEntity, Vec2, _ENTITY_REGISTRY
+from app.entities.base import BaseEntity, Vec2, GripPoint, GripType, _ENTITY_REGISTRY
 from app.entities.line import LineEntity
 from app.entities.circle import CircleEntity
 from app.entities.arc import ArcEntity
@@ -27,6 +27,8 @@ from app.entities.hatch import HatchEntity
 __all__ = [
     "BaseEntity",
     "Vec2",
+    "GripPoint",
+    "GripType",
     "LineEntity",
     "CircleEntity",
     "ArcEntity",

@@ -152,13 +152,11 @@ class RibbonPanel(QWidget):
 
                 color_str = chosen.to_string()
                 if _editor and _editor.selection:
-                    # Apply colour override to every selected entity
-                    for eid in list(_editor.selection.ids):
-                        ent = _doc.get_entity(eid)
-                        if ent is not None:
-                            ent.color = color_str
-                    _doc._notify()
-                    _editor.document_changed.emit()
+                    # Apply colour override to every selected entity (undoable)
+                    _editor.set_entity_properties(
+                        list(_editor.selection.ids), "color", color_str,
+                        description="Change colour",
+                    )
                 else:
                     # Store as the active override for new entities
                     _doc.active_color = color_str
@@ -182,12 +180,10 @@ class RibbonPanel(QWidget):
                 _editor = self._editor
                 val = None if idx == 0 else _combo.itemText(idx).lower()
                 if _editor and _editor.selection:
-                    for eid in list(_editor.selection.ids):
-                        ent = _doc.get_entity(eid)
-                        if ent is not None:
-                            ent.line_style = val
-                    _doc._notify()
-                    _editor.document_changed.emit()
+                    _editor.set_entity_properties(
+                        list(_editor.selection.ids), "line_style", val,
+                        description="Change line style",
+                    )
                 else:
                     _doc.active_line_style = val
 
@@ -211,12 +207,10 @@ class RibbonPanel(QWidget):
                     except (ValueError, IndexError):
                         val = None
                 if _editor and _editor.selection:
-                    for eid in list(_editor.selection.ids):
-                        ent = _doc.get_entity(eid)
-                        if ent is not None:
-                            ent.line_weight = val
-                    _doc._notify()
-                    _editor.document_changed.emit()
+                    _editor.set_entity_properties(
+                        list(_editor.selection.ids), "line_weight", val,
+                        description="Change line weight",
+                    )
                 else:
                     _doc.active_thickness = val
 
@@ -411,16 +405,17 @@ class RibbonPanel(QWidget):
                     _doc = _ribbon._document
                     _editor = _ribbon._editor
                     if _editor and _editor.selection:
-                        # Move all selected entities to the chosen layer
-                        for eid in list(_editor.selection.ids):
-                            ent = _doc.get_entity(eid)
-                            if ent is not None:
-                                ent.layer = name
-                        _doc._notify()
-                        _editor.document_changed.emit()
+                        # Move all selected entities to the chosen layer (undoable)
+                        _editor.set_entity_properties(
+                            list(_editor.selection.ids), "layer", name,
+                            description="Change entity layer",
+                        )
                     else:
                         # No selection — change the active (current) layer
-                        _doc.active_layer = name
+                        if _editor:
+                            _editor.set_active_layer(name)
+                        else:
+                            _doc.active_layer = name
 
                 combo._layer_slot = _slot
                 combo.currentTextChanged.connect(_slot)

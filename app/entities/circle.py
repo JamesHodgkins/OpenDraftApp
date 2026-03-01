@@ -82,6 +82,30 @@ class CircleEntity(BaseEntity):
         return math.hypot(cx_clamp - self.center.x, cy_clamp - self.center.y) <= self.radius
 
     # ------------------------------------------------------------------
+    # Grip editing
+    # ------------------------------------------------------------------
+
+    def grip_points(self):
+        from app.entities.base import GripPoint, GripType
+        cx, cy, r = self.center.x, self.center.y, self.radius
+        return [
+            GripPoint(self.center, self.id, 0, GripType.CENTER),
+            GripPoint(Vec2(cx + r, cy), self.id, 1, GripType.QUADRANT),
+            GripPoint(Vec2(cx - r, cy), self.id, 2, GripType.QUADRANT),
+            GripPoint(Vec2(cx, cy + r), self.id, 3, GripType.QUADRANT),
+            GripPoint(Vec2(cx, cy - r), self.id, 4, GripType.QUADRANT),
+        ]
+
+    def move_grip(self, index: int, new_pos: Vec2) -> None:
+        if index == 0:
+            # Move entire circle
+            self.center = new_pos
+        elif index in (1, 2, 3, 4):
+            # Resize: set radius to distance from center to new position
+            self.radius = max(1e-6, math.hypot(
+                new_pos.x - self.center.x, new_pos.y - self.center.y))
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 

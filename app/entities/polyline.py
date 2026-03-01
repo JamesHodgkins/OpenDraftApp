@@ -123,6 +123,39 @@ class PolylineEntity(BaseEntity):
         return False
 
     # ------------------------------------------------------------------
+    # Grip editing
+    # ------------------------------------------------------------------
+
+    def grip_points(self):
+        from app.entities.base import GripPoint, GripType
+        grips = []
+        # Vertex grips (endpoint type)
+        for i, p in enumerate(self.points):
+            grips.append(GripPoint(p, self.id, i, GripType.ENDPOINT))
+        # Midpoint grips for each segment
+        segs = self._segments()
+        for j, (a, b) in enumerate(segs):
+            mid = Vec2((a.x + b.x) / 2, (a.y + b.y) / 2)
+            grips.append(GripPoint(mid, self.id, len(self.points) + j, GripType.MIDPOINT))
+        return grips
+
+    def move_grip(self, index: int, new_pos: Vec2) -> None:
+        n = len(self.points)
+        if index < n:
+            # Vertex grip — move that vertex
+            self.points[index] = new_pos
+        else:
+            # Midpoint grip — move entire polyline
+            segs = self._segments()
+            seg_idx = index - n
+            if 0 <= seg_idx < len(segs):
+                a, b = segs[seg_idx]
+                mid = Vec2((a.x + b.x) / 2, (a.y + b.y) / 2)
+                dx = new_pos.x - mid.x
+                dy = new_pos.y - mid.y
+                self.points = [Vec2(p.x + dx, p.y + dy) for p in self.points]
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 

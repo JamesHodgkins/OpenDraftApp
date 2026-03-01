@@ -25,6 +25,7 @@ or canvas.py when a new type is added:
 """
 from __future__ import annotations
 
+import enum
 import math
 import uuid
 from dataclasses import dataclass, field
@@ -37,6 +38,36 @@ if TYPE_CHECKING:
     # Resolved at type-check time only; avoids runtime Qt import in entities.
     from PySide6.QtGui import QPainter
     from PySide6.QtCore import QPointF
+
+
+# ---------------------------------------------------------------------------
+# Grip types — used by the grip-editing system
+# ---------------------------------------------------------------------------
+
+class GripType(enum.Enum):
+    """Classification of a grip point on an entity."""
+    ENDPOINT = "endpoint"       # dragging moves a single vertex/endpoint
+    MIDPOINT = "midpoint"       # dragging moves the entire entity
+    CENTER   = "center"         # dragging moves the entity (circles/arcs)
+    QUADRANT = "quadrant"       # dragging resizes (radius change)
+    CONTROL  = "control"        # generic control point
+
+
+@dataclass(frozen=True)
+class GripPoint:
+    """A single grip point exposed by an entity for interactive editing.
+
+    Attributes
+    ----------
+    position   — world-space location of the grip.
+    entity_id  — ID of the owning entity.
+    index      — ordinal grip index on the entity (used by ``move_grip``).
+    grip_type  — semantic classification (endpoint / midpoint / centre …).
+    """
+    position: Vec2
+    entity_id: str
+    index: int
+    grip_type: GripType = GripType.CONTROL
 
 
 # ---------------------------------------------------------------------------
@@ -317,3 +348,22 @@ class BaseEntity:
             return False
         sel = BBox(rmin.x, rmin.y, rmax.x, rmax.y)
         return sel.intersects(bb)
+
+    # ------------------------------------------------------------------
+    # Grip editing protocol
+    # ------------------------------------------------------------------
+
+    def grip_points(self) -> List[GripPoint]:
+        """Return the list of grip points for this entity.
+
+        Each concrete subclass should override this to return meaningful
+        grips (endpoints, midpoints, centres, etc.).
+        """
+        return []
+
+    def move_grip(self, index: int, new_pos: Vec2) -> None:
+        """Move grip *index* to *new_pos*, mutating the entity in place.
+
+        Subclasses must override this to handle each grip index returned
+        by ``grip_points()``.
+        """
