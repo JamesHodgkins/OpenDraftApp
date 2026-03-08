@@ -26,13 +26,8 @@ class ButtonType(Enum):
 class ButtonSize(Enum):
     """Standard button sizes used in the ribbon."""
     LARGE = (60, 64)
-    SMALL = (72, 22)  # width x height
-    # split-small width now matches a normal small button (total, including arrow)
-    SPLIT_SMALL = (72, 22)
     ICON_LARGE = (60, 52)
-    ICON_SMALL = (40, 32)
     DROPDOWN_ARROW = (20, 28)
-    DROPDOWN_TEXT = (60, 20)
     ICON_LABEL = (84, 28)
 
 
@@ -52,20 +47,16 @@ class Sizing(NamedTuple):
 
     # Button dimensions
     LARGE_BUTTON_WIDTH: int = 52
-    LARGE_BUTTON_HEIGHT: int = 64
+    LARGE_BUTTON_HEIGHT: int = 72
     SMALL_BUTTON_WIDTH: int = 72
-    SMALL_BUTTON_HEIGHT: int = 22
-    SPLIT_SMALL_WIDTH: int = 72  # same as small button; internal logic splits arrow
+    SMALL_BUTTON_HEIGHT: int = 23
 
     # Icon dimensions
     LARGE_ICON_SIZE: int = 45
     SMALL_ICON_SIZE: int = 20
-    LARGE_ICON_BUTTON_HEIGHT: int = 52
-    LARGE_ICON_LABEL_SIZE: int = 56
 
     # Dropdown dimensions
-    DROPDOWN_ARROW_WIDTH: int = 20
-    DROPDOWN_TEXT_HEIGHT: int = 20
+    DROPDOWN_TEXT_HEIGHT: int = 10
 
     # Spacing
     PANEL_SPACING: int = 2   # cut panel-to-panel gap down for tighter layout
@@ -75,21 +66,17 @@ class Sizing(NamedTuple):
 
 
 SIZE = Sizing(
-    RIBBON_HEIGHT=140,
+    RIBBON_HEIGHT=126,
     LARGE_BUTTON_WIDTH=60,
-    LARGE_BUTTON_HEIGHT=64,
+    LARGE_BUTTON_HEIGHT=72,
     SMALL_BUTTON_WIDTH=72,
     SMALL_BUTTON_HEIGHT=22,
-    SPLIT_SMALL_WIDTH=72,
     LARGE_ICON_SIZE=45,
     SMALL_ICON_SIZE=20,
-    LARGE_ICON_BUTTON_HEIGHT=52,
-    LARGE_ICON_LABEL_SIZE=56,
-    DROPDOWN_ARROW_WIDTH=20,
     DROPDOWN_TEXT_HEIGHT=20,
     PANEL_SPACING=1,
     TOOL_SPACING=1,
-    STACK_SPACING=1,
+    STACK_SPACING=3,
     SPLIT_BUTTON_SPACING=2,
 )
 
@@ -120,7 +107,6 @@ class Colors(NamedTuple):
     TEXT_PRIMARY_LIGHT: str = "#000000"
     TEXT_SECONDARY_DARK: str = "#aaaaaa"
     TEXT_SECONDARY_LIGHT: str = "#666666"
-    TEXT_PLACEHOLDER: str = "#888888"
 
 
 COLORS = Colors(
@@ -134,7 +120,6 @@ COLORS = Colors(
     TEXT_PRIMARY_LIGHT="#000000",
     TEXT_SECONDARY_DARK="#aaaaaa",
     TEXT_SECONDARY_LIGHT="#666666",
-    TEXT_PLACEHOLDER="#888888",
 )
 
 
@@ -144,11 +129,10 @@ class Styles:
     """Style templates for ribbon components."""
 
     FONT_SIZE_LARGE: int = 8
-    FONT_SIZE_SMALL: int = 7
+    FONT_SIZE_SMALL: int = 8
     BORDER_RADIUS_SMALL: int = 3
     BORDER_RADIUS_LARGE: int = 4
     PADDING_SMALL: int = 2
-    PADDING_MEDIUM: int = 8
     ARROW_DOWN: str = "\u25BC"
 
     @staticmethod
@@ -207,7 +191,7 @@ class Styles:
     def dropdown_text_button(dark: bool = False) -> str:
         return f"""
             QToolButton {{
-                font-size: {Styles.FONT_SIZE_LARGE}pt;
+                font-size: {Styles.FONT_SIZE_SMALL}pt;
                 font-weight: 500;
                 color: {COLORS.TEXT_PRIMARY_DARK};
                 {Styles.button_base(dark)}
@@ -233,19 +217,18 @@ class Styles:
     @staticmethod
     def small_icon_label_button(dark: bool = False) -> str:
         return f"""
-            QToolButton {{
+            QToolButton, QPushButton {{
                 font-size: {Styles.FONT_SIZE_SMALL}pt;
                 font-weight: 500;
                 {Styles.button_base(dark)}
-                /* Remove left padding so icon sits at the left edge; tighten right padding */
-                padding: 0 {Styles.PADDING_SMALL}px;
+                padding: 0px;
                 padding-left: 0px;
                 text-align: left;
             }}
-            QToolButton:hover {{
+            QToolButton:hover, QPushButton:hover {{
                 {Styles.button_hover(dark)}
             }}
-            QToolButton:pressed {{
+            QToolButton:pressed, QPushButton:pressed {{
                 {Styles.button_pressed(dark)}
             }}
         """
@@ -338,25 +321,9 @@ class Margins(NamedTuple):
     """Standard margin values."""
     NONE: tuple = (0, 0, 0, 0)
     SMALL: tuple = (1, 1, 1, 1)  # reduced padding around panels
-    MEDIUM: tuple = (2, 2, 2, 2)
 
 
 MARGINS = Margins(
     NONE=(0, 0, 0, 0),
     SMALL=(1, 1, 1, 1),
-    MEDIUM=(2, 2, 2, 2),
 )
-
-
-# ===== PATH CONSTANTS =====
-
-class Paths:
-    """File path constants."""
-    ASSETS_DIR = "assets"
-    ICONS_DIR = "assets/icons"
-    STYLESHEET_FILE = "assets/themes/ribbon.qss"
-
-    @staticmethod
-    def icon_path(icon_name: str, extension: str = "png") -> str:
-        """Generate icon path from icon name."""
-        return f"{Paths.ICONS_DIR}/{icon_name}.{extension}"

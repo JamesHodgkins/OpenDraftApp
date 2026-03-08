@@ -42,7 +42,8 @@ class RibbonPanel(QFrame):
         layout.setContentsMargins(*MARGINS.SMALL)
         layout.setSpacing(1)
 
-        layout.addWidget(content_widget)
+        layout.addWidget(content_widget, alignment=Qt.AlignTop)
+        layout.addStretch(1)
 
         title_label = QLabel(title)
         title_label.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)

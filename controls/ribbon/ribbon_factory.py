@@ -8,10 +8,10 @@ from typing import Callable, Optional, List, Dict, Any
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QSizePolicy, QToolButton, QComboBox,
+    QLabel, QSizePolicy, QToolButton, QComboBox, QStyle, QStyleOption,
 )
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, QSize, QRect
+from PySide6.QtGui import QIcon, QPainter
 
 from controls.ribbon.ribbon_constants import (
     ButtonType, ButtonSize, IconSize, SIZE, Styles, MARGINS,
@@ -25,12 +25,51 @@ from controls.icon_widget import Icon, load_pixmap
 
 
 _PROP_LABEL_STYLE = "color: #999; font-size: 8pt; padding: 0;"
+_LARGE_BUTTON_ICON_TEXT_GAP = 8
 # Maps PropStackRow.label → QWidget objectName used by RibbonPanel.setup_document()
 _PROP_OBJ_NAMES: dict[str, str] = {
     "Color": "colorSwatchBtn",
     "Style": "lineStyleCombo",
     "Weight": "thicknessCombo",
 }
+
+
+class RibbonLargeButton(QToolButton):
+    """QToolButton variant with explicit icon/label spacing for ribbon large buttons."""
+
+    def __init__(self, icon_text_gap: int = _LARGE_BUTTON_ICON_TEXT_GAP, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._icon_text_gap = icon_text_gap
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        option = QStyleOption()
+        option.initFrom(self)
+        self.style().drawPrimitive(QStyle.PE_Widget, option, painter, self)
+
+        content_rect = self.rect().adjusted(2, 2, -2, -2)
+        icon_rect = QRect(
+            (self.width() - self.iconSize().width()) // 2,
+            content_rect.top() + 1,
+            self.iconSize().width(),
+            self.iconSize().height(),
+        )
+
+        if not self.icon().isNull():
+            mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
+            state = QIcon.On if self.isDown() else QIcon.Off
+            pixmap = self.icon().pixmap(self.iconSize(), mode, state)
+            painter.drawPixmap(icon_rect, pixmap)
+
+        text_rect = QRect(
+            content_rect.left(),
+            icon_rect.bottom() + self._icon_text_gap,
+            content_rect.width(),
+            max(0, content_rect.bottom() - (icon_rect.bottom() + self._icon_text_gap) + 1),
+        )
+        painter.setPen(self.palette().buttonText().color())
+        painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap, self.text())
+        painter.end()
 
 
 class ButtonFactory:
@@ -73,7 +112,7 @@ class ButtonFactory:
 
     def _create_large_button(self, tool: ToolDefinition) -> QWidget:
         # Use QToolButton with icon-over-text so QSS hover/pressed rules apply
-        btn = QToolButton()
+        btn = RibbonLargeButton()
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         if tool.icon:
             pix = load_pixmap(tool.icon, SIZE.LARGE_ICON_SIZE)
@@ -144,10 +183,13 @@ class ButtonFactory:
             col_layout.setSpacing(SIZE.STACK_SPACING)
             col_layout.setContentsMargins(*MARGINS.NONE)
             for btn_def in column:  # btn_def is now a ToolDefinition
-                col_layout.addWidget(self._create_small_button(btn_def), alignment=Qt.AlignLeft)
+                col_layout.addWidget(
+                    self._create_small_button(btn_def),
+                    alignment=Qt.AlignLeft | Qt.AlignTop,
+                )
             col_layout.addStretch()
             col_widget.setLayout(col_layout)
-            stack_layout.addWidget(col_widget)
+            stack_layout.addWidget(col_widget, alignment=Qt.AlignTop)
 
         stack_widget.setLayout(stack_layout)
         return stack_widget
@@ -261,12 +303,18 @@ class PanelFactory:
                 small_buttons.append(self.button_factory.create_button(tool))
             else:
                 if small_buttons:
-                    layout.addWidget(self._create_small_button_column(small_buttons))
+                    layout.addWidget(
+                        self._create_small_button_column(small_buttons),
+                        alignment=Qt.AlignTop,
+                    )
                     small_buttons = []
-                layout.addWidget(self.button_factory.create_button(tool))
+                layout.addWidget(self.button_factory.create_button(tool), alignment=Qt.AlignTop)
 
         if small_buttons:
-            layout.addWidget(self._create_small_button_column(small_buttons))
+            layout.addWidget(
+                self._create_small_button_column(small_buttons),
+                alignment=Qt.AlignTop,
+            )
 
         content.setLayout(layout)
         return content
@@ -278,7 +326,7 @@ class PanelFactory:
         vbox.setSpacing(SIZE.STACK_SPACING)
         vbox.setContentsMargins(*MARGINS.NONE)
         for btn in buttons:
-            vbox.addWidget(btn, alignment=Qt.AlignLeft)
+            vbox.addWidget(btn, alignment=Qt.AlignLeft | Qt.AlignTop)
         vbox.addStretch()
         col.setLayout(vbox)
         return col

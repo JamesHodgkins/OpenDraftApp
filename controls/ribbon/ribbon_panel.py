@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (
 )
 # Add QComboBox for layer select lookup
 from PySide6.QtWidgets import QComboBox
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPainter, QColor
+from PySide6.QtCore import Qt, Signal, QRect
+from PySide6.QtGui import QPainter, QColor, QPaintEvent, QMouseEvent
 import logging
 
 _LOG = logging.getLogger(__name__)
@@ -40,6 +40,79 @@ class _PanelSeparator(QWidget):
         p = QPainter(self)
         p.fillRect(self.rect(), self._color)
         p.end()
+
+
+class _RibbonTabBar(QTabBar):
+    """Borderless ribbon tab bar with custom painting.
+
+    Qt's native tab-bar style can keep drawing outlines on Windows even when
+    stylesheets set ``border: none``. Painting the tabs ourselves guarantees
+    the top-row ribbon tabs render without borders.
+    """
+
+    def __init__(self, dark: bool = False, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._dark = dark
+        self._hovered_index = -1
+        self.setDrawBase(False)
+        self.setExpanding(False)
+        self.setDocumentMode(True)
+        self.setElideMode(Qt.ElideNone)
+        self.setUsesScrollButtons(False)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.NoFocus)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        hovered_index = self.tabAt(event.position().toPoint())
+        if hovered_index != self._hovered_index:
+            self._hovered_index = hovered_index
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        if self._hovered_index != -1:
+            self._hovered_index = -1
+            self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        for index in range(self.count()):
+            rect = self.tabRect(index)
+            if not rect.isValid():
+                continue
+
+            fill = self._tab_fill(index)
+            if fill is not None:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(fill)
+                painter.drawRoundedRect(self._background_rect(index, rect), 0, 0)
+
+            painter.setPen(self._tab_text_color(index))
+            painter.drawText(rect, Qt.AlignCenter, self.tabText(index))
+
+        painter.end()
+
+    def _background_rect(self, index: int, rect: QRect) -> QRect:
+        if index == self.currentIndex():
+            return rect.adjusted(2, 4, -2, 0)
+        return rect.adjusted(2, 4, -2, -2)
+
+    def _tab_fill(self, index: int) -> Optional[QColor]:
+        if index == self.currentIndex():
+            return QColor("#2D2D2D")
+        if index == self._hovered_index:
+            return QColor(255, 255, 255, 18) if self._dark else QColor(17, 24, 39, 14)
+        return None
+
+    def _tab_text_color(self, index: int) -> QColor:
+        if index == self.currentIndex():
+            return QColor("#f3f4f6")
+        if self._dark:
+            return QColor("#f3f4f6") if index == self.currentIndex() else QColor("#9ca3af")
+        return QColor("#111827") if index == self.currentIndex() else QColor("#6b7280")
 
 
 class RibbonPanel(QWidget):
@@ -74,12 +147,13 @@ class RibbonPanel(QWidget):
         main_layout.setSpacing(0)
 
         # Tab bar
-        self.tab_bar = QTabBar()
+        self.tab_bar = _RibbonTabBar(dark=dark)
+        self.tab_bar.setObjectName("RibbonTabBar")
+        self.tab_bar.setProperty("dark", dark)
         self.tab_names: List[str] = []
         for tab in ribbon_config.tabs:
             self.tab_bar.addTab(tab.name)
             self.tab_names.append(tab.name)
-        self.tab_bar.setExpanding(False)
         main_layout.addWidget(self.tab_bar)
 
         # Stacked content area
@@ -446,7 +520,7 @@ class RibbonPanel(QWidget):
         for idx, panel_name in enumerate(panel_names):
             panel_def = panels[panel_name]
             panel_widget = self._build_panel(panel_name, panel_def, dark=dark)
-            tab_layout.addWidget(panel_widget)
+            tab_layout.addWidget(panel_widget, alignment=Qt.AlignTop)
             # insert a vertical rule between panels (not after last)
             if idx < len(panel_names) - 1:
                 tab_layout.addWidget(_PanelSeparator(dark=dark))

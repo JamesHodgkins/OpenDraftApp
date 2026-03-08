@@ -1308,7 +1308,7 @@ class CADCanvas(QWidget):
         # ── World-origin axes (always on top) ─────────────────────────────
         ox = (0.0 - self.offset.x()) * self.scale
         oy = (self.offset.y() - 0.0) * self.scale
-        axis_pen = QPen(QColor(180, 80, 80, 200), 1)
+        axis_pen = QPen(QColor("#CCCCCC"), 1)
         painter.setPen(axis_pen)
         painter.drawLine(int(ox), 0, int(ox), h)
         painter.drawLine(0, int(oy), w, int(oy))

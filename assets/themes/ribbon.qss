@@ -3,19 +3,23 @@
 /* RibbonPanel header background (transparent, only border) */
 QWidget#RibbonPanel {
     background: transparent;
-    border-bottom: 1px solid #444;
+    border: none;
 }
 QWidget#RibbonPanel[dark="true"] {
     background: transparent;
-    border-bottom: 1px solid #444;
+    border: none;
 }
 
 /* Updated Tab bar background to ensure consistent color */
-QTabBar {
+QTabBar#RibbonTabBar {
     background: #2D2D2D;
+    border: none;
+    outline: none;
 }
-QTabBar[dark="true"] {
+QTabBar#RibbonTabBar[dark="true"] {
     background: #2D2D2D;
+    border: none;
+    outline: none;
 }
 
 /* Content area background */
@@ -23,51 +27,51 @@ QStackedWidget, QWidget[ribbonContent="true"], QStackedWidget[dark="true"], QWid
     background: #2D2D2D;
 }
 
-/* Tabs (QTabBar) */
-QTabBar {
+/* Tabs (Ribbon QTabBar) */
+QTabBar#RibbonTabBar {
     font-size: 9pt;
     font-weight: 500;
     color: #6b7280;
     background: transparent;
     border: none;
+    outline: none;
     padding: 0 8px;
 }
-QTabBar[dark="true"] {
+QTabBar#RibbonTabBar[dark="true"] {
     color: #9ca3af;
 }
-QTabBar::tab {
-    background: #fff;
+QTabBar#RibbonTabBar::tab {
+    background: transparent;
     color: #6b7280;
-    border: 1px solid #d1d5db;
-    border-bottom: none;
-    border-radius: 6px 6px 0 0;
+    border: none;
+    border-radius: 0;
+    outline: none;
     padding: 6px 18px 8px 18px;
     margin-right: 2px;
 }
-QTabBar::tab:selected {
+QTabBar#RibbonTabBar::tab:selected {
     color: #111827;
-    background: #fff;
-    border: 1px solid #d1d5db;
-    border-bottom: 1px solid #fff;
+    background: rgba(255, 255, 255, 0.12);
+    border: none;
 }
-QTabBar::tab:hover {
+QTabBar#RibbonTabBar::tab:hover {
     color: #111827;
-    background: #e5e7eb;
+    background: rgba(255, 255, 255, 0.08);
 }
-QTabBar[dark="true"]::tab {
-    background: #2d2d2d;
+QTabBar#RibbonTabBar[dark="true"]::tab {
+    background: transparent;
     color: #9ca3af;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: none;
+    outline: none;
 }
-QTabBar[dark="true"]::tab:selected {
+QTabBar#RibbonTabBar[dark="true"]::tab:selected {
     color: #f3f4f6;
-    background: #2d2d2d;
-    border: 1px solid rgba(255,255,255,0.1);
-    border-bottom: 1px solid #2d2d2d;
+    background: rgba(255, 255, 255, 0.12);
+    border: none;
 }
-QTabBar[dark="true"]::tab:hover {
+QTabBar#RibbonTabBar[dark="true"]::tab:hover {
     color: #f3f4f6;
-    background: #3f3f46;
+    background: rgba(255, 255, 255, 0.08);
 }
 
 /* Content Area */

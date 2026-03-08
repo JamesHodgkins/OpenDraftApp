@@ -8,12 +8,55 @@ A split button that can display in two modes:
 from typing import List, Dict, Any, Callable, Optional
 import os
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QMenu
-from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QMenu, QPushButton,
+    QStyle, QStyleOptionButton,
+)
+from PySide6.QtGui import QIcon, QPainter
 from PySide6.QtCore import Qt, QSize
 
 from controls.icon_widget import Icon, load_pixmap
 from controls.ribbon.ribbon_constants import SIZE, Styles, ButtonSize, IconSize, COLORS
+
+
+class _SmallSplitMainButton(QPushButton):
+    """Custom-painted small split-button main half for precise icon alignment."""
+
+    _ICON_LEFT_OFFSET = -1
+    _ICON_TOP_OFFSET = 1
+    _ICON_TEXT_GAP = 4
+    _TEXT_RIGHT_PADDING = 2
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+
+        option.icon = QIcon()
+        option.text = ""
+        self.style().drawControl(QStyle.CE_PushButtonBevel, option, painter, self)
+
+        icon_size = self.iconSize()
+        icon_top = ((self.height() - icon_size.height()) // 2) + self._ICON_TOP_OFFSET
+        icon_left = self._ICON_LEFT_OFFSET
+        if not self.icon().isNull():
+            mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
+            state = QIcon.On if self.isDown() else QIcon.Off
+            pixmap = self.icon().pixmap(icon_size, mode, state)
+            painter.drawPixmap(icon_left, icon_top, pixmap)
+
+        text_left = icon_left + icon_size.width() + self._ICON_TEXT_GAP
+        text_width = max(0, self.width() - text_left - self._TEXT_RIGHT_PADDING)
+        painter.setPen(self.palette().buttonText().color())
+        painter.drawText(
+            text_left,
+            0,
+            text_width,
+            self.height(),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            self.text(),
+        )
+        painter.end()
 
 
 class RibbonSplitButton(QWidget):
@@ -145,9 +188,8 @@ class RibbonSplitButton(QWidget):
         main_label: str,
         main_action: Callable,
         width: Optional[int] = None,
-    ) -> QToolButton:
-        btn = QToolButton(self)
-        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    ) -> QPushButton:
+        btn = _SmallSplitMainButton(self)
         if main_icon:
             icon_name = os.path.splitext(os.path.basename(main_icon))[0]
             pix = load_pixmap(icon_name, IconSize.SMALL.value)
@@ -157,8 +199,8 @@ class RibbonSplitButton(QWidget):
         btn.setText(main_label)
         # default size originates from the ICON_LABEL constant, but callers can
         # override via the `width` argument (used by small split buttons).
-        default_w, h = ButtonSize.ICON_LABEL.value
-        btn.setFixedSize(width or default_w, h)
+        default_w, _ = ButtonSize.ICON_LABEL.value
+        btn.setFixedSize(width or default_w, SIZE.SMALL_BUTTON_HEIGHT)
         btn.clicked.connect(main_action)
         btn.setStyleSheet(Styles.small_icon_label_button())
         return btn
@@ -169,8 +211,8 @@ class RibbonSplitButton(QWidget):
         btn.setText(Styles.ARROW_DOWN)
         btn.setMenu(menu)
         btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        w, h = ButtonSize.DROPDOWN_ARROW.value
-        btn.setFixedSize(w, h)
+        w, _ = ButtonSize.DROPDOWN_ARROW.value
+        btn.setFixedSize(w, SIZE.SMALL_BUTTON_HEIGHT)
         btn.setStyleSheet(Styles.dropdown_arrow_button())
         return btn
 
