@@ -2,9 +2,9 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Run PySide6 App",
+			"label": "Run OpenDraft",
 			"type": "shell",
-			"command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
 			"args": [
 				"main.py"
 			],
@@ -13,33 +13,16 @@
 			"group": "build"
 		},
 		{
-			"label": "Run PySide6 App",
+			"label": "Run OpenDraft (Auto-Reload)",
 			"type": "shell",
-			"command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe",
+			"command": "${workspaceFolder}/.venv/Scripts/watchfiles.exe",
 			"args": [
-				"main.py"
+				"${workspaceFolder}/.venv/Scripts/python.exe main.py",
+				"--filter",
+				"python"
 			],
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "Run PySide6 App",
-			"type": "shell",
-			"command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe",
-			"args": [
-				"main.py"
-			],
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "Run PySide6 App",
-			"type": "shell",
-			"command": "C:/Users/james/Documents/Creative/Py/OpenDraft/.venv/Scripts/python.exe",
-			"args": [
-				"main.py"
-			],
-			"isBackground": false,
+			"isBackground": true,
+			"problemMatcher": [],
 			"group": "build"
 		}
 	]

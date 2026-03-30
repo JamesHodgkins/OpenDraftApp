@@ -34,10 +34,9 @@ from PySide6.QtGui import (
     QFontMetricsF,
     QKeyEvent,
     QPainter,
-    QPainterPath,
     QPen,
 )
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QWidget
 
 from app.editor.dynamic_input_parser import DynamicInputParser
 from app.entities import Vec2
@@ -54,27 +53,22 @@ class InputFormat(Enum):
 
 
 # Colours
-_BG = QColor("#2B2B2B")
-_FIELD_BG = QColor("#1A1A1A")
-_FIELD_BORDER = QColor("#444444")
-_FIELD_ACTIVE_BORDER = QColor("#0E639C")
 _TEXT_COLOR = QColor("#FFFFFF")
-_PLACEHOLDER_COLOR = QColor("#888888")
-_LABEL_COLOR = QColor("#BBBBBB")
+_PLACEHOLDER_COLOR = QColor("#777777")
+_LABEL_COLOR = QColor("#999999")
 _CURSOR_COLOR = QColor("#FFFFFF")
-_SEPARATOR_COLOR = QColor("#555555")
+_UNDERLINE_COLOR = QColor("#555555")
+_UNDERLINE_ACTIVE_COLOR = QColor("#0E9CD8")
 
 # Geometry
-_FIELD_W = 68
-_FIELD_H = 22
-_LABEL_W = 28
-_FIELD_GAP = 4        # gap between label and field
-_GROUP_GAP = 8        # gap between the two field groups
-_PAD_X = 8            # horizontal padding inside widget
-_PAD_Y = 6            # vertical padding inside widget
-_FIELD_PAD_X = 4      # text inset inside a field
-_CORNER_R = 4         # widget corner radius
-_FIELD_CORNER_R = 3   # field corner radius
+_FIELD_W = 64
+_FIELD_H = 20
+_LABEL_GAP = 6        # gap between label and value text
+_GROUP_GAP = 14        # gap between the two field groups
+_PAD_X = 4            # horizontal padding inside widget
+_PAD_Y = 2            # vertical padding inside widget
+_UNDERLINE_W = 1.0    # underline thickness
+_UNDERLINE_ACTIVE_W = 1.5  # active underline thickness
 
 # Cursor blink
 _CURSOR_BLINK_MS = 530
@@ -128,8 +122,9 @@ class DynamicInputWidget(QWidget):
         # ---- Fonts -----------------------------------------------------------
         self._font = QFont("Consolas", 10)
         self._font.setStyleHint(QFont.Monospace)
-        self._label_font = QFont("Segoe UI", 9, QFont.Bold)
+        self._label_font = QFont("Segoe UI", 8)
         self._fm = QFontMetricsF(self._font)
+        self._label_fm = QFontMetricsF(self._label_font)
 
         # ---- State -----------------------------------------------------------
         self._input_mode: str = "none"   # "none" | "point" | "integer" | "float" | "string"
@@ -218,22 +213,27 @@ class DynamicInputWidget(QWidget):
     # Size
     # ------------------------------------------------------------------
 
+    def _field_group_width(self, field: _Field) -> float:
+        """Width of one label+value group, measured dynamically."""
+        label_w = self._label_fm.horizontalAdvance(field.label) + _LABEL_GAP
+        return label_w + _FIELD_W
+
     def _resize_to_content(self) -> None:
         """Set widget size based on current mode."""
         if self._input_mode == "point":
-            w = _PAD_X * 2 + _LABEL_W + _FIELD_GAP + _FIELD_W + _GROUP_GAP + _LABEL_W + _FIELD_GAP + _FIELD_W
+            w = _PAD_X * 2 + self._field_group_width(self._field_1) + _GROUP_GAP + self._field_group_width(self._field_2)
         else:
-            w = _PAD_X * 2 + _LABEL_W + _FIELD_GAP + _FIELD_W
+            w = _PAD_X * 2 + self._field_group_width(self._field_1)
         h = _PAD_Y * 2 + _FIELD_H
-        self.setFixedSize(w, h)
+        self.setFixedSize(int(w), int(h))
 
     def sizeHint(self) -> QSize:  # noqa: N802
         if self._input_mode == "point":
-            w = _PAD_X * 2 + _LABEL_W + _FIELD_GAP + _FIELD_W + _GROUP_GAP + _LABEL_W + _FIELD_GAP + _FIELD_W
+            w = _PAD_X * 2 + self._field_group_width(self._field_1) + _GROUP_GAP + self._field_group_width(self._field_2)
         else:
-            w = _PAD_X * 2 + _LABEL_W + _FIELD_GAP + _FIELD_W
+            w = _PAD_X * 2 + self._field_group_width(self._field_1)
         h = _PAD_Y * 2 + _FIELD_H
-        return QSize(w, h)
+        return QSize(int(w), int(h))
 
     # ------------------------------------------------------------------
     # Painting
@@ -243,13 +243,7 @@ class DynamicInputWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
-        # --- background rounded rect ---
-        bg_rect = QRectF(0, 0, self.width(), self.height())
-        path = QPainterPath()
-        path.addRoundedRect(bg_rect, _CORNER_R, _CORNER_R)
-        p.fillPath(path, _BG)
-        p.setPen(QPen(_FIELD_BORDER, 1))
-        p.drawPath(path)
+        # No background — fully transparent, text floats over the canvas.
 
         # --- fields ---
         x = _PAD_X
@@ -257,59 +251,50 @@ class DynamicInputWidget(QWidget):
         self._paint_field(p, self._field_1, x, y)
 
         if self._input_mode == "point":
-            x += _LABEL_W + _FIELD_GAP + _FIELD_W + _GROUP_GAP
-            # separator line
-            sep_x = x - _GROUP_GAP / 2
-            p.setPen(QPen(_SEPARATOR_COLOR, 1))
-            p.drawLine(int(sep_x), int(y + 2), int(sep_x), int(y + _FIELD_H - 2))
-
+            x += self._field_group_width(self._field_1) + _GROUP_GAP
             self._paint_field(p, self._field_2, x, y)
 
         p.end()
 
     def _paint_field(self, p: QPainter, field: _Field, x: float, y: float) -> None:
-        """Draw one label + field at (x, y)."""
-        # --- label ---
+        """Draw one label + underlined value at (x, y)."""
+        # --- inline label ---
         p.setFont(self._label_font)
         p.setPen(QPen(_LABEL_COLOR))
-        label_rect = QRectF(x, y, _LABEL_W, _FIELD_H)
-        p.drawText(label_rect, Qt.AlignVCenter | Qt.AlignRight, field.label)
+        label_w = self._label_fm.horizontalAdvance(field.label)
+        label_rect = QRectF(x, y, label_w, _FIELD_H)
+        p.drawText(label_rect, Qt.AlignVCenter | Qt.AlignLeft, field.label)
 
-        # --- field box ---
-        fx = x + _LABEL_W + _FIELD_GAP
-        field_rect = QRectF(fx, y, _FIELD_W, _FIELD_H)
+        # --- value area (no box, just text + underline) ---
+        vx = x + label_w + _LABEL_GAP
+        field_rect = QRectF(vx, y, _FIELD_W, _FIELD_H)
         field.rect = field_rect
-
-        box_path = QPainterPath()
-        box_path.addRoundedRect(field_rect, _FIELD_CORNER_R, _FIELD_CORNER_R)
-        p.fillPath(box_path, _FIELD_BG)
-
-        border_color = _FIELD_ACTIVE_BORDER if field.active else _FIELD_BORDER
-        p.setPen(QPen(border_color, 1.0 if not field.active else 1.5))
-        p.drawPath(box_path)
 
         # --- text or placeholder ---
         p.setFont(self._font)
-        text_rect = QRectF(fx + _FIELD_PAD_X, y, _FIELD_W - _FIELD_PAD_X * 2, _FIELD_H)
-
         if field.text:
             p.setPen(QPen(_TEXT_COLOR))
-            p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, field.text)
+            p.drawText(field_rect, Qt.AlignVCenter | Qt.AlignLeft, field.text)
         else:
             p.setPen(QPen(_PLACEHOLDER_COLOR))
-            p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, field.placeholder)
+            p.drawText(field_rect, Qt.AlignVCenter | Qt.AlignLeft, field.placeholder)
+
+        # --- underline ---
+        underline_y = y + _FIELD_H - 1
+        if field.active:
+            p.setPen(QPen(_UNDERLINE_ACTIVE_COLOR, _UNDERLINE_ACTIVE_W))
+        else:
+            p.setPen(QPen(_UNDERLINE_COLOR, _UNDERLINE_W))
+        p.drawLine(int(vx), int(underline_y), int(vx + _FIELD_W), int(underline_y))
 
         # --- cursor ---
         if field.active and self._cursor_visible:
             p.setFont(self._font)
-            if field.text:
-                tw = self._fm.horizontalAdvance(field.text)
-            else:
-                tw = 0
-            cx = fx + _FIELD_PAD_X + tw + 1
-            cy_top = y + 4
-            cy_bot = y + _FIELD_H - 4
-            if cx < fx + _FIELD_W - _FIELD_PAD_X:
+            tw = self._fm.horizontalAdvance(field.text) if field.text else 0
+            cx = vx + tw + 1
+            cy_top = y + 3
+            cy_bot = y + _FIELD_H - 3
+            if cx < vx + _FIELD_W:
                 p.setPen(QPen(_CURSOR_COLOR, 1))
                 p.drawLine(int(cx), int(cy_top), int(cx), int(cy_bot))
 

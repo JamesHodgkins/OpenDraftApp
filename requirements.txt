@@ -1,4 +1,5 @@
 PySide6
+watchfiles
 
 # Testing
 pytest>=8.0

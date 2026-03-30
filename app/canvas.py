@@ -309,12 +309,27 @@ class CADCanvas(QWidget):
                 dm = self._draftmate_result
                 if dm is not None and dm.snapped_point is not None:
                     pt = dm.snapped_point
-                    self.pointSelected.emit(pt.x, pt.y)
                 elif self._snap_result is not None:
                     pt = self._snap_result.point
-                    self.pointSelected.emit(pt.x, pt.y)
                 else:
-                    self.pointSelected.emit(world_pt.x(), world_pt.y())
+                    pt = Vec2(world_pt.x(), world_pt.y())
+
+                # Apply ortho constraint when no snap is active.
+                from_point = getattr(self._editor, "snap_from_point", None)
+                if (
+                    self._ortho
+                    and from_point is not None
+                    and self._snap_result is None
+                    and (dm is None or dm.snapped_point is None)
+                ):
+                    dx = pt.x - from_point.x
+                    dy = pt.y - from_point.y
+                    if abs(dx) >= abs(dy):
+                        pt = Vec2(pt.x, from_point.y)
+                    else:
+                        pt = Vec2(from_point.x, pt.y)
+
+                self.pointSelected.emit(pt.x, pt.y)
                 # Clear tracked points after each click so the workspace
                 # stays clean between drawing steps.
                 self._draftmate.clear()
@@ -402,6 +417,7 @@ class CADCanvas(QWidget):
             and getattr(self._editor, "_input_mode", "none") == "point"
             and self._document is not None
             and self._osnap_master
+            and not getattr(self._editor, "suppress_osnap", False)
         )
         if snap_active:
             self._snap_result = self._osnap.snap(
@@ -430,6 +446,24 @@ class CADCanvas(QWidget):
             display = self._snap_result.point
         else:
             display = raw
+
+        # ---- Ortho constraint ---------------------------------------------
+        # When ortho is active and we have a base point, constrain the
+        # display position to the nearest cardinal axis (H or V) from the
+        # base point.  OSNAP / Draftmate snaps take priority (already
+        # resolved above) — ortho only constrains the "free" cursor.
+        if (
+            self._ortho
+            and from_point is not None
+            and self._snap_result is None
+            and (dm is None or dm.snapped_point is None)
+        ):
+            dx = display.x - from_point.x
+            dy = display.y - from_point.y
+            if abs(dx) >= abs(dy):
+                display = Vec2(display.x, from_point.y)
+            else:
+                display = Vec2(from_point.x, display.y)
 
         try:
             self.mouseMoved.emit(display.x, display.y)
@@ -1249,13 +1283,13 @@ class CADCanvas(QWidget):
             if a <= 0.0:
                 continue
 
-            a_int = max(0, min(255, int(a * 255)))
+            a_int = max(0, min(160, int(a * 160)))
 
             px_size = spacing * self.scale
             brightness_t = min(1.0, max(0.0,
                 (log10(max(px_size, 1e-9)) - log_fade_full) / (log_bright - log_fade_full)
             ))
-            brightness = int(28 + brightness_t * 42)
+            brightness = int(38 + brightness_t * 22)
 
             pen = QPen(QColor(brightness, brightness, brightness, a_int), 1)
             painter.setPen(pen)
@@ -1308,7 +1342,7 @@ class CADCanvas(QWidget):
         # ── World-origin axes (always on top) ─────────────────────────────
         ox = (0.0 - self.offset.x()) * self.scale
         oy = (self.offset.y() - 0.0) * self.scale
-        axis_pen = QPen(QColor("#CCCCCC"), 1)
+        axis_pen = QPen(QColor(80, 80, 80, 200), 1)
         painter.setPen(axis_pen)
         painter.drawLine(int(ox), 0, int(ox), h)
         painter.drawLine(0, int(oy), w, int(oy))
@@ -1323,6 +1357,10 @@ class CADCanvas(QWidget):
         if mode == "none":
             self._dynamic_input.clear()
         elif mode in ("point", "integer", "float", "string"):
+            # Skip dynamic input when the active command has suppressed it
+            # (e.g. Trim — the user is picking segments, not entering coords).
+            if getattr(self._editor, "suppress_dynamic_input", False):
+                return
             base_point = None
             if mode == "point" and self._editor is not None:
                 base_point = self._editor.snap_from_point

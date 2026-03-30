@@ -102,10 +102,20 @@ class RibbonSplitButton(QWidget):
 
     def _build_menu(self, items: List[Dict[str, Any]]) -> QMenu:
         menu = QMenu(self)
-        # Ensure menu item text and hovered item text is visible on dark backgrounds
+        # Style the dropdown to match the ribbon's dark theme
         menu.setStyleSheet(f"""
             QMenu {{
+                background: {COLORS.BACKGROUND_DARK};
                 color: {COLORS.TEXT_PRIMARY_DARK};
+                border: 1px solid #3a3a3a;
+                border-radius: 4px;
+                padding: 4px 0px;
+            }}
+            QMenu::icon {{
+                padding-left: 6px;
+            }}
+            QMenu::item {{
+                padding: 6px 12px 6px 6px;
             }}
             QMenu::item:selected {{
                 color: {COLORS.TEXT_PRIMARY_DARK};

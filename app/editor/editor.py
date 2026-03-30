@@ -99,6 +99,11 @@ class Editor(QObject):
         # Set by commands before calling get_point() so the OSNAP engine can
         # compute perpendicular snaps relative to the previously selected point.
         self.snap_from_point: Optional[Vec2] = None
+        # When True, the canvas will skip OSNAP even if the master toggle is on.
+        # Commands that don't benefit from snapping (e.g. Trim) set this flag.
+        self.suppress_osnap: bool = False
+        # When True, the canvas will not show the dynamic input widget.
+        self.suppress_dynamic_input: bool = False
 
         # Selection set — tracks currently selected entity IDs.
         self.selection = SelectionSet(parent=self)

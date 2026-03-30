@@ -16,4 +16,5 @@ from app.commands import (  # noqa: F401
     draw_polyline,
     draw_text,
     annotate_dimension,
+    trim,
 )
