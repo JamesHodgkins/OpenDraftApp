@@ -136,6 +136,7 @@ class ACIPickerWidget(QWidget):
 
         grid = QGridLayout()
         grid.setSpacing(1)
+        grid.setContentsMargins(0, 0, 0, 0)
         # The palette is arranged as 24 hue columns × 10 shade rows.
         # Each hue group has 10 shades (indices N+0 … N+9).
         # Hue groups start at 10, 20, 30, … 240.
@@ -145,6 +146,8 @@ class ACIPickerWidget(QWidget):
                 idx = base + shade_row
                 cell = self._make_cell(idx)
                 grid.addWidget(cell, shade_row, hue_col)
+        # Absorb extra horizontal space so cell spacing stays uniform
+        grid.setColumnStretch(24, 1)
         layout.addLayout(grid)
 
         # ── Greyscale ramp (250–255) ──────────────────────────────

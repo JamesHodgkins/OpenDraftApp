@@ -137,11 +137,8 @@ class ColorPickerDialog(QDialog):
         self._true_color_tab = _TrueColorTab(initial_qcolor)
         self._tabs.addTab(self._true_color_tab, "True Colour")
 
-        # Start on the appropriate tab
-        if self._initial.is_aci:
-            self._tabs.setCurrentIndex(0)
-        else:
-            self._tabs.setCurrentIndex(1)
+        # Always default to the ACI tab
+        self._tabs.setCurrentIndex(0)
 
         # ── Preview strip ─────────────────────────────────────────
         preview_row = QHBoxLayout()
