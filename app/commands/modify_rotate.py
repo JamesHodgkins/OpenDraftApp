@@ -1,7 +1,6 @@
 """Modify — Rotate command."""
 from __future__ import annotations
 
-import copy
 import math
 from typing import List
 
@@ -10,7 +9,7 @@ from app.editor.base_command import CommandBase
 from app.entities import BaseEntity, Vec2
 from app.commands.modify_helpers import (
     _collect_selected, _transform_entity,
-    _rotate_pt, _rotate_angle,
+    _rotate_pt,
     _post_rotate_arc, _commit_transform,
 )
 
@@ -33,7 +32,8 @@ class RotateCommand(CommandBase):
             cos_a, sin_a = math.cos(angle), math.sin(angle)
             def pt_fn(v): return _rotate_pt(v, cx, cy, cos_a, sin_a)
             def post_fn(e, orig): return _post_rotate_arc(e, orig, angle)
-            return [_transform_entity(ent, pt_fn, post_fn) for ent in entities]
+            transformed_entities = [_transform_entity(ent, pt_fn, post_fn) for ent in entities]
+            return transformed_entities
 
         self.editor.set_dynamic(_preview)
         angle_deg = self.editor.get_angle(
@@ -45,3 +45,4 @@ class RotateCommand(CommandBase):
         def pt_fn(v): return _rotate_pt(v, cx, cy, cos_a, sin_a)
         def post_fn(e, orig): return _post_rotate_arc(e, orig, angle)
         _commit_transform(self.editor, entities, pt_fn, post_fn, "Rotate")
+

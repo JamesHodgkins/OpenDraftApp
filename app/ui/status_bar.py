@@ -132,6 +132,7 @@ class StatusBarWidget(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self.setObjectName("StatusBarWidget")
 
         root = QHBoxLayout(self)
         root.setContentsMargins(4, 0, 4, 0)
@@ -199,6 +200,8 @@ class StatusBarWidget(QWidget):
         )
         self.coord_label.setMinimumWidth(160)
         root.addWidget(self.coord_label)
+
+    # -- convenience helpers -------------------------------------------------
 
     # -- convenience helpers -------------------------------------------------
 

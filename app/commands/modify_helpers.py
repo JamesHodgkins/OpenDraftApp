@@ -102,21 +102,26 @@ class _TransformUndoCommand(UndoCommand):
         self._doc = document
         self._before = before
         self._after = after
+        # Keep original IDs (from before) so redo() can locate live entities
+        # even though after snapshots carry a different UUID from _transform_entity.
+        self._original_ids = [e.id for e in before]
         self.description = desc
 
     def redo(self) -> None:
-        self._apply(self._after)
+        self._apply_pairs(self._original_ids, self._after)
 
     def undo(self) -> None:
-        self._apply(self._before)
+        self._apply_pairs(self._original_ids, self._before)
 
-    def _apply(self, snapshots: List[BaseEntity]) -> None:
-        for snap in snapshots:
-            live = self._doc.get_entity(snap.id)
+    def _apply_pairs(
+        self, ids: List[str], snapshots: List[BaseEntity]
+    ) -> None:
+        for orig_id, snap in zip(ids, snapshots):
+            live = self._doc.get_entity(orig_id)
             if live is None:
                 continue
             for attr in vars(snap):
-                if not attr.startswith("_") and attr != "type":
+                if not attr.startswith("_") and attr not in ("type", "id"):
                     try:
                         setattr(live, attr, getattr(snap, attr))
                     except Exception:
@@ -197,12 +202,14 @@ def _commit_transform(
 
     # Apply snapshots to live entities without replacing the object identity
     # (canvas and other subsystems hold references to the live objects).
-    for snap in after:
-        live = doc.get_entity(snap.id)
+    # Use the original IDs (from *entities*) for lookup — after snapshots carry
+    # a different UUID because _transform_entity always assigns a fresh one.
+    for orig, snap in zip(entities, after):
+        live = doc.get_entity(orig.id)
         if live is None:
             continue
         for attr in vars(snap):
-            if not attr.startswith("_") and attr != "type":
+            if not attr.startswith("_") and attr not in ("type", "id"):
                 try:
                     setattr(live, attr, getattr(snap, attr))
                 except Exception:

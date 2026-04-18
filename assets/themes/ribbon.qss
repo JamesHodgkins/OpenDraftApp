@@ -177,6 +177,16 @@ QMainWindow QStatusBar[dark="true"] {
     color: #cbd5e1;
 }
 
+/* Inner status bar widget — border-top here is reliable since it fills the bar */
+#StatusBarWidget {
+    border-top: 1px solid #cbd5e1;
+    background: #ffffff;
+}
+#StatusBarWidget[dark="true"] {
+    border-top: 1px solid rgba(255,255,255,0.10);
+    background: #0f1724;
+}
+
 /* Target the status bar by objectName for highest specificity */
 #MainStatusBar {
     background: #ffffff;

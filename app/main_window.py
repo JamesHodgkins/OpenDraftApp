@@ -132,12 +132,24 @@ class MainWindow(QMainWindow):
         self.editor.command_started.connect(lambda _: self.editor.selection.clear())
         # -------------------------------------------------------------------
 
-        self.setCentralWidget(canvas)
+        # Wrap canvas in a container so we can paint a stable 1px separator
+        # line at the bottom without fighting QStatusBar's repaint ordering.
+        _central = QWidget()
+        _central_layout = QVBoxLayout(_central)
+        _central_layout.setContentsMargins(0, 0, 0, 0)
+        _central_layout.setSpacing(0)
+        _central_layout.addWidget(canvas)
+        _sep = QFrame()
+        _sep.setFixedHeight(1)
+        _sep.setStyleSheet("QFrame { background: #555555; border: none; }")
+        _central_layout.addWidget(_sep)
+        self.setCentralWidget(_central)
 
         # ---- Status bar (full custom widget) -------------------------------
         self._status_widget = StatusBarWidget()
         sb = self.statusBar()
         sb.setObjectName("MainStatusBar")
+        sb.setContentsMargins(0, 0, 0, 0)
         # The StatusBarWidget is the sole occupant — add it as a permanent
         # widget that spans the full width.
         sb.addPermanentWidget(self._status_widget, 1)

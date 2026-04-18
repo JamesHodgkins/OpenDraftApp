@@ -190,6 +190,7 @@ class CADCanvas(QWidget):
         self._cache_offset_y: float = 0.0
         self._cache_width: int = 0
         self._cache_height: int = 0
+        self._cache_dpr: float = 1.0
         self._cache_sel_ids: frozenset = frozenset()
 
         # ---- Dynamic input widget --------------------------------------------
@@ -848,6 +849,8 @@ class CADCanvas(QWidget):
             return False
         if self.width() != self._cache_width or self.height() != self._cache_height:
             return False
+        if self.devicePixelRatio() != self._cache_dpr:
+            return False
         if frozenset(sel_ids) != self._cache_sel_ids:
             return False
         return True
@@ -855,7 +858,11 @@ class CADCanvas(QWidget):
     def _rebuild_entity_cache(self, sel_ids: set) -> None:
         """Render grid + all entities + selection overlays into a cached pixmap."""
         w, h = self.width(), self.height()
-        pixmap = QPixmap(w, h)
+        dpr = self.devicePixelRatio()
+        # Create the pixmap at physical pixel resolution so blitting is crisp
+        # on HiDPI/scaled displays (e.g. Windows 125 % / 150 % scaling).
+        pixmap = QPixmap(int(w * dpr), int(h * dpr))
+        pixmap.setDevicePixelRatio(dpr)
         pixmap.fill(QColor("#1E1E1E"))
 
         p = QPainter(pixmap)
@@ -933,6 +940,7 @@ class CADCanvas(QWidget):
         self._cache_offset_y = self._vp.offset.y()
         self._cache_width = w
         self._cache_height = h
+        self._cache_dpr = dpr
         self._cache_sel_ids = frozenset(sel_ids)
 
     def _draw_hover_overlay(self, painter: QPainter, hover_id: str, sel_ids: set) -> None:
