@@ -9,7 +9,7 @@ from typing import Optional
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy,
+    QMainWindow, QWidget, QVBoxLayout, QFrame,
     QDockWidget, QToolBar,
 )
 from PySide6.QtCore import Qt
@@ -63,10 +63,11 @@ class MainWindow(QMainWindow):
         ribbon_bar.setMovable(False)
         ribbon_bar.setFloatable(False)
         ribbon_bar.setContentsMargins(0, 0, 0, 0)
-        ribbon_bar.layout().setContentsMargins(0, 0, 0, 0)
-        ribbon_bar.layout().setSpacing(0)
+        if (rb_layout := ribbon_bar.layout()) is not None:
+            rb_layout.setContentsMargins(0, 0, 0, 0)
+            rb_layout.setSpacing(0)
         ribbon_bar.addWidget(ribbon)
-        self.addToolBar(Qt.TopToolBarArea, ribbon_bar)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, ribbon_bar)
 
         # ---- Canvas is the sole central widget — docks snap beside it -----
         canvas = CADCanvas(document=doc, editor=self.editor)
@@ -75,7 +76,7 @@ class MainWindow(QMainWindow):
         # Global Escape shortcut: always handle Escape even when focus is
         # inside ribbon controls so users can press Esc to clear selection
         # or cancel commands without clicking the viewport first.
-        esc_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        esc_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
 
         # Undo / Redo global shortcuts (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z).
         undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
@@ -86,7 +87,7 @@ class MainWindow(QMainWindow):
         # Delete key — delete selected entities when no command is running.
         # Must call delete_selection() directly (not via run_command) because
         # command_started clears the selection before the thread can act on it.
-        del_shortcut = QShortcut(QKeySequence(Qt.Key_Delete), self)
+        del_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete), self)
         def _handle_delete():
             if not self.editor.is_running and self.editor.selection:
                 self.editor.delete_selection()
@@ -178,13 +179,13 @@ class MainWindow(QMainWindow):
         self._props_dock = QDockWidget("Properties", self)
         self._props_dock.setObjectName("PropertiesDock")
         self._props_dock.setWidget(self._props_panel)
-        self._props_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._props_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self._props_dock.setFeatures(
-            QDockWidget.DockWidgetMovable |
-            QDockWidget.DockWidgetFloatable |
-            QDockWidget.DockWidgetClosable
+            QDockWidget.DockWidgetFeature.DockWidgetMovable |
+            QDockWidget.DockWidgetFeature.DockWidgetFloatable |
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
-        self.addDockWidget(Qt.RightDockWidgetArea, self._props_dock)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._props_dock)
         self._props_dock.hide()  # hidden until the user opens it or selects entities
         self.editor.selection.changed.connect(self._props_panel.refresh)
 
