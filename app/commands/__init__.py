@@ -16,5 +16,12 @@ from app.commands import (  # noqa: F401
     draw_polyline,
     draw_text,
     annotate_dimension,
-    trim,
+    modify_trim,
+    modify_delete,
+    modify_move,
+    modify_copy,
+    modify_rotate,
+    modify_scale,
+    modify_mirror,
+    modify_extend,
 )

@@ -23,6 +23,9 @@ from app.ui.draftmate_settings import DraftmateSettingsDialog
 from app.ui.status_bar import StatusBarWidget
 from app.config.ribbon_config import RIBBON_CONFIG
 from app.editor.command_registry import autodiscover
+from app.logger import configure_logging
+
+configure_logging()
 
 # Trigger @command decorator registration for all command modules.
 # Using autodiscover() instead of a bare `import app.commands` side-effect
@@ -73,28 +76,14 @@ class MainWindow(QMainWindow):
         redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
         redo_shortcut.activated.connect(self.editor.redo)
 
-        def _handle_escape():
-            if self.editor is None:
-                return
-            # If a command is running, cancel it.
-            if not self.editor.is_running:
-                # Idle: clear selection and hover (if any) then notify editor.
-                changed = False
-                if self.editor.selection:
-                    self.editor.selection.clear()
-                    changed = True
-                if getattr(self._canvas, "_hovered_entity_id", None) is not None:
-                    self._canvas._hovered_entity_id = None
-                    changed = True
-                if changed:
-                    self._canvas.refresh()
-            # Always call editor.cancel (matches canvas behavior emitting cancelRequested)
-            try:
-                self.editor.cancel()
-            except Exception:
-                pass
+        # Delete key — delete selected entities when no command is running.
+        del_shortcut = QShortcut(QKeySequence(Qt.Key_Delete), self)
+        def _handle_delete():
+            if not self.editor.is_running and self.editor.selection:
+                self.editor.run_command("deleteCommand")
+        del_shortcut.activated.connect(_handle_delete)
 
-        esc_shortcut.activated.connect(_handle_escape)
+        esc_shortcut.activated.connect(canvas.handle_escape)
 
         # Canvas left-click → provide world point to the active command
         canvas.pointSelected.connect(
@@ -210,29 +199,10 @@ class MainWindow(QMainWindow):
             btn.toggled.connect(_make_handler(st))
 
         # -- Ortho toggle ---------------------------------------------------
-        def _on_ortho(on: bool) -> None:
-            canvas._ortho = on
-            if on:
-                # Ortho and Draftmate are mutually exclusive.
-                canvas._draftmate.settings.enabled = False
-                canvas._draftmate.clear()
-                canvas._draftmate_result = None
-                sw.set_draftmate(False)
-            canvas.update()
-        sw.btn_ortho.toggled.connect(_on_ortho)
+        sw.btn_ortho.toggled.connect(canvas._set_ortho)
 
         # -- Draftmate toggle -----------------------------------------------
-        def _on_dm(on: bool) -> None:
-            canvas._draftmate.settings.enabled = on
-            if on:
-                # Draftmate and Ortho are mutually exclusive.
-                canvas._ortho = False
-                sw.set_ortho(False)
-            else:
-                canvas._draftmate.clear()
-                canvas._draftmate_result = None
-            canvas.update()
-        sw.btn_dm.toggled.connect(_on_dm)
+        sw.btn_dm.toggled.connect(canvas._set_draftmate)
 
         # Right-click DM → open settings dialog.
         sw.draftmate_settings_requested.connect(self._open_draftmate_settings)

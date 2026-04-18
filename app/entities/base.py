@@ -98,6 +98,29 @@ class Vec2:
     def from_dict(cls, d: Dict[str, Any]) -> "Vec2":
         return cls(x=float(d["x"]), y=float(d["y"]))
 
+    # ------------------------------------------------------------------
+    # Vector arithmetic
+    # ------------------------------------------------------------------
+
+    def __add__(self, other: "Vec2") -> "Vec2":
+        return Vec2(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other: "Vec2") -> "Vec2":
+        return Vec2(self.x - other.x, self.y - other.y)
+
+    def __mul__(self, scalar: float) -> "Vec2":
+        return Vec2(self.x * scalar, self.y * scalar)
+
+    def __rmul__(self, scalar: float) -> "Vec2":
+        return Vec2(self.x * scalar, self.y * scalar)
+
+    def __truediv__(self, scalar: float) -> "Vec2":
+        return Vec2(self.x / scalar, self.y / scalar)
+
+    def distance_to(self, other: "Vec2") -> float:
+        """Euclidean distance from this point to *other*."""
+        return math.sqrt((self.x - other.x) ** 2 + (self.y - other.y) ** 2)
+
     def __iter__(self):
         yield self.x
         yield self.y

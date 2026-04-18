@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import uuid
 from dataclasses import dataclass, field
-from typing import AbstractSet, Any, ClassVar, Dict, List, Optional
+from typing import AbstractSet, Any, Callable, ClassVar, Dict, List, Optional
 
 from app.entities.base import (
     BaseEntity, BBox, Vec2,
@@ -60,7 +60,7 @@ class ArcEntity(BaseEntity):
         angle = math.atan2(pt.y - self.center.y, pt.x - self.center.x)
         return _geo_angle_on_arc(angle, self.start_angle, self.end_angle, self.ccw)
 
-    def snap_candidates(self, enabled: AbstractSet) -> List:
+    def snap_candidates(self, enabled: AbstractSet["SnapType"]) -> List["SnapResult"]:
         from app.entities.snap_types import SnapType, SnapResult
         results = []
         cx, cy, r = self.center.x, self.center.y, self.radius
@@ -97,7 +97,7 @@ class ArcEntity(BaseEntity):
 
         return results
 
-    def nearest_snap(self, cursor: Vec2) -> Optional[object]:
+    def nearest_snap(self, cursor: Vec2) -> Optional["SnapResult"]:
         from app.entities.snap_types import SnapType, SnapResult
         cx, cy, r = self.center.x, self.center.y, self.radius
         dx = cursor.x - cx; dy = cursor.y - cy
@@ -116,7 +116,7 @@ class ArcEntity(BaseEntity):
             SnapType.NEAREST, self.id,
         )
 
-    def perp_snaps(self, from_pt: Vec2) -> List:
+    def perp_snaps(self, from_pt: Vec2) -> List["SnapResult"]:
         from app.entities.snap_types import SnapType, SnapResult
         dx = from_pt.x - self.center.x
         dy = from_pt.y - self.center.y
@@ -132,7 +132,7 @@ class ArcEntity(BaseEntity):
             SnapType.PERPENDICULAR, self.id,
         )]
 
-    def draw(self, painter, world_to_screen, scale: float) -> None:
+    def draw(self, painter: "QPainter", world_to_screen: Callable[["QPointF"], "QPointF"], scale: float) -> None:
         from PySide6.QtCore import QPointF, QRectF
         sc = world_to_screen(QPointF(self.center.x, self.center.y))
         r_px = self.radius * scale
@@ -146,8 +146,7 @@ class ArcEntity(BaseEntity):
         bb = self.bounding_box()
         if bb is None:
             return False
-        sel = __import__('app.entities.base', fromlist=['BBox']).BBox(
-            rmin.x, rmin.y, rmax.x, rmax.y)
+        sel = BBox(rmin.x, rmin.y, rmax.x, rmax.y)
         if not sel.intersects(bb):
             return False
         if sel.contains(bb):

@@ -119,6 +119,15 @@ class DocumentStore:
         default_factory=_DocumentNotifier, init=False, repr=False, compare=False
     )
 
+    # O(1) entity lookup by id — kept in sync with ``entities`` list.
+    _entity_by_id: Dict[str, BaseEntity] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        # Rebuild the id index from the initial entities list (set by from_dict).
+        self._entity_by_id = {e.id: e for e in self.entities}
+
     # ------------------------------------------------------------------
     # Change notification
     # ------------------------------------------------------------------
@@ -156,24 +165,22 @@ class DocumentStore:
     def add_entity(self, entity: BaseEntity) -> BaseEntity:
         """Append *entity* to the store and return it."""
         self.entities.append(entity)
+        self._entity_by_id[entity.id] = entity
         self._notify()
         return entity
 
     def remove_entity(self, entity_id: str) -> Optional[BaseEntity]:
         """Remove the entity with *entity_id* and return it, or ``None``."""
-        for i, e in enumerate(self.entities):
-            if e.id == entity_id:
-                removed = self.entities.pop(i)
-                self._notify()
-                return removed
-        return None
+        entity = self._entity_by_id.pop(entity_id, None)
+        if entity is None:
+            return None
+        self.entities.remove(entity)
+        self._notify()
+        return entity
 
     def get_entity(self, entity_id: str) -> Optional[BaseEntity]:
         """Return the entity with *entity_id*, or ``None``."""
-        for e in self.entities:
-            if e.id == entity_id:
-                return e
-        return None
+        return self._entity_by_id.get(entity_id)
 
     def entities_on_layer(self, layer_name: str) -> Iterator[BaseEntity]:
         """Yield every entity assigned to *layer_name*."""
@@ -182,6 +189,7 @@ class DocumentStore:
     def clear(self) -> None:
         """Remove all entities from the document."""
         self.entities.clear()
+        self._entity_by_id.clear()
         self._notify()
 
     # ------------------------------------------------------------------
@@ -233,8 +241,26 @@ class DocumentStore:
         }
 
     @classmethod
+    def _migrate(cls, d: Dict[str, Any]) -> Dict[str, Any]:
+        """Upgrade older document dicts to the current schema.
+
+        Called automatically by :meth:`from_dict` before deserialisation.
+        Add a new ``if version == "x.y":`` block here whenever the schema
+        changes so that old saved files continue to load cleanly.
+        """
+        import copy as _copy
+        d = _copy.deepcopy(d)
+        # Normalise missing version to "1.0"
+        d.setdefault("version", "1.0")
+        # Future migration steps go here, e.g.:
+        #   if d["version"] == "0.9":
+        #       d = _migrate_0_9_to_1_0(d)
+        return d
+
+    @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DocumentStore":
         """Deserialise a document from a dict (e.g. loaded from JSON)."""
+        d = cls._migrate(d)
         layers = [Layer.from_dict(l) for l in d.get("layers", [])]
         if not layers:
             layers = [Layer()]

@@ -24,12 +24,12 @@ from controls.ribbon.ribbon_models import RibbonConfiguration
 
 RIBBON_STRUCTURE: List[Dict[str, Any]] = [
     {"name": "Home",   "panels": ["File", "Edit", "Draw", "Annotate", "Modify", "Properties", "System"]},
-    {"name": "Create", "panels": ["File", "Draw", "Annotate", "Hatch", "System"]},
-    {"name": "Edit",   "panels": ["Edit", "Modify", "System"]},
-    {"name": "View",   "panels": ["Properties", "System"]},
-    {"name": "Review", "panels": ["Measure", "System"]},
-    {"name": "Layout", "panels": ["Layout", "System"]},
-    {"name": "Output", "panels": ["Export", "System"]},
+    {"name": "Create", "panels": ["File", "Draw", "Annotate", "Hatch"]},
+    {"name": "Edit",   "panels": ["Edit", "Modify"]},
+    {"name": "View",   "panels": ["Properties"]},
+    {"name": "Review", "panels": ["Measure"]},
+    {"name": "Layout", "panels": ["Layout"]},
+    {"name": "Output", "panels": ["Export"]},
 ]
 
 # ---------------------------------------------------------------------------

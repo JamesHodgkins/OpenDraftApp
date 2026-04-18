@@ -26,9 +26,11 @@ cannot silently remove it::
 from __future__ import annotations
 
 import importlib
+import logging
 import pkgutil
-import warnings
 from typing import Callable, Dict, Optional, Type
+
+_log = logging.getLogger(__name__)
 
 from app.editor.base_command import CommandBase
 
@@ -107,7 +109,4 @@ def autodiscover(package: str) -> None:
         try:
             importlib.import_module(modname)
         except Exception as exc:
-            warnings.warn(
-                f"autodiscover: failed to import {modname!r}: {exc}",
-                stacklevel=2,
-            )
+            _log.warning("autodiscover: failed to import %r: %s", modname, exc)

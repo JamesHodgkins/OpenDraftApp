@@ -12,12 +12,16 @@ Supports the same input format tokens as the old dynamic input:
   - plain digits   → relative  (dX, dY)
 
 Tab / Shift-Tab cycles focus between the two fields in point mode.
+
+Per-mode behaviour (labels, placeholders, submission parsing) is encapsulated
+in :class:`_ModeStrategy` subclasses so the main widget class is not
+responsible for branching on every input mode.
 """
 from __future__ import annotations
 
 from enum import Enum
 from math import atan2, degrees, sqrt
-from typing import Optional
+from typing import Any, Optional
 
 from PySide6.QtCore import (
     QPoint,
@@ -92,6 +96,215 @@ class _Field:
 
 
 # ---------------------------------------------------------------------------
+# Input mode strategies
+# ---------------------------------------------------------------------------
+
+class _ModeStrategy:
+    """Base class for per-mode input behaviour.
+
+    Subclasses encapsulate the label text, placeholder computation, and
+    submission parsing for each editor input mode so that
+    :class:`DynamicInputWidget` never branches on mode names directly.
+
+    Attributes
+    ----------
+    is_two_field:
+        ``True`` only for :class:`_PointMode`.  Controls whether the widget
+        shows a second field and uses the two-column layout.
+    is_choice:
+        ``True`` only for :class:`_ChoiceMode`.  Single keypress submits
+        immediately without waiting for Enter.
+    """
+
+    is_two_field: bool = False
+    is_choice: bool = False
+
+    def apply_labels(
+        self,
+        f1: "_Field",
+        f2: "_Field",
+        *,
+        fmt: InputFormat = InputFormat.RELATIVE,
+        widget: "DynamicInputWidget | None" = None,
+    ) -> None:
+        """Set label text on *f1* and *f2*.  Called on mode activation and after
+        a format-change (``#``, ``<`` prefixes in point mode)."""
+
+    def update_placeholders(
+        self,
+        f1: "_Field",
+        f2: "_Field",
+        widget: "DynamicInputWidget",
+    ) -> None:
+        """Refresh placeholder text from the current cursor world position."""
+
+    def submit(
+        self,
+        f1_text: str,
+        f2_text: str,
+        widget: "DynamicInputWidget",
+    ) -> Any:
+        """Parse typed text and return a value, or ``None`` to cancel / use cursor."""
+        return None
+
+
+class _PointMode(_ModeStrategy):
+    is_two_field = True
+
+    def apply_labels(self, f1, f2, *, fmt=InputFormat.RELATIVE, widget=None):
+        if fmt == InputFormat.POLAR:
+            f1.label, f2.label = "Dist", "Ang"
+        elif fmt == InputFormat.ABSOLUTE:
+            f1.label, f2.label = "X", "Y"
+        else:
+            f1.label, f2.label = "dX", "dY"
+
+    def update_placeholders(self, f1, f2, w):
+        pos = w._current_pos
+        if w._input_format == InputFormat.ABSOLUTE:
+            f1.placeholder = f"{pos.x:.2f}"
+            f2.placeholder = f"{pos.y:.2f}"
+        elif w._input_format == InputFormat.POLAR:
+            bp = w._base_point or Vec2(0, 0)
+            dx, dy = pos.x - bp.x, pos.y - bp.y
+            f1.placeholder = f"{sqrt(dx * dx + dy * dy):.2f}"
+            f2.placeholder = f"{degrees(atan2(dy, dx)):.1f}\u00B0"
+        else:                                # RELATIVE
+            bp = w._base_point or Vec2(0, 0)
+            f1.placeholder = f"{pos.x - bp.x:.2f}"
+            f2.placeholder = f"{pos.y - bp.y:.2f}"
+
+    def submit(self, f1_text, f2_text, w):
+        if not f1_text and not f2_text:
+            return None  # caller will emit current_pos instead
+        t1 = f1_text or w._field_1.placeholder.rstrip("\u00B0")
+        t2 = f2_text or w._field_2.placeholder.rstrip("\u00B0")
+        if w._input_format == InputFormat.ABSOLUTE:
+            input_str = f"#{t1},{t2}"
+        elif w._input_format == InputFormat.POLAR:
+            input_str = f"{t1}<{t2}"
+        else:
+            input_str = f"{t1},{t2}"
+        return DynamicInputParser.parse_vector(
+            input_str, w._current_pos, base_point=w._base_point)
+
+
+class _IntegerMode(_ModeStrategy):
+    def apply_labels(self, f1, f2, *, fmt=InputFormat.RELATIVE, widget=None):
+        f1.label = "Val"
+
+    def update_placeholders(self, f1, f2, w):
+        f1.placeholder = ""
+
+    def submit(self, f1_text, f2_text, w):
+        if not f1_text:
+            return None
+        try:
+            return int(f1_text)
+        except ValueError:
+            return None
+
+
+class _FloatMode(_ModeStrategy):
+    def apply_labels(self, f1, f2, *, fmt=InputFormat.RELATIVE, widget=None):
+        f1.label = "Val"
+
+    def update_placeholders(self, f1, f2, w):
+        f1.placeholder = ""
+
+    def submit(self, f1_text, f2_text, w):
+        if not f1_text:
+            return None
+        try:
+            return float(f1_text)
+        except ValueError:
+            return None
+
+
+class _AngleMode(_ModeStrategy):
+    def apply_labels(self, f1, f2, *, fmt=InputFormat.RELATIVE, widget=None):
+        f1.label = "Ang"
+
+    def update_placeholders(self, f1, f2, w):
+        center = w._angle_center or Vec2(0, 0)
+        dx = w._current_pos.x - center.x
+        dy = w._current_pos.y - center.y
+        f1.placeholder = f"{degrees(atan2(dy, dx)):.1f}\u00B0"
+
+    def submit(self, f1_text, f2_text, w):
+        if f1_text:
+            try:
+                return float(f1_text)
+            except ValueError:
+                pass
+        center = w._angle_center or Vec2(0, 0)
+        dx = w._current_pos.x - center.x
+        dy = w._current_pos.y - center.y
+        return degrees(atan2(dy, dx))
+
+
+class _LengthMode(_ModeStrategy):
+    def apply_labels(self, f1, f2, *, fmt=InputFormat.RELATIVE, widget=None):
+        f1.label = "Len"
+
+    def update_placeholders(self, f1, f2, w):
+        base = w._length_base or Vec2(0, 0)
+        dx = w._current_pos.x - base.x
+        dy = w._current_pos.y - base.y
+        f1.placeholder = f"{sqrt(dx * dx + dy * dy):.2f}"
+
+    def submit(self, f1_text, f2_text, w):
+        if f1_text:
+            try:
+                return float(f1_text)
+            except ValueError:
+                pass
+        base = w._length_base or Vec2(0, 0)
+        dx = w._current_pos.x - base.x
+        dy = w._current_pos.y - base.y
+        return sqrt(dx * dx + dy * dy)
+
+
+class _StringMode(_ModeStrategy):
+    def apply_labels(self, f1, f2, *, fmt=InputFormat.RELATIVE, widget=None):
+        f1.label = "Text"
+
+    def update_placeholders(self, f1, f2, w):
+        f1.placeholder = ""
+
+    def submit(self, f1_text, f2_text, w):
+        return f1_text if f1_text else None
+
+
+class _ChoiceMode(_ModeStrategy):
+    is_choice = True
+
+    def apply_labels(self, f1, f2, *, fmt=InputFormat.RELATIVE, widget=None):
+        if widget is not None:
+            f1.label = "/".join(widget._choice_options)
+        f1.placeholder = ""
+
+    def update_placeholders(self, f1, f2, w):
+        f1.placeholder = ""
+
+    def submit(self, f1_text, f2_text, w):
+        ch = f1_text.upper() if f1_text else ""
+        return ch if ch in w._choice_options else None
+
+
+# Map mode name strings to strategy classes.
+_MODE_STRATEGIES: dict[str, type[_ModeStrategy]] = {
+    "point":   _PointMode,
+    "integer": _IntegerMode,
+    "float":   _FloatMode,
+    "angle":   _AngleMode,
+    "length":  _LengthMode,
+    "string":  _StringMode,
+    "choice":  _ChoiceMode,
+}
+
+
+# ---------------------------------------------------------------------------
 # DynamicInputWidget
 # ---------------------------------------------------------------------------
 class DynamicInputWidget(QWidget):
@@ -127,10 +340,14 @@ class DynamicInputWidget(QWidget):
         self._label_fm = QFontMetricsF(self._label_font)
 
         # ---- State -----------------------------------------------------------
-        self._input_mode: str = "none"   # "none" | "point" | "integer" | "float" | "string"
+        self._input_mode: str = "none"   # kept for backwards compat; prefer _mode_strategy
+        self._mode_strategy: Optional[_ModeStrategy] = None
+        self._choice_options: list[str] = []
         self._input_format = InputFormat.RELATIVE
         self._current_pos = Vec2(0, 0)   # world cursor position
         self._base_point: Optional[Vec2] = None
+        self._angle_center: Optional[Vec2] = None
+        self._length_base: Optional[Vec2] = None
 
         # Two fields (second hidden in scalar modes)
         self._field_1 = _Field("dX")
@@ -152,11 +369,24 @@ class DynamicInputWidget(QWidget):
         mode: str,
         current_pos: Vec2,
         base_point: Optional[Vec2] = None,
+        choice_options: Optional[list[str]] = None,
+        angle_center: Optional[Vec2] = None,
+        length_base: Optional[Vec2] = None,
     ) -> None:
-        """Activate the widget for *mode* ("point", "integer", "float", "string")."""
+        """Activate the widget for *mode* ("point", "integer", "float", "string", "choice", "angle", "length")."""
         self._input_mode = mode
         self._current_pos = current_pos
         self._base_point = base_point if base_point is not None else Vec2(0, 0)
+        self._choice_options = [o.upper() for o in (choice_options or [])]
+        self._angle_center = angle_center
+        self._length_base = length_base
+
+        strategy_cls = _MODE_STRATEGIES.get(mode)
+        if strategy_cls is None:
+            self._mode_strategy = None
+            self.hide()
+            return
+        self._mode_strategy = strategy_cls()
 
         # Reset fields
         self._input_format = InputFormat.RELATIVE
@@ -166,16 +396,10 @@ class DynamicInputWidget(QWidget):
         self._field_1.active = True
         self._field_2.active = False
 
-        if mode == "point":
-            self._apply_labels()
-        elif mode in ("integer", "float"):
-            self._field_1.label = "Val"
-        elif mode == "string":
-            self._field_1.label = "Text"
-        else:
-            self.hide()
-            return
-
+        self._mode_strategy.apply_labels(
+            self._field_1, self._field_2,
+            fmt=self._input_format, widget=self,
+        )
         self._update_placeholders()
         self._resize_to_content()
         self.show()
@@ -186,7 +410,7 @@ class DynamicInputWidget(QWidget):
 
     def update_cursor_position(self, pos: Vec2) -> None:
         """Called when the mouse moves — refreshes placeholder values."""
-        if self._input_mode == "none" or not self.isVisible():
+        if self._mode_strategy is None or not self.isVisible():
             return
         self._current_pos = pos
         self._update_placeholders()
@@ -206,6 +430,7 @@ class DynamicInputWidget(QWidget):
         self._field_1.user_edited = False
         self._field_2.user_edited = False
         self._input_mode = "none"
+        self._mode_strategy = None
         self._blink_timer.stop()
         self.hide()
 
@@ -220,7 +445,7 @@ class DynamicInputWidget(QWidget):
 
     def _resize_to_content(self) -> None:
         """Set widget size based on current mode."""
-        if self._input_mode == "point":
+        if self._mode_strategy is not None and self._mode_strategy.is_two_field:
             w = _PAD_X * 2 + self._field_group_width(self._field_1) + _GROUP_GAP + self._field_group_width(self._field_2)
         else:
             w = _PAD_X * 2 + self._field_group_width(self._field_1)
@@ -228,7 +453,7 @@ class DynamicInputWidget(QWidget):
         self.setFixedSize(int(w), int(h))
 
     def sizeHint(self) -> QSize:  # noqa: N802
-        if self._input_mode == "point":
+        if self._mode_strategy is not None and self._mode_strategy.is_two_field:
             w = _PAD_X * 2 + self._field_group_width(self._field_1) + _GROUP_GAP + self._field_group_width(self._field_2)
         else:
             w = _PAD_X * 2 + self._field_group_width(self._field_1)
@@ -250,7 +475,7 @@ class DynamicInputWidget(QWidget):
         y = _PAD_Y
         self._paint_field(p, self._field_1, x, y)
 
-        if self._input_mode == "point":
+        if self._mode_strategy is not None and self._mode_strategy.is_two_field:
             x += self._field_group_width(self._field_1) + _GROUP_GAP
             self._paint_field(p, self._field_2, x, y)
 
@@ -311,8 +536,18 @@ class DynamicInputWidget(QWidget):
             self.clear()
             return
 
+        # --- Choice mode: single keypress immediately submits ----------------
+        if self._mode_strategy is not None and self._mode_strategy.is_choice:
+            ch = event.text().upper()
+            if ch and ch in self._choice_options:
+                self._field_1.text = ch
+                self.update()
+                self.input_submitted.emit(ch)
+                self.clear()
+            return
+
         # --- 'd' resets to relative (dX/dY) when in point mode ---------------
-        if key == Qt.Key_D and self._input_mode == "point":
+        if key == Qt.Key_D and self._mode_strategy is not None and self._mode_strategy.is_two_field:
             # switch format and clear any typed text, mimicking user intent
             self._switch_format(InputFormat.RELATIVE)
             self._field_1.text = ""
@@ -331,7 +566,7 @@ class DynamicInputWidget(QWidget):
 
         # --- Tab / Shift-Tab → cycle fields ----------------------------------
         if key in (Qt.Key_Tab, Qt.Key_Backtab):
-            if self._input_mode == "point":
+            if self._mode_strategy is not None and self._mode_strategy.is_two_field:
                 self._toggle_active_field()
             return
 
@@ -380,7 +615,7 @@ class DynamicInputWidget(QWidget):
                 continue  # consume the '#'
 
             # --- '<' in field 1 → polar (splits into two fields) ---
-            if ch == "<" and af is self._field_1 and self._input_mode == "point":
+            if ch == "<" and af is self._field_1 and self._mode_strategy is not None and self._mode_strategy.is_two_field:
                 # everything already typed becomes the distance
                 self._switch_format(InputFormat.POLAR)
                 self._field_2.text = ""
@@ -389,7 +624,7 @@ class DynamicInputWidget(QWidget):
                 continue
 
             # --- comma/space moves focus to second field in point mode -------
-            if ch in (",", " ") and af is self._field_1 and self._input_mode == "point":
+            if ch in (",", " ") and af is self._field_1 and self._mode_strategy is not None and self._mode_strategy.is_two_field:
                 # switch without inserting the separator character
                 self._set_active(self._field_2)
                 continue
@@ -421,15 +656,11 @@ class DynamicInputWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _apply_labels(self) -> None:
-        if self._input_format == InputFormat.POLAR:
-            self._field_1.label = "Dist"
-            self._field_2.label = "Ang"
-        elif self._input_format == InputFormat.ABSOLUTE:
-            self._field_1.label = "X"
-            self._field_2.label = "Y"
-        else:
-            self._field_1.label = "dX"
-            self._field_2.label = "dY"
+        if self._mode_strategy is not None:
+            self._mode_strategy.apply_labels(
+                self._field_1, self._field_2,
+                fmt=self._input_format, widget=self,
+            )
 
     def _switch_format(self, fmt: InputFormat) -> None:
         if self._input_format == fmt:
@@ -445,28 +676,8 @@ class DynamicInputWidget(QWidget):
 
     def _update_placeholders(self) -> None:
         """Recalculate placeholder text from the current world position."""
-        if self._input_mode == "point":
-            if self._input_format == InputFormat.ABSOLUTE:
-                self._field_1.placeholder = f"{self._current_pos.x:.2f}"
-                self._field_2.placeholder = f"{self._current_pos.y:.2f}"
-            elif self._input_format == InputFormat.POLAR:
-                bp = self._base_point or Vec2(0, 0)
-                dx = self._current_pos.x - bp.x
-                dy = self._current_pos.y - bp.y
-                dist = sqrt(dx * dx + dy * dy)
-                angle = degrees(atan2(dy, dx))
-                self._field_1.placeholder = f"{dist:.2f}"
-                self._field_2.placeholder = f"{angle:.1f}\u00B0"
-            else:  # RELATIVE
-                bp = self._base_point or Vec2(0, 0)
-                dx = self._current_pos.x - bp.x
-                dy = self._current_pos.y - bp.y
-                self._field_1.placeholder = f"{dx:.2f}"
-                self._field_2.placeholder = f"{dy:.2f}"
-        elif self._input_mode in ("integer", "float"):
-            self._field_1.placeholder = ""
-        elif self._input_mode == "string":
-            self._field_1.placeholder = ""
+        if self._mode_strategy is not None:
+            self._mode_strategy.update_placeholders(self._field_1, self._field_2, self)
 
     # ------------------------------------------------------------------
     # Submission
@@ -476,62 +687,23 @@ class DynamicInputWidget(QWidget):
     def _on_submit(self) -> None:
         self._blink_timer.stop()
 
-        if self._input_mode == "point":
-            result = self._parse_vector_input()
-        elif self._input_mode == "integer":
-            try:
-                result = int(self._field_1.text) if self._field_1.text else None
-            except ValueError:
-                result = None
-        elif self._input_mode == "float":
-            try:
-                result = float(self._field_1.text) if self._field_1.text else None
-            except ValueError:
-                result = None
-        elif self._input_mode == "string":
-            result = self._field_1.text if self._field_1.text else None
-        else:
-            result = None
+        if self._mode_strategy is None:
+            return
+
+        result = self._mode_strategy.submit(
+            self._field_1.text, self._field_2.text, self
+        )
 
         if result is not None:
             self.input_submitted.emit(result)
             self.clear()
+        elif self._mode_strategy.is_two_field:
+            # Point mode with no typed text → emit current cursor position
+            self.input_submitted.emit(self._current_pos)
+            self.clear()
         else:
-            # If no user text was typed, submit the current cursor position
-            if self._input_mode == "point":
-                self.input_submitted.emit(self._current_pos)
-                self.clear()
-            else:
-                self.input_cancelled.emit()
-                self.clear()
-
-    def _parse_vector_input(self) -> Optional[Vec2]:
-        """Parse the two fields into a Vec2, respecting the current format."""
-        t1 = self._field_1.text
-        t2 = self._field_2.text
-
-        # If nothing was typed, return None (caller will use current_pos)
-        if not t1 and not t2:
-            return None
-
-        # Use placeholder (world-pos default) for any un-typed field
-        if not t1:
-            t1 = self._field_1.placeholder.rstrip("\u00B0")
-        if not t2:
-            t2 = self._field_2.placeholder.rstrip("\u00B0")
-
-        if self._input_format == InputFormat.ABSOLUTE:
-            input_str = f"#{t1},{t2}"
-        elif self._input_format == InputFormat.POLAR:
-            input_str = f"{t1}<{t2}"
-        else:
-            input_str = f"{t1},{t2}"
-
-        return DynamicInputParser.parse_vector(
-            input_str,
-            self._current_pos,
-            base_point=self._base_point,
-        )
+            self.input_cancelled.emit()
+            self.clear()
 
     # ------------------------------------------------------------------
     # Cursor blink

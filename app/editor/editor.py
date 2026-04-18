@@ -35,9 +35,12 @@ emission from non-GUI threads)
 """
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 from typing import Any, Callable, List, Optional
+
+_log = logging.getLogger(__name__)
 
 from PySide6.QtCore import QObject, Signal
 
@@ -46,6 +49,7 @@ from app.entities import BaseEntity, Vec2
 from app.editor.base_command import CommandBase, CommandCancelled
 from app.editor.command_registry import get_command
 from app.editor.selection import SelectionSet
+from app.editor.settings import EditorSettings
 from app.editor.undo import (
     AddEntityUndoCommand,
     AddLayerUndoCommand,
@@ -75,7 +79,7 @@ class Editor(QObject):
 
     # ------------------------------------------------------------------ signals
     status_message    = Signal(str)    # prompt / info text → status bar
-    input_mode_changed = Signal(str)   # "point" | "integer" | "string" | "none"
+    input_mode_changed = Signal(str)   # "point" | "integer" | "string" | "choice" | "none"
     command_started   = Signal(str)    # command action-name
     command_finished  = Signal()       # command ended
     entity_added      = Signal(object) # BaseEntity instance
@@ -90,15 +94,21 @@ class Editor(QObject):
     ) -> None:
         super().__init__(parent)
         self._document: DocumentStore = document if document is not None else DocumentStore()
+        self.settings: EditorSettings = EditorSettings()
         self._thread: Optional[threading.Thread] = None
         self._input_queue: queue.Queue[Any] = queue.Queue(maxsize=1)
         self._cancelled = threading.Event()
         self._active_command: Optional[CommandBase] = None
         self._input_mode: str = "none"
         self._dynamic_callback: Optional[Callable[[Vec2], List[BaseEntity]]] = None
+        self._choice_options: list[str] = []   # keys active during "choice" mode
         # Set by commands before calling get_point() so the OSNAP engine can
         # compute perpendicular snaps relative to the previously selected point.
         self.snap_from_point: Optional[Vec2] = None
+        # Set by get_angle() so canvas clicks can be converted to an angle.
+        self._angle_center: Optional[Vec2] = None
+        # Set by get_length() so canvas clicks can be converted to a distance.
+        self._length_base: Optional[Vec2] = None
         # When True, the canvas will skip OSNAP even if the master toggle is on.
         # Commands that don't benefit from snapping (e.g. Trim) set this flag.
         self.suppress_osnap: bool = False
@@ -155,13 +165,11 @@ class Editor(QObject):
             if self._thread:
                 self._thread.join(timeout=2.0)
                 if self._thread.is_alive():
-                    import warnings
-                    warnings.warn(
-                        f"Command thread '{self._thread.name}' did not terminate "
-                        "within 2 s after cancel — starting new command anyway.  "
+                    _log.warning(
+                        "Command thread %r did not terminate within 2 s after cancel "
+                        "— starting new command anyway. "
                         "Check that all get_point/get_integer paths honour cancellation.",
-                        RuntimeWarning,
-                        stacklevel=2,
+                        self._thread.name,
                     )
 
         cls = get_command(name)
@@ -212,7 +220,20 @@ class Editor(QObject):
         """Deliver a world-space point to the currently waiting command.
 
         Connect the canvas ``pointSelected`` signal here.
+        In "angle" mode, converts the point to degrees relative to ``_angle_center``.
         """
+        if self._input_mode == "angle":
+            import math
+            center = self._angle_center or Vec2(0, 0)
+            deg = math.degrees(math.atan2(pt.y - center.y, pt.x - center.x))
+            self._put_input(deg)
+            return
+        if self._input_mode == "length":
+            import math
+            base = self._length_base or Vec2(0, 0)
+            dist = math.hypot(pt.x - base.x, pt.y - base.y)
+            self._put_input(dist)
+            return
         if self._input_mode != "point":
             return
         self._put_input(pt)
@@ -234,6 +255,26 @@ class Editor(QObject):
         if self._input_mode != "float":
             return
         self._put_input(value)
+
+    def provide_angle(self, value: float) -> None:
+        """Deliver an angle in degrees to the currently waiting command."""
+        if self._input_mode != "angle":
+            return
+        self._put_input(value)
+
+    def provide_length(self, value: float) -> None:
+        """Deliver a length/distance value to the currently waiting command."""
+        if self._input_mode != "length":
+            return
+        self._put_input(value)
+
+    def provide_choice(self, key: str) -> None:
+        """Deliver a choice key to the currently waiting command."""
+        if self._input_mode != "choice":
+            return
+        if key.upper() not in [o.upper() for o in self._choice_options]:
+            return
+        self._put_input(key.upper())
 
     # ------------------------------------------------------- blocking input API
     # Called *from the command thread only*.
@@ -276,6 +317,34 @@ class Editor(QObject):
         self._set_input_mode("float")
         return self._wait_for_input()
 
+    def get_length(self, prompt: str = "Enter length", base: "Optional[Vec2]" = None) -> float:
+        """Block the command thread until a length/distance is provided.
+
+        Accepts either a typed number or a Vec2 click on the canvas
+        (distance computed from *base* to the clicked point).
+
+        Returns the distance as a float.
+        Raises :class:`~app.editor.base_command.CommandCancelled` if cancelled.
+        """
+        self._length_base = base
+        self.status_message.emit(prompt)
+        self._set_input_mode("length")
+        return self._wait_for_input()
+
+    def get_angle(self, prompt: str = "Enter angle (degrees)", center: "Optional[Vec2]" = None) -> float:
+        """Block the command thread until an angle is provided.
+
+        Accepts either a typed number (degrees) or a Vec2 click on the canvas
+        (angle computed from *center* to the clicked point).
+
+        Returns the angle in degrees.
+        Raises :class:`~app.editor.base_command.CommandCancelled` if cancelled.
+        """
+        self._angle_center = center
+        self.status_message.emit(prompt)
+        self._set_input_mode("angle")
+        return self._wait_for_input()
+
     def get_string(self, prompt: str = "Enter text") -> str:
         """Block the command thread until a string is provided.
 
@@ -283,6 +352,23 @@ class Editor(QObject):
         """
         self.status_message.emit(prompt)
         self._set_input_mode("string")
+        return self._wait_for_input()
+
+    def get_choice(self, prompt: str, options: list[str]) -> str:
+        """Block the command thread until one of *options* is pressed.
+
+        Returns the matching option string (uppercased).
+        Raises :class:`~app.editor.base_command.CommandCancelled` if cancelled.
+
+        Parameters
+        ----------
+        options:
+            Single-character keys, e.g. ``["Y", "N"]``.  Case-insensitive.
+        """
+        self._choice_options = [o.upper() for o in options]
+        option_hint = "/".join(self._choice_options)
+        self.status_message.emit(f"{prompt} [{option_hint}]")
+        self._set_input_mode("choice")
         return self._wait_for_input()
 
     # -------------------------------------------- dynamic / rubberband preview
