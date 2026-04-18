@@ -165,6 +165,10 @@ class ColorPickerDialog(QDialog):
 
         # ── Buttons ───────────────────────────────────────────────
         btn_row = QHBoxLayout()
+        btn_bylayer = QPushButton("By Layer")
+        btn_bylayer.setToolTip("Remove colour override — use the layer colour instead")
+        btn_bylayer.clicked.connect(self._accept_bylayer)
+        btn_row.addWidget(btn_bylayer)
         btn_row.addStretch()
         btn_ok = QPushButton("OK")
         btn_cancel = QPushButton("Cancel")
@@ -199,6 +203,10 @@ class ColorPickerDialog(QDialog):
     # ------------------------------------------------------------------
     # Accept / result
     # ------------------------------------------------------------------
+
+    def _accept_bylayer(self) -> None:
+        self._result = None  # sentinel: caller should clear the override
+        self.accept()
 
     def _accept(self) -> None:
         tab = self._tabs.currentIndex()

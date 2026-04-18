@@ -17,6 +17,7 @@ from app.editor import command
 from app.editor.base_command import CommandBase
 from app.editor.undo import UndoCommand
 from app.entities import BaseEntity, Vec2, LineEntity, ArcEntity, CircleEntity
+from app.entities.rectangle import RectangleEntity
 from app.commands.modify_helpers import _copy_style
 from app.geometry import (
     _geo_angle_on_arc,
@@ -51,13 +52,13 @@ class _TrimUndoCommand(UndoCommand):
         self._doc.remove_entity(self._original.id)
         for ent in self._replacements:
             self._doc.add_entity(ent)
-        self._doc._notify()
 
     def undo(self) -> None:
         for ent in self._replacements:
             self._doc.remove_entity(ent.id)
         pos = min(self._original_index, len(self._doc.entities))
         self._doc.entities.insert(pos, self._original)
+        self._doc._entity_by_id[self._original.id] = self._original
         self._doc._notify()
 
 
@@ -275,6 +276,33 @@ def _trim_circle(
     return result
 
 
+def _trim_rect(
+    rect: RectangleEntity, pick_pt: Vec2, others: List[BaseEntity],
+) -> Optional[List[BaseEntity]]:
+    """Explode rect into its four edges, trim the clicked edge, keep the rest."""
+    edges = rect._edges()
+    style = _copy_style(rect)
+
+    # Find which edge was clicked.
+    clicked_edge = min(range(4), key=lambda i: _geo_pt_seg_dist(pick_pt, edges[i][0], edges[i][1]))
+    p1, p2 = edges[clicked_edge]
+
+    # Treat that edge as a temporary LineEntity to reuse _trim_line.
+    temp_line = LineEntity(p1=p1, p2=p2, **style)
+    trimmed = _trim_line(temp_line, pick_pt, others)
+    if trimmed is None:
+        return None
+
+    result: List[BaseEntity] = []
+    # Keep the three untouched edges as lines.
+    for i, (a, b) in enumerate(edges):
+        if i != clicked_edge:
+            result.append(LineEntity(p1=a, p2=b, **style))
+    # Add the surviving segment(s) from the trimmed edge.
+    result.extend(trimmed)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Pick-nearest-entity helper
 # ---------------------------------------------------------------------------
@@ -391,6 +419,26 @@ def _trim_preview_segment(
                     ccw=True,
                     **_copy_style(target),
                 )]
+    elif isinstance(target, RectangleEntity):
+        edges = target._edges()
+        clicked_edge = min(range(4), key=lambda i: _geo_pt_seg_dist(pt, edges[i][0], edges[i][1]))
+        p1, p2 = edges[clicked_edge]
+        temp_line = LineEntity(p1=p1, p2=p2, **_copy_style(target))
+        params = _intersections_on_line(temp_line, entities)
+        if not params:
+            return []
+        boundaries = [0.0] + params + [1.0]
+        pick_t = _line_param_of_point(temp_line, pt)
+        for i in range(len(boundaries) - 1):
+            if boundaries[i] - 1e-9 <= pick_t <= boundaries[i + 1] + 1e-9:
+                t0, t1 = boundaries[i], boundaries[i + 1]
+                if t1 - t0 < 1e-10:
+                    return []
+                return [LineEntity(
+                    p1=_lerp(p1, p2, t0),
+                    p2=_lerp(p1, p2, t1),
+                    **_copy_style(target),
+                )]
     return []
 
 
@@ -415,10 +463,11 @@ class TrimCommand(CommandBase):
             self.editor.clear_dynamic()
 
     def _run_trim_loop(self) -> None:
-        # Set up hover preview so the user sees which segment will be removed.
+        tol = self.editor.settings.trim_pick_tolerance
+
         def _preview(mouse: Vec2) -> List[BaseEntity]:
             doc = self.editor.document
-            return _trim_preview_segment(mouse, list(doc.entities), tolerance=10.0)
+            return _trim_preview_segment(mouse, list(doc.entities), tolerance=tol)
 
         self.editor.set_dynamic(_preview)
 
@@ -428,9 +477,7 @@ class TrimCommand(CommandBase):
             doc = self.editor.document
             all_entities = list(doc.entities)
 
-            # Find which entity the user clicked on — use a generous tolerance
-            # so the user doesn't need pixel-perfect accuracy.
-            target = _nearest_entity(pt, all_entities, tolerance=10.0)
+            target = _nearest_entity(pt, all_entities, tolerance=tol)
             if target is None:
                 self.editor.status_message.emit("Trim: no entity at pick point")
                 continue
@@ -443,6 +490,8 @@ class TrimCommand(CommandBase):
                 replacements = _trim_arc(target, pt, all_entities)
             elif isinstance(target, CircleEntity):
                 replacements = _trim_circle(target, pt, all_entities)
+            elif isinstance(target, RectangleEntity):
+                replacements = _trim_rect(target, pt, all_entities)
 
             if replacements is None:
                 self.editor.status_message.emit("Trim: no cutting edges intersect that entity")
@@ -457,6 +506,7 @@ class TrimCommand(CommandBase):
 
             # Apply the trim: remove original, add replacements.
             doc.remove_entity(target.id)
+            self.editor.selection.remove(target.id)
             self.editor.entity_removed.emit(target.id)
             for ent in replacements:
                 doc.add_entity(ent)

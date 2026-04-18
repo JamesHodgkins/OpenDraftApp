@@ -119,22 +119,34 @@ class OsnapEngine:
         if scale <= 0:
             return None
 
-        entity_list = list(entities)
         tol = self.radius_px / scale        # world-space snap radius
+
+        # Pre-filter: only consider entities whose bounding box is within
+        # the snap aperture of the cursor.  This avoids running expensive
+        # snap-candidate computation for far-away entities.
+        nearby: List[BaseEntity] = []
+        for e in entities:
+            bb = e.bounding_box()
+            if bb is None:
+                nearby.append(e)          # unknown geometry — include as fallback
+                continue
+            if (bb.min_x - tol <= cursor.x <= bb.max_x + tol and
+                    bb.min_y - tol <= cursor.y <= bb.max_y + tol):
+                nearby.append(e)
 
         candidates: List[Tuple[float, SnapResult]] = []
 
         # Cursor-independent snaps (endpoint, midpoint, center, quadrant)
-        for e in entity_list:
+        for e in nearby:
             for result in self._candidates_for(e):
                 dist = _dist(result.point, cursor)
                 if dist <= tol:
                     candidates.append((dist, result))
 
-        # Intersection snaps (pairwise)
+        # Intersection snaps (pairwise) — limited to nearby entities
         if SnapType.INTERSECTION in self.enabled:
-            for i, a in enumerate(entity_list):
-                for b in entity_list[i + 1:]:
+            for i, a in enumerate(nearby):
+                for b in nearby[i + 1:]:
                     for pt in self._intersections(a, b):
                         dist = _dist(pt, cursor)
                         if dist <= tol:
@@ -145,7 +157,7 @@ class OsnapEngine:
 
         # PERPENDICULAR — foot of perpendicular from from_point onto entity
         if SnapType.PERPENDICULAR in self.enabled and from_point is not None:
-            for e in entity_list:
+            for e in nearby:
                 for result in self._perp_on_entity(e, from_point):
                     dist = _dist(result.point, cursor)
                     if dist <= tol:
@@ -153,7 +165,7 @@ class OsnapEngine:
 
         # NEAREST is a true fallback — only considered when nothing else snapped.
         if not candidates and SnapType.NEAREST in self.enabled:
-            for e in entity_list:
+            for e in nearby:
                 result = self._nearest_on_entity(e, cursor)
                 if result is not None:
                     dist = _dist(result.point, cursor)

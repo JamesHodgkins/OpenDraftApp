@@ -221,20 +221,15 @@ class RibbonPanel(QWidget):
                     return
 
                 chosen = dlg.chosen_color()
-                if chosen is None:
-                    return
-
-                color_str = chosen.to_string()
+                # chosen is None when the user clicked "By Layer" — clear override
+                color_str = chosen.to_string() if chosen is not None else None
                 if _editor and _editor.selection:
-                    # Apply colour override to every selected entity (undoable)
                     _editor.set_entity_properties(
                         list(_editor.selection.ids), "color", color_str,
                         description="Change colour",
                     )
                 else:
-                    # Store as the active override for new entities
                     _doc.active_color = color_str
-                    # Notify listeners that document-level state changed
                     try:
                         _doc._notify()
                     except Exception:
@@ -399,25 +394,22 @@ class RibbonPanel(QWidget):
 
     @staticmethod
     def _set_swatch_color(btn, color: Optional[str]) -> None:
-        """Apply a colour string to a colour-swatch QPushButton.
+        """Apply a colour string to a ColorSwatchButton.
 
         Accepts ACI strings (``"aci:N"``) as well as plain ``#rrggbb`` hex.
         """
+        from controls.ribbon.ribbon_factory import ColorSwatchButton as _ColorSwatchButton
+        if not isinstance(btn, _ColorSwatchButton):
+            return
         if color:
             from app.colors.color import Color as _Color
             try:
                 resolved = _Color.from_string(color).to_hex()
             except Exception:
                 resolved = color
-            btn.setStyleSheet(
-                f"QPushButton {{ background: {resolved}; border: 1px solid #666; border-radius: 2px; }}"
-                "QPushButton:hover { border-color: #aaa; }"
-            )
+            btn.set_color(resolved)
         else:
-            btn.setStyleSheet(
-                "QPushButton { background: transparent; border: 1px solid #666; border-radius: 2px; }"
-                "QPushButton:hover { border-color: #aaa; }"
-            )
+            btn.set_color(None)
 
     @staticmethod
     def _set_combo_text(combo, value: Optional[str], *, case_fold: bool = False) -> None:

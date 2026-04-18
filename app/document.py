@@ -124,6 +124,10 @@ class DocumentStore:
         default_factory=dict, init=False, repr=False, compare=False
     )
 
+    # Monotonically increasing generation counter — bumped on every mutation
+    # so consumers (e.g. the render cache) can cheaply detect staleness.
+    _generation: int = field(default=0, init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         # Rebuild the id index from the initial entities list (set by from_dict).
         self._entity_by_id = {e.id: e for e in self.entities}
@@ -156,6 +160,7 @@ class DocumentStore:
 
     def _notify(self) -> None:
         """Emit the Qt ``changed`` signal to notify all registered listeners."""
+        self._generation += 1
         self._notifier.changed.emit()
 
     # ------------------------------------------------------------------

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import math
+import uuid
 from typing import List, Optional
 
 from app.editor.undo import UndoCommand
@@ -38,6 +39,7 @@ def _transform_entity(ent: BaseEntity, fn, post_fn=None) -> BaseEntity:
         arc angles or radii that depend on the specific transform type.
     """
     e = copy.deepcopy(ent)
+    e.id = str(uuid.uuid4())
     if isinstance(e, LineEntity):
         e.p1 = fn(e.p1)
         e.p2 = fn(e.p2)

@@ -8,7 +8,10 @@ from typing import Optional
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy,
+    QDockWidget, QToolBar,
+)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut, QKeySequence, QIcon
 
@@ -21,8 +24,9 @@ from app.entities.snap_types import SnapType
 from app.ui.layer_manager import LayerManagerDialog
 from app.ui.draftmate_settings import DraftmateSettingsDialog
 from app.ui.status_bar import StatusBarWidget
+from app.ui.properties_panel import PropertiesPanel
 from app.config.ribbon_config import RIBBON_CONFIG
-from app.editor.command_registry import autodiscover
+from app.editor.command_registry import autodiscover, registered_commands
 from app.logger import configure_logging
 
 configure_logging()
@@ -47,23 +51,26 @@ class MainWindow(QMainWindow):
         self._doc = doc
         self.editor = Editor(document=doc, parent=self)
 
-        # ---- Layout -------------------------------------------------------
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
+        # ---- Ribbon toolbar (fixed at top, not affected by dock widgets) ----
         ribbon = RibbonPanel(
             RIBBON_CONFIG,
             dark=False,  # set True for dark mode
         )
         self._ribbon = ribbon
-        layout.addWidget(ribbon)
 
-        # Canvas receives document and editor via constructor — no post-hoc
-        # private attribute injection needed.
+        ribbon_bar = QToolBar("Ribbon", self)
+        ribbon_bar.setObjectName("RibbonToolBar")
+        ribbon_bar.setMovable(False)
+        ribbon_bar.setFloatable(False)
+        ribbon_bar.setContentsMargins(0, 0, 0, 0)
+        ribbon_bar.layout().setContentsMargins(0, 0, 0, 0)
+        ribbon_bar.layout().setSpacing(0)
+        ribbon_bar.addWidget(ribbon)
+        self.addToolBar(Qt.TopToolBarArea, ribbon_bar)
+
+        # ---- Canvas is the sole central widget — docks snap beside it -----
         canvas = CADCanvas(document=doc, editor=self.editor)
         self._canvas = canvas
-        layout.addWidget(canvas)
 
         # Global Escape shortcut: always handle Escape even when focus is
         # inside ribbon controls so users can press Esc to clear selection
@@ -77,13 +84,27 @@ class MainWindow(QMainWindow):
         redo_shortcut.activated.connect(self.editor.redo)
 
         # Delete key — delete selected entities when no command is running.
+        # Must call delete_selection() directly (not via run_command) because
+        # command_started clears the selection before the thread can act on it.
         del_shortcut = QShortcut(QKeySequence(Qt.Key_Delete), self)
         def _handle_delete():
             if not self.editor.is_running and self.editor.selection:
-                self.editor.run_command("deleteCommand")
+                self.editor.delete_selection()
+                self.editor.document_changed.emit()
         del_shortcut.activated.connect(_handle_delete)
 
-        esc_shortcut.activated.connect(canvas.handle_escape)
+        def _handle_escape():
+            if canvas._command_palette.isVisible():
+                canvas._command_palette.close_palette()
+            else:
+                canvas.handle_escape()
+        esc_shortcut.activated.connect(_handle_escape)
+
+        # Command palette — populate once all commands are registered, then
+        # open it whenever the canvas fires paletteRequested (Space key).
+        canvas._command_palette.populate(registered_commands())
+        canvas.paletteRequested.connect(canvas._command_palette.open)  # seed str passed through
+        canvas._command_palette.command_selected.connect(self.editor.run_command)
 
         # Canvas left-click → provide world point to the active command
         canvas.pointSelected.connect(
@@ -111,21 +132,7 @@ class MainWindow(QMainWindow):
         self.editor.command_started.connect(lambda _: self.editor.selection.clear())
         # -------------------------------------------------------------------
 
-        # thin separator that visually separates the central content from the status bar
-        sep = QFrame()
-        sep.setObjectName("StatusSeparator")
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
-        sep.setLineWidth(0)
-        sep.setMidLineWidth(0)
-        sep.setFixedHeight(1)
-        sep.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        layout.addWidget(sep)
-
-        central = QWidget()
-        central.setLayout(layout)
-        central.setContentsMargins(0, 0, 0, 0)
-        self.setCentralWidget(central)
+        self.setCentralWidget(canvas)
 
         # ---- Status bar (full custom widget) -------------------------------
         self._status_widget = StatusBarWidget()
@@ -154,12 +161,31 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # Properties panel — dockable, right side.
+        self._props_panel = PropertiesPanel(doc, self.editor, parent=self)
+        self._props_dock = QDockWidget("Properties", self)
+        self._props_dock.setObjectName("PropertiesDock")
+        self._props_dock.setWidget(self._props_panel)
+        self._props_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._props_dock.setFeatures(
+            QDockWidget.DockWidgetMovable |
+            QDockWidget.DockWidgetFloatable |
+            QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self._props_dock)
+        self._props_dock.hide()  # hidden until the user opens it or selects entities
+        self.editor.selection.changed.connect(self._props_panel.refresh)
+
         # Reusable Layer Manager dialog — created once, re-shown on demand.
         self._layer_dlg: Optional[LayerManagerDialog] = None
 
         # Sync status-bar buttons when the canvas toggles via F-keys.
         canvas.orthoChanged.connect(self._status_widget.set_ortho)
         canvas.draftmateChanged.connect(self._status_widget.set_draftmate)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._canvas.setFocus()
 
     # -----------------------------------------------------------------------
     # Status-bar wiring
@@ -226,15 +252,24 @@ class MainWindow(QMainWindow):
         """
         if name == "toggleLayerModal":
             self._toggle_layer_modal()
+        elif name == "togglePropertiesPanel":
+            self._toggle_properties_panel()
         elif name == "undo":
             self.editor.undo()
         elif name == "redo":
             self.editor.redo()
         elif name in self._LOCAL_ACTIONS:
-            # Placeholder — implement additional local actions here.
             pass
         else:
             self.editor.run_command(name)
+
+    def _toggle_properties_panel(self) -> None:
+        """Show or hide the Properties dock panel."""
+        if self._props_dock.isVisible():
+            self._props_dock.hide()
+        else:
+            self._props_dock.show()
+            self._props_panel.refresh()
 
     def _toggle_layer_modal(self) -> None:
         """Open (or bring to front) the Layer Manager dialog.

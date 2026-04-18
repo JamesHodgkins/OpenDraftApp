@@ -62,6 +62,7 @@ from app.editor.hit_testing import (
     entity_crosses_rect,
 )
 from app.ui.dynamic_input_widget import DynamicInputWidget
+from app.ui.command_palette import CommandPaletteWidget
 from app.canvas_viewport import ViewportTransform
 from app.canvas_grid import GridRenderer
 
@@ -79,6 +80,9 @@ class CADCanvas(QWidget):
     # so the status bar can stay in sync.
     orthoChanged = Signal(bool)
     draftmateChanged = Signal(bool)
+    # emitted when the user wants to open the command palette; carries the
+    # seed character (empty string when opened with no pre-typed text)
+    paletteRequested = Signal(str)
 
     @Slot()
     def refresh(self) -> None:
@@ -175,12 +179,29 @@ class CADCanvas(QWidget):
         # selection drags so we only redraw the selection rect each frame.
         self._scene_cache: Optional[QPixmap] = None
 
+        # ---- Entity render cache (general optimisation) ----------------------
+        # Cached pixmap of grid + all entities + selection overlays.  Reused
+        # across mouse-move frames; only hover highlight, snap markers,
+        # previews and grips are painted fresh each frame on top.
+        self._entity_cache: Optional[QPixmap] = None
+        self._cache_generation: int = -1
+        self._cache_scale: float = -1.0
+        self._cache_offset_x: float = 0.0
+        self._cache_offset_y: float = 0.0
+        self._cache_width: int = 0
+        self._cache_height: int = 0
+        self._cache_sel_ids: frozenset = frozenset()
+
         # ---- Dynamic input widget --------------------------------------------
         # Custom-painted input fields following the cursor during point/value input
         self._dynamic_input = DynamicInputWidget(parent=self)
         self._dynamic_input.hide()
         self._dynamic_input.input_submitted.connect(self._on_dynamic_input_submitted)
         self._dynamic_input.input_cancelled.connect(self._on_dynamic_input_cancelled)
+
+        # ---- Command palette -------------------------------------------------
+        self._command_palette = CommandPaletteWidget(parent=self)
+        self._command_palette.dismissed.connect(self._command_palette.hide)
 
         # ---- Draftmate (Object Snap Tracking + Polar Tracking) -----------
         self._draftmate = DraftmateEngine()
@@ -502,6 +523,14 @@ class CADCanvas(QWidget):
                 lyr = self._document.get_layer(e.layer)
                 if lyr is not None and not lyr.visible:
                     continue
+                # Quick bounding-box rejection — avoids expensive hit_test
+                # for entities far from the cursor.
+                bb = e.bounding_box()
+                if bb is not None and (
+                    bb.max_x + tolerance < raw.x or bb.min_x - tolerance > raw.x or
+                    bb.max_y + tolerance < raw.y or bb.min_y - tolerance > raw.y
+                ):
+                    continue
                 if hit_test_point(e, raw, tolerance):
                     new_hover = e.id
                     break
@@ -618,6 +647,11 @@ class CADCanvas(QWidget):
             self.cancelRequested.emit()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
+        # Palette gets priority — Escape closes it rather than cancelling a command
+        if self._command_palette.isVisible():
+            self._command_palette.keyPressEvent(event)
+            return
+
         if event.key() == Qt.Key_Escape:
             self.handle_escape()
             return
@@ -645,8 +679,16 @@ class CADCanvas(QWidget):
             # Forward all non-Escape keys to the dynamic input widget while it
             # is active so the user can type values without clicking.
             self._dynamic_input.keyPressEvent(event)
-        else:
-            super().keyPressEvent(event)
+            return
+
+        # Any alphanumeric key while idle → open palette with that char pre-typed
+        if self._idle:
+            text = event.text()
+            if text and (text.isalpha() or text.isdigit()):
+                self.paletteRequested.emit(text)
+                return
+
+        super().keyPressEvent(event)
 
     # ----------------------------------------------------------------
     # Selection logic
@@ -743,91 +785,22 @@ class CADCanvas(QWidget):
                 painter.end()
             return
 
+        sel_ids = self._editor.selection.ids if self._editor is not None else set()
+        hover_id = self._hovered_entity_id
+
+        # ---- Rebuild entity cache if stale --------------------------------
+        if not self._is_entity_cache_valid(sel_ids):
+            self._rebuild_entity_cache(sel_ids)
+
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#1E1E1E"))
         painter.setRenderHint(QPainter.Antialiasing, True)
 
-        # Draw grid
-        self._draw_grid(painter)
+        # Blit cached scene (grid + entities + selection overlays)
+        painter.drawPixmap(0, 0, self._entity_cache)
 
-        # Draw document entities — layer-aware pen per entity
-        sel_ids   = self._editor.selection.ids if self._editor is not None else set()
-        hover_id  = self._hovered_entity_id
-        if self._document is not None:
-            # Compute viewport world bounds once for frustum culling.
-            w_px, h_px = self.width(), self.height()
-            tl = self.screen_to_world(QPointF(0, 0))
-            br = self.screen_to_world(QPointF(w_px, h_px))
-            vp_min_x = min(tl.x(), br.x())
-            vp_min_y = min(tl.y(), br.y())
-            vp_max_x = max(tl.x(), br.x())
-            vp_max_y = max(tl.y(), br.y())
-
-            for e in self._document:
-                layer = self._document.get_layer(e.layer)
-                # Skip entities whose layer is hidden
-                if layer is not None and not layer.visible:
-                    continue
-                # Frustum cull: skip entities whose bounding box is entirely
-                # outside the viewport.  Entities with no bounding box (unknown
-                # types) are always drawn as a safe fallback.
-                bb = e.bounding_box()
-                if bb is not None and not bb.intersects_viewport(
-                    vp_min_x, vp_min_y, vp_max_x, vp_max_y
-                ):
-                    continue
-
-                # If this entity is being grip-dragged, draw the snapshot
-                # (with the grip applied) instead of the real entity.
-                draw_e = e
-                if (self._active_grip is not None
-                        and self._grip_entity_snapshot is not None
-                        and e.id == self._active_grip.entity_id):
-                    draw_e = self._grip_entity_snapshot
-
-                # Resolve pen defaults from layer
-                is_sel   = e.id in sel_ids
-                is_hover = e.id == hover_id
-                if layer is not None:
-                    color     = _resolve_color_str(layer.color)
-                    thickness = layer.thickness
-                    style     = _line_style_to_qt(layer.line_style)
-                else:
-                    color     = QColor(220, 220, 220)
-                    thickness = 1.0
-                    style     = Qt.SolidLine
-
-                # Apply ALL per-entity overrides unconditionally so the true
-                # appearance is always visible (even under hover/selection).
-                ew = getattr(e, "line_weight", None)
-                if ew is not None:
-                    thickness = ew
-                ec = getattr(e, "color", None)
-                if ec is not None:
-                    color = _resolve_color_str(ec)
-                es = getattr(e, "line_style", None)
-                if es is not None:
-                    style = _line_style_to_qt(es)
-
-                # ---- Base pass: draw entity with its true pen ----
-                pen = QPen(color, thickness)
-                pen.setStyle(style)
-                painter.setPen(pen)
-                self._draw_entity(painter, draw_e)
-
-                # ---- Overlay pass: semi-transparent highlight for hover/selection ----
-                if is_hover or is_sel:
-                    if is_hover and is_sel:
-                        overlay_color = QColor(80, 180, 255, 90)
-                    elif is_hover:
-                        overlay_color = QColor(255, 200, 0, 90)
-                    else:
-                        overlay_color = QColor(0, 150, 255, 90)
-                    overlay_thickness = max(thickness + 4.0, 6.0)
-                    overlay_pen = QPen(overlay_color, overlay_thickness)
-                    overlay_pen.setStyle(style)
-                    painter.setPen(overlay_pen)
-                    self._draw_entity(painter, draw_e)
+        # ---- Draw hover overlay (always fresh) ----------------------------
+        if hover_id is not None and self._document is not None:
+            self._draw_hover_overlay(painter, hover_id, sel_ids)
 
         # ---- Draw grip squares for selected entities ----------------------
         if sel_ids and self._document is not None and (self._idle or self._active_grip is not None):
@@ -853,6 +826,149 @@ class CADCanvas(QWidget):
             self._draw_selection_rect(painter)
 
         painter.end()
+
+    # ------------------------------------------------------------------
+    # Entity render cache
+    # ------------------------------------------------------------------
+
+    def _is_entity_cache_valid(self, sel_ids: set) -> bool:
+        """Return True if the cached entity pixmap is still usable."""
+        if self._entity_cache is None:
+            return False
+        # During grip editing the snapshot is mutated every frame.
+        if self._active_grip is not None:
+            return False
+        doc_gen = self._document._generation if self._document else -1
+        if doc_gen != self._cache_generation:
+            return False
+        if self._vp.scale != self._cache_scale:
+            return False
+        if (self._vp.offset.x() != self._cache_offset_x
+                or self._vp.offset.y() != self._cache_offset_y):
+            return False
+        if self.width() != self._cache_width or self.height() != self._cache_height:
+            return False
+        if frozenset(sel_ids) != self._cache_sel_ids:
+            return False
+        return True
+
+    def _rebuild_entity_cache(self, sel_ids: set) -> None:
+        """Render grid + all entities + selection overlays into a cached pixmap."""
+        w, h = self.width(), self.height()
+        pixmap = QPixmap(w, h)
+        pixmap.fill(QColor("#1E1E1E"))
+
+        p = QPainter(pixmap)
+        p.setRenderHint(QPainter.Antialiasing, True)
+
+        # Grid
+        self._draw_grid(p)
+
+        # Entities
+        if self._document is not None:
+            tl = self.screen_to_world(QPointF(0, 0))
+            br = self.screen_to_world(QPointF(w, h))
+            vp_min_x = min(tl.x(), br.x())
+            vp_min_y = min(tl.y(), br.y())
+            vp_max_x = max(tl.x(), br.x())
+            vp_max_y = max(tl.y(), br.y())
+
+            for e in self._document:
+                layer = self._document.get_layer(e.layer)
+                if layer is not None and not layer.visible:
+                    continue
+                bb = e.bounding_box()
+                if bb is not None and not bb.intersects_viewport(
+                    vp_min_x, vp_min_y, vp_max_x, vp_max_y
+                ):
+                    continue
+
+                draw_e = e
+                if (self._active_grip is not None
+                        and self._grip_entity_snapshot is not None
+                        and e.id == self._active_grip.entity_id):
+                    draw_e = self._grip_entity_snapshot
+
+                # Resolve pen
+                if layer is not None:
+                    color     = _resolve_color_str(layer.color)
+                    thickness = layer.thickness
+                    style     = _line_style_to_qt(layer.line_style)
+                else:
+                    color     = QColor(220, 220, 220)
+                    thickness = 1.0
+                    style     = Qt.SolidLine
+
+                ew = getattr(e, "line_weight", None)
+                if ew is not None:
+                    thickness = ew
+                ec = getattr(e, "color", None)
+                if ec is not None:
+                    color = _resolve_color_str(ec)
+                es = getattr(e, "line_style", None)
+                if es is not None:
+                    style = _line_style_to_qt(es)
+
+                pen = QPen(color, thickness)
+                pen.setStyle(style)
+                p.setPen(pen)
+                self._draw_entity(p, draw_e)
+
+                # Selection overlay (cached; hover overlay is drawn live)
+                is_sel = e.id in sel_ids
+                if is_sel:
+                    overlay_color = QColor(0, 150, 255, 90)
+                    overlay_thickness = max(thickness + 4.0, 6.0)
+                    overlay_pen = QPen(overlay_color, overlay_thickness)
+                    overlay_pen.setStyle(style)
+                    p.setPen(overlay_pen)
+                    self._draw_entity(p, draw_e)
+
+        p.end()
+
+        self._entity_cache = pixmap
+        self._cache_generation = self._document._generation if self._document else -1
+        self._cache_scale = self._vp.scale
+        self._cache_offset_x = self._vp.offset.x()
+        self._cache_offset_y = self._vp.offset.y()
+        self._cache_width = w
+        self._cache_height = h
+        self._cache_sel_ids = frozenset(sel_ids)
+
+    def _draw_hover_overlay(self, painter: QPainter, hover_id: str, sel_ids: set) -> None:
+        """Draw the semi-transparent hover highlight for a single entity."""
+        e = self._document.get_entity(hover_id)
+        if e is None:
+            return
+        layer = self._document.get_layer(e.layer)
+        if layer is not None and not layer.visible:
+            return
+
+        if layer is not None:
+            thickness = layer.thickness
+            style     = _line_style_to_qt(layer.line_style)
+        else:
+            thickness = 1.0
+            style     = Qt.SolidLine
+
+        ew = getattr(e, "line_weight", None)
+        if ew is not None:
+            thickness = ew
+        es = getattr(e, "line_style", None)
+        if es is not None:
+            style = _line_style_to_qt(es)
+
+        is_sel = e.id in sel_ids
+        if is_sel:
+            overlay_color = QColor(80, 180, 255, 90)
+        else:
+            overlay_color = QColor(255, 200, 0, 90)
+
+        overlay_thickness = max(thickness + 4.0, 6.0)
+        overlay_pen = QPen(overlay_color, overlay_thickness)
+        overlay_pen.setStyle(style)
+        painter.setPen(overlay_pen)
+        self._draw_entity(painter, e)
 
     def _draw_snap_marker(self, painter: QPainter, snap: SnapResult) -> None:
         """Draw the OSNAP marker at the snap point in screen coordinates.

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QLabel, QSizePolicy, QToolButton, QComboBox, QStyle, QStyleOption,
 )
 from PySide6.QtCore import Qt, QSize, QRect
-from PySide6.QtGui import QIcon, QPainter
+from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QBrush
 
 from controls.ribbon.ribbon_constants import (
     ButtonType, ButtonSize, IconSize, SIZE, Styles, MARGINS,
@@ -26,12 +26,59 @@ from controls.icon_widget import Icon, load_pixmap
 
 _PROP_LABEL_STYLE = "color: #999; font-size: 8pt; padding: 0;"
 _LARGE_BUTTON_ICON_TEXT_GAP = 8
+_SWATCH_CIRCLE_SIZE = 10  # diameter of the colour circle inside the button
 # Maps PropStackRow.label → QWidget objectName used by RibbonPanel.setup_document()
 _PROP_OBJ_NAMES: dict[str, str] = {
     "Color": "colorSwatchBtn",
     "Style": "lineStyleCombo",
     "Weight": "thicknessCombo",
 }
+
+
+class ColorSwatchButton(QPushButton):
+    """Wide ribbon color control: colored circle + hex label, styled like combo boxes."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hex_color: Optional[str] = None  # None = "by layer"
+        self.setFixedSize(110, 22)
+        self.setStyleSheet(
+            "QPushButton { background: #3a3a3a; color: #e0e0e0; border: 1px solid #555;"
+            " border-radius: 3px; padding: 0; font-size: 9pt; }"
+            "QPushButton:hover { background: #4a4a4a; }"
+            "QPushButton:pressed { background: #2d2d2d; }"
+        )
+
+    def set_color(self, hex_color: Optional[str]) -> None:
+        self._hex_color = hex_color
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        r = self.rect()
+        circle_d = _SWATCH_CIRCLE_SIZE
+        cx = 8 + circle_d // 2  # left margin + radius
+        cy = r.height() // 2
+
+        if self._hex_color:
+            fill = QColor(self._hex_color)
+        else:
+            fill = QColor("#3a3a3a")
+
+        painter.setPen(QPen(QColor("#888888"), 1))
+        painter.setBrush(QBrush(fill))
+        painter.drawEllipse(cx - circle_d // 2, cy - circle_d // 2, circle_d, circle_d)
+
+        label = self._hex_color.upper() if self._hex_color else "— by layer —"
+        text_x = cx + circle_d // 2 + 6
+        painter.setPen(QColor("#e0e0e0"))
+        painter.setFont(self.font())
+        painter.drawText(QRect(text_x, 0, r.width() - text_x - 2, r.height()),
+                         Qt.AlignVCenter | Qt.AlignLeft, label)
+        painter.end()
 
 
 class RibbonLargeButton(QToolButton):
@@ -249,16 +296,10 @@ class ButtonFactory:
             row_h.addWidget(lbl)
 
             if row.type == "color-swatch":
-                btn = QPushButton()
+                btn = ColorSwatchButton()
                 btn.setObjectName(obj_name)
-                btn.setFixedSize(22, 22)
-                btn.setStyleSheet(
-                    "QPushButton { background: #ffffff; border: 1px solid #666; border-radius: 2px; }"
-                    "QPushButton:hover { border-color: #aaa; }"
-                )
                 btn.setToolTip("Override colour (click to change, blank = use layer colour)")
                 row_h.addWidget(btn)
-                row_h.addStretch()
             else:
                 combo = QComboBox()
                 combo.setObjectName(obj_name)
