@@ -12,9 +12,9 @@ from typing import List, Dict, Optional
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
     QTabBar, QStackedWidget, QComboBox, QPushButton,
-    QToolButton, QMenu, QWidgetAction, QSizePolicy, QLabel,
+    QToolButton, QSizePolicy, QLabel, QFrame,
 )
-from PySide6.QtCore import Qt, Signal, QRect, QSize
+from PySide6.QtCore import Qt, Signal, QRect, QSize, QPoint, QTimer
 from PySide6.QtGui import QPainter, QColor, QPaintEvent, QMouseEvent, QResizeEvent
 import logging
 
@@ -119,17 +119,49 @@ class _RibbonTabBar(QTabBar):
         return QColor(COLORS.TAB_TEXT_INACTIVE_LIGHT)
 
 
+class _PanelPopup(QFrame):
+    """Frameless popup that displays a single hidden ribbon panel."""
+
+    def __init__(
+        self,
+        panel: RibbonPanelFrame,
+        owner: "_OverflowTabContent",
+        dark: bool = False,
+        parent: Optional[QWidget] = None,
+    ):
+        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        self.setObjectName("RibbonPanelPopup")
+        self._panel = panel
+        self._owner = owner
+
+        bg = COLORS.BACKGROUND_DARK if dark else COLORS.BACKGROUND_LIGHT
+        self.setStyleSheet(
+            f"QFrame#RibbonPanelPopup {{ background: {bg}; "
+            f"border: 1px solid {COLORS.MENU_BORDER}; }}"
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        panel.setParent(self)
+        panel.show()
+        layout.addWidget(panel)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._panel.setParent(self._owner)
+        self._panel.hide()
+        self._owner._active_popup = None
+        super().closeEvent(event)
+        QTimer.singleShot(0, self._owner._restore_and_reflow)
+
+
 class _OverflowTabContent(QWidget):
-    """Tab content widget that hides panels which overflow and shows a chevron.
+    """Tab content widget with responsive overflow handling.
 
-    All panels + separators are added to an inner ``QHBoxLayout``.  On each
-    ``resizeEvent`` the widget walks the children left-to-right, hiding any
-    panel (and its preceding separator) once the accumulated width exceeds
-    the available width minus the chevron button width.  Hidden panels are
-    accessible via a ``>>`` popup menu.
+    Panels that don't fit the available width are hidden and replaced by
+    compact *condensed buttons* — one per hidden panel.  Clicking a
+    condensed button opens a popup displaying that panel's full tool
+    content.
     """
-
-    _CHEVRON_WIDTH = 24
 
     def __init__(self, dark: bool = False, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -137,34 +169,39 @@ class _OverflowTabContent(QWidget):
         self.setProperty("dark", dark)
         bg = COLORS.BACKGROUND_DARK if dark else COLORS.BACKGROUND_LIGHT
         self.setStyleSheet(f"QWidget#RibbonTabContent {{ background: {bg}; }}")
+        self._dark = dark
 
         self._inner_layout = QHBoxLayout()
         self._inner_layout.setContentsMargins(*MARGINS.SMALL)
         self._inner_layout.setSpacing(0)
 
-        # Chevron button lives outside the inner layout at the far right.
-        self._chevron = QToolButton(self)
-        self._chevron.setObjectName("ribbonOverflowChevron")
-        self._chevron.setText("\u00bb")  # »
-        self._chevron.setFixedWidth(self._CHEVRON_WIDTH)
-        self._chevron.setPopupMode(QToolButton.InstantPopup)
-        self._chevron.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self._chevron.setStyleSheet(
-            f"QToolButton {{ border: none; font-size: 14px; color: {COLORS.TAB_TEXT_INACTIVE_DARK}; }}"
-            f"QToolButton:hover {{ color: {COLORS.TAB_TEXT_ACTIVE}; background: {COLORS.TAB_HOVER_DARK}; }}"
-        )
-        self._chevron.hide()
+        # Overflow area: one condensed button per hidden panel
+        self._overflow_widget = QWidget()
+        self._overflow_widget.setObjectName("RibbonOverflowArea")
+        self._overflow_layout = QHBoxLayout()
+        self._overflow_layout.setContentsMargins(4, 0, 2, 0)
+        self._overflow_layout.setSpacing(2)
+        self._overflow_widget.setLayout(self._overflow_layout)
+        self._overflow_widget.hide()
 
         # Panels + separators tracked in insertion order
         self._items: list[QWidget] = []
+        self._condensed_buttons: list[QToolButton] = []
+        self._active_popup: Optional[_PanelPopup] = None
 
         outer = QHBoxLayout()
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addLayout(self._inner_layout)
         outer.addStretch()
-        outer.addWidget(self._chevron)
+        outer.addWidget(self._overflow_widget)
         self.setLayout(outer)
+
+        # Debounced reflow — coalesces rapid resize events
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.setInterval(0)
+        self._reflow_timer.timeout.connect(self._reflow)
 
     def add_panel(self, widget: QWidget) -> None:
         """Append a panel (or separator) to the content area."""
@@ -174,59 +211,209 @@ class _OverflowTabContent(QWidget):
     # ------------------------------------------------------------------
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self._reflow()
+        if self._active_popup:
+            self._active_popup.close()
+        else:
+            self._reflow_timer.start()
+
+    # ------------------------------------------------------------------
+    # Overflow logic
+    # ------------------------------------------------------------------
 
     def _reflow(self) -> None:
-        """Show/hide panels based on available width."""
-        available = self.width() - self._CHEVRON_WIDTH - MARGINS.SMALL[0] - MARGINS.SMALL[2]
-        used = 0
-        overflowed = False
-        hidden_panels: list[QWidget] = []
+        """Show/hide panels and create condensed buttons for hidden ones.
 
-        for item in self._items:
-            # Determine the natural width the item wants
-            hint = item.sizeHint()
-            w = hint.width() if hint.isValid() else item.minimumSizeHint().width()
-            if w <= 0:
-                w = item.width()
+        Overflow is right-to-left: the rightmost panel loses tools first.
+        When it can't shrink further it becomes a condensed button, then
+        the next panel starts losing tools, etc.
+        """
+        # Clear previous condensed buttons
+        for btn in self._condensed_buttons:
+            btn.setParent(None)
+            btn.deleteLater()
+        self._condensed_buttons.clear()
+        self._overflow_widget.hide()
 
-            if not overflowed and (used + w) <= available:
-                item.show()
-                used += w
-            else:
-                overflowed = True
-                item.hide()
-                # Only track real panels, not separators
-                if isinstance(item, RibbonPanelFrame):
-                    hidden_panels.append(item)
+        available = self.width() - MARGINS.SMALL[0] - MARGINS.SMALL[2]
 
-        if hidden_panels:
-            self._chevron.show()
-            self._build_overflow_menu(hidden_panels)
-        else:
-            self._chevron.hide()
+        # Gather panels in order with their natural widths
+        panels: list[tuple[int, RibbonPanelFrame]] = []
+        sep_indices: list[int] = []
+        natural_widths: dict[int, int] = {}
 
-    def _build_overflow_menu(self, panels: list[QWidget]) -> None:
-        """Build a popup showing the hidden panels."""
-        menu = QMenu(self)
-        menu.setStyleSheet(
-            f"QMenu {{ background: {COLORS.BACKGROUND_DARK}; border: 1px solid {COLORS.MENU_BORDER}; padding: 4px; }}"
-        )
-        for panel in panels:
-            action = QWidgetAction(menu)
-            # Extract the panel's title from its QLabel child
-            title_label = panel.findChild(QLabel)
-            title = title_label.text() if title_label else "Panel"
-            btn = QPushButton(title)
-            btn.setStyleSheet(
-                f"QPushButton {{ background: transparent; color: {COLORS.TAB_TEXT_ACTIVE}; border: none; "
-                f"padding: 6px 16px; text-align: left; font-size: 12px; }}"
-                f"QPushButton:hover {{ background: {COLORS.TAB_HOVER_DARK}; }}"
+        for i, item in enumerate(self._items):
+            if isinstance(item, RibbonPanelFrame):
+                panels.append((i, item))
+                natural_widths[i] = item.natural_width()
+            elif isinstance(item, _PanelSeparator):
+                sep_indices.append(i)
+
+        if not panels:
+            return
+
+        # Determine which panels fit, working right-to-left.
+        # Start by computing what we need for all panels + separators.
+        hidden_indices: set[int] = set()
+
+        def _visible_panels() -> list[int]:
+            return sorted(i for i, _ in panels if i not in hidden_indices)
+
+        def _sep_width(vis: list[int]) -> int:
+            total = 0
+            for si in sep_indices:
+                has_left = any(pi < si for pi in vis)
+                has_right = any(pi > si for pi in vis)
+                if has_left and has_right:
+                    total += 1
+            return total
+
+        # First pass: determine which panels must be fully hidden as
+        # condensed buttons (right-to-left).
+        # Reserve space for condensed buttons as we hide panels.
+        condensed_space = 0
+        while True:
+            vis = _visible_panels()
+            if not vis:
+                break
+            total_needed = (
+                sum(natural_widths[i] for i in vis)
+                + _sep_width(vis)
+                + condensed_space
             )
-            btn.clicked.connect(menu.close)
-            action.setDefaultWidget(btn)
-            menu.addAction(action)
-        self._chevron.setMenu(menu)
+            if total_needed <= available:
+                break
+            # Remove rightmost visible panel
+            rightmost = vis[-1]
+            hidden_indices.add(rightmost)
+            condensed_space += self._estimate_btn_width(
+                next(p for i, p in panels if i == rightmost)
+            ) + 4  # 2px spacing each side
+
+        vis = _visible_panels()
+
+        # Second pass: if visible panels still overflow (e.g. condensed
+        # buttons cost more than expected), see if the rightmost visible
+        # panel can be squeezed to fit.
+        if vis:
+            total = (
+                sum(natural_widths[i] for i in vis)
+                + _sep_width(vis)
+                + condensed_space
+            )
+            if total > available:
+                rightmost = vis[-1]
+                others_width = (
+                    sum(natural_widths[i] for i in vis if i != rightmost)
+                    + _sep_width(vis)
+                    + condensed_space
+                )
+                remaining = available - others_width
+                rightmost_panel = next(p for i, p in panels if i == rightmost)
+                min_w = rightmost_panel.minimumSizeHint().width()
+                if remaining >= min_w:
+                    # Squeeze the rightmost visible panel
+                    rightmost_panel.constrain_width(remaining)
+                else:
+                    # Can't fit even at minimum — hide it too
+                    hidden_indices.add(rightmost)
+                    condensed_space += self._estimate_btn_width(rightmost_panel) + 4
+
+        # Apply visibility
+        vis = _visible_panels()
+        for i, item in enumerate(self._items):
+            if isinstance(item, RibbonPanelFrame):
+                if i in hidden_indices:
+                    item.unconstrain()
+                    item.hide()
+                else:
+                    item.show()
+                    # Only unconstrain panels that are NOT the squeezed one
+                    if not item._constrained:
+                        item.unconstrain()
+            elif isinstance(item, _PanelSeparator):
+                has_left = any(pi < i for pi in vis)
+                has_right = any(pi > i for pi in vis)
+                if has_left and has_right:
+                    item.show()
+                else:
+                    item.hide()
+
+        # Build condensed buttons for hidden panels (in display order)
+        hidden_panels = [p for i, p in panels if i in hidden_indices]
+        if hidden_panels:
+            for panel in hidden_panels:
+                btn = self._make_condensed_button(panel)
+                self._overflow_layout.addWidget(btn)
+                self._condensed_buttons.append(btn)
+            self._overflow_widget.show()
+
+    # ------------------------------------------------------------------
+    # Condensed buttons
+    # ------------------------------------------------------------------
+
+    def _estimate_btn_width(self, panel: RibbonPanelFrame) -> int:
+        title = self._panel_title(panel)
+        fm = self.fontMetrics()
+        return fm.horizontalAdvance(title) + 28
+
+    def _make_condensed_button(self, panel: RibbonPanelFrame) -> QToolButton:
+        title = self._panel_title(panel)
+        btn = QToolButton()
+        btn.setText(f"{title} \u25be")
+        btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
+        btn.setStyleSheet(
+            f"QToolButton {{ border: 1px solid {COLORS.MENU_BORDER}; border-radius: 2px;"
+            f" background: transparent; color: {COLORS.TAB_TEXT_INACTIVE_DARK};"
+            f" font-size: 8pt; padding: 4px 6px; }}"
+            f"QToolButton:hover {{ background: {COLORS.TAB_HOVER_DARK};"
+            f" color: {COLORS.TAB_TEXT_ACTIVE}; }}"
+        )
+        btn.clicked.connect(
+            lambda checked=False, p=panel, b=btn: self._show_panel_popup(p, b)
+        )
+        return btn
+
+    @staticmethod
+    def _panel_title(panel: RibbonPanelFrame) -> str:
+        lbl = panel.findChild(QLabel)
+        return lbl.text() if lbl else "Panel"
+
+    # ------------------------------------------------------------------
+    # Panel popup
+    # ------------------------------------------------------------------
+
+    def _show_panel_popup(
+        self, panel: RibbonPanelFrame, anchor: QToolButton
+    ) -> None:
+        if self._active_popup:
+            self._active_popup.close()
+
+        popup = _PanelPopup(panel, self, self._dark, self.window())
+        popup.adjustSize()
+
+        pos = anchor.mapToGlobal(QPoint(0, anchor.height()))
+        screen = self.screen()
+        if screen:
+            sr = screen.availableGeometry()
+            if pos.x() + popup.width() > sr.right():
+                pos.setX(sr.right() - popup.width())
+            if pos.y() + popup.height() > sr.bottom():
+                pos = anchor.mapToGlobal(QPoint(0, -popup.height()))
+        popup.move(pos)
+        popup.show()
+        self._active_popup = popup
+
+    def _restore_and_reflow(self) -> None:
+        """Return all panels to the inner layout and re-evaluate overflow."""
+        while self._inner_layout.count() > 0:
+            self._inner_layout.takeAt(0)
+        for item in self._items:
+            item.setParent(self)
+            if isinstance(item, RibbonPanelFrame):
+                item.unconstrain()
+            self._inner_layout.addWidget(item)
+        self._reflow()
 
 
 class RibbonPanel(QWidget):
