@@ -1,63 +1,111 @@
 ## Contributing to OpenDraft
 
-Thank you for your interest in contributing to OpenDraft! We welcome contributions from the community to help improve and enhance the project. By contributing, you can help make OpenDraft a better CAD solution for everyone.
-
-To contribute, please follow these guidelines:
+Thank you for your interest in contributing to OpenDraft! We welcome contributions from the community to help improve and enhance the project.
 
 ### 1. Fork the Repository
 
-Start by forking the OpenDraft repository to your GitHub account. This will create a copy of the project under your account.
+Fork the OpenDraft repository to your GitHub account to create your own copy of the project.
 
 ### 2. Set Up Your Development Environment
 
-To set up your development environment, follow these steps:
+**Requirements:**
 
-- **Visual Studio (Optional)**: The OpenDraft repository includes a Visual Studio project for convenience. If you prefer using Visual Studio, you can open the project file (`OpenDraft.sln`) in Visual Studio and build the solution from there. However, note that using Visual Studio is not essential, and you can use any development environment of your choice.
+- Python 3.12+
+- A virtual environment tool (the project uses `.venv`)
 
-- **Dependencies**: OpenDraft already includes the necessary dependencies within the repository, so there's no need to download or install them separately. The project includes GLFW for handling windows and input, as well as NanoVG for 2D rendering. If you're using a different development environment, ensure that you link against the appropriate versions of GLFW and NanoVG included in the project repository.
+**Install dependencies:**
 
-- **Building and Running**: To build and run OpenDraft, follow the instructions specific to your development environment. If you're using Visual Studio, open the `OpenDraft.sln` solution file and build the project. For other environments, configure your project settings to include the necessary source files and dependencies.
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-### 3. Create a Feature Branch
+This installs:
+- [PySide6](https://doc.qt.io/qtforpython/) — Qt6 bindings (UI framework and rendering)
+- [watchfiles](https://watchfiles.helpmanual.io/) — File watching for auto-reload during development
+- [pytest](https://pytest.org/) and [pytest-qt](https://pytest-qt.readthedocs.io/) — Test runner and Qt integration
 
-Before making any changes, create a new branch for your contribution. This helps in isolating your changes and makes it easier to review and merge them later.
+**Run the application:**
 
-### 4. Make Your Changes
+```bash
+python main.py
+```
 
-Implement the desired feature, fix a bug, or make improvements to OpenDraft. Write clean and well-documented code following the project's coding conventions and best practices.
+### 3. Understand the Project Structure
 
-### 5. Test Your Changes
+```
+app/
+  commands/       # Drawing and modify command implementations
+  config/         # Ribbon and UI configuration
+  editor/         # Core editor logic
+  entities/       # CAD entity classes (line, circle, arc, etc.)
+  ui/             # Widgets (status bar, dynamic input, properties panel)
+  canvas.py       # Main drawing canvas
+  main_window.py  # Application window
+controls/
+  ribbon/         # Ribbon UI control components
+assets/
+  themes/         # QSS stylesheets
+  svg/            # Icons and branding
+tests/            # pytest test suite
+```
 
-Ensure that your changes do not introduce new issues and that existing functionality remains intact. Run the test suite and perform manual testing to validate your modifications.
+### 4. Create a Feature Branch
 
-### 6. Commit and Push
+Create a new branch for your contribution before making changes:
 
-Commit your changes with clear and descriptive commit messages. Push the changes to your forked repository on GitHub.
+```bash
+git checkout -b feature/your-feature-name
+```
 
-### 7. Submit a Pull Request
+### 5. Make Your Changes
 
-Once you have pushed your changes to your forked repository, navigate to the original OpenDraft repository. From there, you can submit a pull request (PR) to propose your changes for review.
+Follow these conventions when contributing:
 
-In your PR, provide a detailed description of the changes you have made, including any relevant context or motivation behind them. If your contribution addresses any existing issue or feature request, reference it in your PR description.
+- Commands live in `app/commands/` and should follow the existing command pattern
+- New entity types go in `app/entities/` with a corresponding entry in `app/entities/__init__.py`
+- Ribbon entries are configured in `app/config/ribbon_config.py`
+- Keep code clean and consistent with the surrounding style — avoid unnecessary abstractions
 
-### 8. Engage in the Review Process
+### 6. Test Your Changes
 
-Your PR will be reviewed by the project maintainers. They may provide feedback, suggest improvements, or ask for clarifications. Be responsive to the review comments and address them promptly.
+Run the test suite before submitting:
 
-### 9. Iterate and Refine
+```bash
+pytest
+```
 
-Iterate on your changes based on the feedback received. Make additional commits or modifications as necessary until the maintainers are satisfied with the contribution.
+Also perform manual testing by running the application and exercising the relevant functionality directly.
 
-### 10. Merge and Celebrate
+### 7. Commit and Push
 
-Once your contribution has been approved, it will be merged into the main branch of OpenDraft. Congratulations! Your changes are now part of the project.
+Commit your changes with clear, descriptive messages and push to your fork:
+
+```bash
+git add <files>
+git commit -m "Add: brief description of change"
+git push origin feature/your-feature-name
+```
+
+### 8. Submit a Pull Request
+
+Open a pull request against the `main` branch of the original OpenDraft repository. Include a description of what you changed, why, and any relevant context. Reference any related issue or TODO item if applicable.
+
+### 9. Review and Iteration
+
+Project maintainers will review your PR and may request changes. Address any feedback and push additional commits as needed.
+
+### 10. Merge
+
+Once approved, your contribution will be merged into `main`.
 
 ## Code of Conduct
 
-Please note that OpenDraft follows a code of conduct. We expect all contributors to adhere to this code of conduct, which promotes a respectful and inclusive community. Be kind, considerate, and supportive in your interactions with others.
+OpenDraft follows a code of conduct. All contributors are expected to be respectful and considerate in their interactions with others. See [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for details.
 
 ## Get Help
 
-If you need any assistance or have questions regarding the contribution process, feel free to reach out to the project maintainers or the community. You can refer to the project's documentation for contact information and support channels.
+If you have questions or need assistance, open an issue on the GitHub repository or refer to the project documentation.
 
-Thank you for your interest in contributing to our project. We appreciate your valuable contributions and look forward to working with you to make OpenDraft even better.
+Thank you for contributing to OpenDraft!
