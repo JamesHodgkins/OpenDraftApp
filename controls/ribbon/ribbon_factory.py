@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QSize, QRect
 from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QBrush
 
 from controls.ribbon.ribbon_constants import (
-    ButtonType, ButtonSize, IconSize, SIZE, Styles, MARGINS,
+    ButtonType, SIZE, Styles, MARGINS, COLORS,
 )
 from controls.ribbon.ribbon_models import (
     ToolDefinition, SplitButtonDefinition, StackDefinition,
@@ -23,8 +23,22 @@ from controls.ribbon.ribbon_models import (
 from controls.ribbon.ribbon_split_button import RibbonSplitButton
 from controls.icon_widget import Icon, load_pixmap
 
+__all__ = [
+    "ColorSwatchButton",
+    "RibbonLargeButton",
+    "ButtonFactory",
+    "PanelFactory",
+]
 
-_PROP_LABEL_STYLE = "color: #999; font-size: 8pt; padding: 0;"
+__all__ = [
+    "ColorSwatchButton",
+    "RibbonLargeButton",
+    "ButtonFactory",
+    "PanelFactory",
+]
+
+
+_PROP_LABEL_STYLE = f"color: {COLORS.MUTED_TEXT}; font-size: 8pt; padding: 0;"
 _LARGE_BUTTON_ICON_TEXT_GAP = 8
 _SWATCH_CIRCLE_SIZE = 10  # diameter of the colour circle inside the button
 # Maps PropStackRow.label → QWidget objectName used by RibbonPanel.setup_document()
@@ -43,10 +57,11 @@ class ColorSwatchButton(QPushButton):
         self._hex_color: Optional[str] = None  # None = "by layer"
         self.setFixedSize(110, 22)
         self.setStyleSheet(
-            "QPushButton { background: #3a3a3a; color: #e0e0e0; border: 1px solid #555;"
-            " border-radius: 3px; padding: 0; font-size: 9pt; }"
-            "QPushButton:hover { background: #4a4a4a; }"
-            "QPushButton:pressed { background: #2d2d2d; }"
+            f"QPushButton {{ background: {COLORS.CONTROL_BG}; color: {COLORS.CONTROL_TEXT};"
+            f" border: 1px solid {COLORS.CONTROL_BORDER};"
+            f" border-radius: 3px; padding: 0; font-size: 9pt; }}"
+            f"QPushButton:hover {{ background: {COLORS.HOVER_DARK}; }}"
+            f"QPushButton:pressed {{ background: {COLORS.BACKGROUND_DARK}; }}"
         )
 
     def set_color(self, hex_color: Optional[str]) -> None:
@@ -66,15 +81,15 @@ class ColorSwatchButton(QPushButton):
         if self._hex_color:
             fill = QColor(self._hex_color)
         else:
-            fill = QColor("#3a3a3a")
+            fill = QColor(COLORS.CONTROL_BG)
 
-        painter.setPen(QPen(QColor("#888888"), 1))
+        painter.setPen(QPen(QColor(COLORS.SWATCH_OUTLINE), 1))
         painter.setBrush(QBrush(fill))
         painter.drawEllipse(cx - circle_d // 2, cy - circle_d // 2, circle_d, circle_d)
 
         label = self._hex_color.upper() if self._hex_color else "— by layer —"
         text_x = cx + circle_d // 2 + 6
-        painter.setPen(QColor("#e0e0e0"))
+        painter.setPen(QColor(COLORS.CONTROL_TEXT))
         painter.setFont(self.font())
         painter.drawText(QRect(text_x, 0, r.width() - text_x - 2, r.height()),
                          Qt.AlignVCenter | Qt.AlignLeft, label)
@@ -215,6 +230,8 @@ class ButtonFactory:
             small=not large,
         )
 
+    _MAX_STACK_ROWS = 3
+
     def _create_stack(self, tool: ToolDefinition) -> QWidget:
         if not isinstance(tool, StackDefinition):
             raise ValueError("Stack requires StackDefinition")
@@ -225,21 +242,29 @@ class ButtonFactory:
         stack_layout.setContentsMargins(*MARGINS.NONE)
 
         for column in tool.columns:
-            col_widget = QWidget()
-            col_layout = QVBoxLayout()
-            col_layout.setSpacing(SIZE.STACK_SPACING)
-            col_layout.setContentsMargins(*MARGINS.NONE)
-            for btn_def in column:  # btn_def is now a ToolDefinition
-                col_layout.addWidget(
-                    self._create_small_button(btn_def),
-                    alignment=Qt.AlignLeft | Qt.AlignTop,
-                )
-            col_layout.addStretch()
-            col_widget.setLayout(col_layout)
-            stack_layout.addWidget(col_widget, alignment=Qt.AlignTop)
+            # Auto-chunk columns with more than 3 items into groups of 3,
+            # matching the standard Office / AutoCAD ribbon row limit.
+            for chunk in self._chunk(column, self._MAX_STACK_ROWS):
+                col_widget = QWidget()
+                col_layout = QVBoxLayout()
+                col_layout.setSpacing(SIZE.STACK_SPACING)
+                col_layout.setContentsMargins(*MARGINS.NONE)
+                for btn_def in chunk:
+                    col_layout.addWidget(
+                        self._create_small_button(btn_def),
+                        alignment=Qt.AlignLeft | Qt.AlignTop,
+                    )
+                col_layout.addStretch()
+                col_widget.setLayout(col_layout)
+                stack_layout.addWidget(col_widget, alignment=Qt.AlignTop)
 
         stack_widget.setLayout(stack_layout)
         return stack_widget
+
+    @staticmethod
+    def _chunk(lst: list, n: int) -> list:
+        """Split *lst* into sub-lists of at most *n* items."""
+        return [lst[i:i + n] for i in range(0, len(lst), n)]
 
     def _create_layer_select(self, tool: ToolDefinition) -> QWidget:
         """Build a labeled layer-selection combo.
@@ -279,14 +304,15 @@ class ButtonFactory:
         container = QWidget()
         vbox = QVBoxLayout(container)
         vbox.setContentsMargins(2, 2, 2, 4)
-        vbox.setSpacing(3)
+        vbox.setSpacing(6)
 
         for row in tool.rows:
             obj_name = _PROP_OBJ_NAMES.get(row.label, "")
 
             row_w = QWidget()
+            row_w.setFixedHeight(24)
             row_h = QHBoxLayout(row_w)
-            row_h.setContentsMargins(0, 0, 0, 0)
+            row_h.setContentsMargins(0, 1, 0, 1)
             row_h.setSpacing(3)
 
             lbl = QLabel(row.label)
@@ -319,7 +345,7 @@ class ButtonFactory:
     @staticmethod
     def _set_placeholder_icon(label: QLabel) -> None:
         label.setText("?")
-        label.setStyleSheet("color: #888; font-size: 13pt;")
+        label.setStyleSheet(f"color: {COLORS.SWATCH_OUTLINE}; font-size: 13pt;")
 
 
 class PanelFactory:
@@ -362,12 +388,32 @@ class PanelFactory:
 
     @staticmethod
     def _create_small_button_column(buttons: List[QWidget]) -> QWidget:
-        col = QWidget()
-        vbox = QVBoxLayout()
-        vbox.setSpacing(SIZE.STACK_SPACING)
-        vbox.setContentsMargins(*MARGINS.NONE)
-        for btn in buttons:
-            vbox.addWidget(btn, alignment=Qt.AlignLeft | Qt.AlignTop)
-        vbox.addStretch()
-        col.setLayout(vbox)
-        return col
+        """Stack buttons vertically, auto-chunking into columns of 3."""
+        if len(buttons) <= ButtonFactory._MAX_STACK_ROWS:
+            col = QWidget()
+            vbox = QVBoxLayout()
+            vbox.setSpacing(SIZE.STACK_SPACING)
+            vbox.setContentsMargins(*MARGINS.NONE)
+            for btn in buttons:
+                vbox.addWidget(btn, alignment=Qt.AlignLeft | Qt.AlignTop)
+            vbox.addStretch()
+            col.setLayout(vbox)
+            return col
+
+        # More than 3 buttons — wrap into side-by-side columns of 3.
+        wrapper = QWidget()
+        hbox = QHBoxLayout()
+        hbox.setSpacing(SIZE.TOOL_SPACING)
+        hbox.setContentsMargins(*MARGINS.NONE)
+        for chunk in ButtonFactory._chunk(buttons, ButtonFactory._MAX_STACK_ROWS):
+            col = QWidget()
+            vbox = QVBoxLayout()
+            vbox.setSpacing(SIZE.STACK_SPACING)
+            vbox.setContentsMargins(*MARGINS.NONE)
+            for btn in chunk:
+                vbox.addWidget(btn, alignment=Qt.AlignLeft | Qt.AlignTop)
+            vbox.addStretch()
+            col.setLayout(vbox)
+            hbox.addWidget(col, alignment=Qt.AlignTop)
+        wrapper.setLayout(hbox)
+        return wrapper

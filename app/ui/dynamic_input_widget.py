@@ -280,16 +280,16 @@ class _ChoiceMode(_ModeStrategy):
     is_choice = True
 
     def apply_labels(self, f1, f2, *, fmt=InputFormat.RELATIVE, widget=None):
-        if widget is not None:
-            f1.label = "/".join(widget._choice_options)
+        f1.label = ""
         f1.placeholder = ""
 
     def update_placeholders(self, f1, f2, w):
         f1.placeholder = ""
 
     def submit(self, f1_text, f2_text, w):
-        ch = f1_text.upper() if f1_text else ""
-        return ch if ch in w._choice_options else None
+        idx = getattr(w, "_choice_index", 0)
+        opts = w._choice_options
+        return opts[idx] if opts else None
 
 
 # Map mode name strings to strategy classes.
@@ -349,6 +349,9 @@ class DynamicInputWidget(QWidget):
         self._angle_center: Optional[Vec2] = None
         self._length_base: Optional[Vec2] = None
 
+        # Choice-mode navigation index
+        self._choice_index: int = 0
+
         # Two fields (second hidden in scalar modes)
         self._field_1 = _Field("dX")
         self._field_2 = _Field("dY")
@@ -377,7 +380,8 @@ class DynamicInputWidget(QWidget):
         self._input_mode = mode
         self._current_pos = current_pos
         self._base_point = base_point if base_point is not None else Vec2(0, 0)
-        self._choice_options = [o.upper() for o in (choice_options or [])]
+        self._choice_options = list(choice_options or [])
+        self._choice_index = 0
         self._angle_center = angle_center
         self._length_base = length_base
 
@@ -445,20 +449,37 @@ class DynamicInputWidget(QWidget):
 
     def _resize_to_content(self) -> None:
         """Set widget size based on current mode."""
-        if self._mode_strategy is not None and self._mode_strategy.is_two_field:
+        if self._mode_strategy is not None and self._mode_strategy.is_choice:
+            w, h = self._choice_size()
+        elif self._mode_strategy is not None and self._mode_strategy.is_two_field:
             w = _PAD_X * 2 + self._field_group_width(self._field_1) + _GROUP_GAP + self._field_group_width(self._field_2)
+            h = _PAD_Y * 2 + _FIELD_H
         else:
             w = _PAD_X * 2 + self._field_group_width(self._field_1)
-        h = _PAD_Y * 2 + _FIELD_H
+            h = _PAD_Y * 2 + _FIELD_H
         self.setFixedSize(int(w), int(h))
 
     def sizeHint(self) -> QSize:  # noqa: N802
-        if self._mode_strategy is not None and self._mode_strategy.is_two_field:
+        if self._mode_strategy is not None and self._mode_strategy.is_choice:
+            w, h = self._choice_size()
+        elif self._mode_strategy is not None and self._mode_strategy.is_two_field:
             w = _PAD_X * 2 + self._field_group_width(self._field_1) + _GROUP_GAP + self._field_group_width(self._field_2)
+            h = _PAD_Y * 2 + _FIELD_H
         else:
             w = _PAD_X * 2 + self._field_group_width(self._field_1)
-        h = _PAD_Y * 2 + _FIELD_H
+            h = _PAD_Y * 2 + _FIELD_H
         return QSize(int(w), int(h))
+
+    def _choice_size(self) -> tuple[int, int]:
+        """Return (w, h) for the choice list widget."""
+        n = max(len(self._choice_options), 1)
+        max_w = max(
+            (self._fm.horizontalAdvance(o) for o in self._choice_options),
+            default=60,
+        )
+        w = int(_PAD_X * 2 + max_w + 20)   # 20px for the arrow indicator
+        h = int(_PAD_Y * 2 + n * (_FIELD_H + 2))
+        return w, h
 
     # ------------------------------------------------------------------
     # Painting
@@ -468,7 +489,10 @@ class DynamicInputWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
-        # No background — fully transparent, text floats over the canvas.
+        if self._mode_strategy is not None and self._mode_strategy.is_choice:
+            self._paint_choice_list(p)
+            p.end()
+            return
 
         # --- fields ---
         x = _PAD_X
@@ -480,6 +504,30 @@ class DynamicInputWidget(QWidget):
             self._paint_field(p, self._field_2, x, y)
 
         p.end()
+
+    def _paint_choice_list(self, p: QPainter) -> None:
+        """Paint a vertical stack of choice options."""
+        from PySide6.QtGui import QColor
+        row_h = _FIELD_H + 2
+        y = _PAD_Y
+        p.setFont(self._font)
+        for i, opt in enumerate(self._choice_options):
+            row_rect = QRectF(_PAD_X, y, self.width() - _PAD_X * 2, _FIELD_H)
+            if i == self._choice_index:
+                # Highlight selected row
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor("#1e3a5f"))
+                p.drawRoundedRect(row_rect, 2, 2)
+                # Arrow indicator
+                p.setPen(QPen(_UNDERLINE_ACTIVE_COLOR))
+                p.drawText(QRectF(_PAD_X, y, 14, _FIELD_H),
+                           Qt.AlignVCenter | Qt.AlignLeft, "\u25b6")
+                p.setPen(QPen(_TEXT_COLOR))
+            else:
+                p.setPen(QPen(_PLACEHOLDER_COLOR))
+            text_rect = QRectF(_PAD_X + 16, y, self.width() - _PAD_X * 2 - 16, _FIELD_H)
+            p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, opt)
+            y += row_h
 
     def _paint_field(self, p: QPainter, field: _Field, x: float, y: float) -> None:
         """Draw one label + underlined value at (x, y)."""
@@ -536,14 +584,21 @@ class DynamicInputWidget(QWidget):
             self.clear()
             return
 
-        # --- Choice mode: single keypress immediately submits ----------------
+        # --- Choice mode: Up/Down navigate, Enter confirms -------------------
         if self._mode_strategy is not None and self._mode_strategy.is_choice:
-            ch = event.text().upper()
-            if ch and ch in self._choice_options:
-                self._field_1.text = ch
-                self.update()
-                self.input_submitted.emit(ch)
-                self.clear()
+            if key == Qt.Key_Up:
+                if self._choice_options:
+                    self._choice_index = (self._choice_index - 1) % len(self._choice_options)
+                    self.update()
+                return
+            if key == Qt.Key_Down:
+                if self._choice_options:
+                    self._choice_index = (self._choice_index + 1) % len(self._choice_options)
+                    self.update()
+                return
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                self._on_submit()
+                return
             return
 
         # --- 'd' resets to relative (dX/dY) when in point mode ---------------

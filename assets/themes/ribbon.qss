@@ -1,86 +1,31 @@
-# RibbonPanel Modern Styles (Web App Parity)
+/*
+ * OpenDraft Global Theme Stylesheet
+ *
+ * RIBBON NOTE: The ribbon tab bar and buttons are styled via QPainter
+ * overrides and inline setStyleSheet() in ribbon_constants.py / ribbon_factory.py.
+ * Do NOT add QTabBar#RibbonTabBar or QFrame#RibbonPanel button rules here —
+ * they will be silently overridden by inline styles (Qt specificity model).
+ *
+ * Only structural rules (backgrounds, content area) are defined below.
+ */
+
+/* Remove the default separator line Qt draws below toolbars */
+QToolBar#RibbonToolBar {
+    border: none;
+    margin: 0;
+    padding: 0;
+    spacing: 0;
+}
 
 /* RibbonPanel header background (transparent, only border) */
 QWidget#RibbonPanel {
     background: transparent;
     border: none;
 }
-QWidget#RibbonPanel[dark="true"] {
-    background: transparent;
-    border: none;
-}
-
-/* Updated Tab bar background to ensure consistent color */
-QTabBar#RibbonTabBar {
-    background: #2D2D2D;
-    border: none;
-    outline: none;
-}
-QTabBar#RibbonTabBar[dark="true"] {
-    background: #2D2D2D;
-    border: none;
-    outline: none;
-}
 
 /* Content area background */
-QStackedWidget, QWidget[ribbonContent="true"], QStackedWidget[dark="true"], QWidget[ribbonContent="true"][dark="true"] {
+QStackedWidget {
     background: #2D2D2D;
-}
-
-/* Tabs (Ribbon QTabBar) */
-QTabBar#RibbonTabBar {
-    font-size: 9pt;
-    font-weight: 500;
-    color: #6b7280;
-    background: transparent;
-    border: none;
-    outline: none;
-    padding: 0 8px;
-}
-QTabBar#RibbonTabBar[dark="true"] {
-    color: #9ca3af;
-}
-QTabBar#RibbonTabBar::tab {
-    background: transparent;
-    color: #6b7280;
-    border: none;
-    border-radius: 0;
-    outline: none;
-    padding: 6px 18px 8px 18px;
-    margin-right: 2px;
-}
-QTabBar#RibbonTabBar::tab:selected {
-    color: #111827;
-    background: rgba(255, 255, 255, 0.12);
-    border: none;
-}
-QTabBar#RibbonTabBar::tab:hover {
-    color: #111827;
-    background: rgba(255, 255, 255, 0.08);
-}
-QTabBar#RibbonTabBar[dark="true"]::tab {
-    background: transparent;
-    color: #9ca3af;
-    border: none;
-    outline: none;
-}
-QTabBar#RibbonTabBar[dark="true"]::tab:selected {
-    color: #f3f4f6;
-    background: rgba(255, 255, 255, 0.12);
-    border: none;
-}
-QTabBar#RibbonTabBar[dark="true"]::tab:hover {
-    color: #f3f4f6;
-    background: rgba(255, 255, 255, 0.08);
-}
-
-/* Content Area */
-QStackedWidget, QWidget[ribbonContent="true"] {
-    min-height: 95px;
-    background: #fff;
-}
-QStackedWidget[dark="true"], QWidget[ribbonContent="true"][dark="true"] {
-    background: #2d2d2d;
 }
 
 /* Panels */
@@ -89,114 +34,30 @@ QFrame#RibbonPanel {
     border-radius: 6px;
     background: transparent;
 }
-QFrame#RibbonPanel[dark="true"] {
-    border: none;
-    background: transparent;
-}
-QLabel[ribbonPanelTitle="true"] {
-    font-size: 8pt;
-    font-weight: 600;
-    color: #6b7280;
-}
-QLabel[ribbonPanelTitle="true"][dark="true"] {
-    color: #9ca3af;
-}
 
-/* Buttons inside ribbon panels: remove borders and use hover/pressed backgrounds only */
-QFrame#RibbonPanel QPushButton,
-QFrame#RibbonPanel QToolButton {
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    padding: 6px 12px;
-    font-size: 8pt;
-    font-weight: 500;
-    color: #111827;
-}
-QFrame#RibbonPanel[dark="true"] QPushButton,
-QFrame#RibbonPanel[dark="true"] QToolButton {
-    background: transparent;
-    border: none;
-    color: #d1d5db;
-}
-QFrame#RibbonPanel QPushButton:hover,
-QFrame#RibbonPanel QToolButton:hover {
-    background: #E5E7EB;
-}
-QFrame#RibbonPanel[dark="true"] QPushButton:hover,
-QFrame#RibbonPanel[dark="true"] QToolButton:hover {
-    background: #4A4A4A;
-}
-QFrame#RibbonPanel QPushButton:pressed,
-QFrame#RibbonPanel QToolButton:pressed {
-    background: #dbeafe;
-    color: #0FB881;
-}
-QFrame#RibbonPanel[dark="true"] QPushButton:pressed,
-QFrame#RibbonPanel[dark="true"] QToolButton:pressed {
-    background: rgba(21,21,21,0.15);
-    color: #0FB881;
-}
-QFrame#RibbonPanel QPushButton[cancel="true"],
-QFrame#RibbonPanel QToolButton[cancel="true"] {
-    color: #ef4444;
-}
-QFrame#RibbonPanel[dark="true"] QPushButton[cancel="true"],
-QFrame#RibbonPanel[dark="true"] QToolButton[cancel="true"] {
-    color: #f87171;
-}
-
-/* Status bar: subtle top border to separate from canvas/content */
+/* ── Status bar ─────────────────────────────────────────── */
 QStatusBar {
-    background: #ffffff;
-    border-top: 1px solid #e5e7eb;
-    padding: 4px 8px;
-    color: #4b5563;
-}
-QStatusBar[dark="true"] {
-    background: #1f2937;
+    background: #1e1e1e;
     border-top: 1px solid rgba(255,255,255,0.06);
     padding: 4px 8px;
     color: #cbd5e1;
 }
 
-/* More specific selectors to ensure the rule matches when nested inside QMainWindow
-   and to increase border contrast for visibility. */
 QMainWindow QStatusBar {
-    background: #ffffff;
-    border-top: 1px solid #d1d5db;
-    padding: 4px 8px;
-    min-height: 22px;
-    color: #4b5563;
-}
-QMainWindow QStatusBar[dark="true"] {
-    background: #111827;
+    background: #1e1e1e;
     border-top: 1px solid rgba(255,255,255,0.08);
     padding: 4px 8px;
     min-height: 22px;
     color: #cbd5e1;
 }
 
-/* Inner status bar widget — border-top here is reliable since it fills the bar */
 #StatusBarWidget {
-    border-top: 1px solid #cbd5e1;
-    background: #ffffff;
-}
-#StatusBarWidget[dark="true"] {
     border-top: 1px solid rgba(255,255,255,0.10);
-    background: #0f1724;
+    background: #1e1e1e;
 }
 
-/* Target the status bar by objectName for highest specificity */
 #MainStatusBar {
-    background: #ffffff;
-    border-top: 1px solid #cbd5e1;
-    padding: 4px 8px;
-    min-height: 22px;
-    color: #4b5563;
-}
-#MainStatusBar[dark="true"] {
-    background: #0f1724;
+    background: #1e1e1e;
     border-top: 1px solid rgba(255,255,255,0.08);
     padding: 4px 8px;
     min-height: 22px;
@@ -205,10 +66,6 @@ QMainWindow QStatusBar[dark="true"] {
 
 /* Guaranteed visible separator above the status bar (used as fallback) */
 #StatusSeparator {
-    background: #e5e7eb;
-    min-height: 1px;
-}
-#StatusSeparator[dark="true"] {
     background: rgba(255,255,255,0.06);
     min-height: 1px;
 }

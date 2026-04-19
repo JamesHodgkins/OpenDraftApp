@@ -53,7 +53,7 @@ def _transform_entity(ent: BaseEntity, fn, post_fn=None) -> BaseEntity:
     elif isinstance(e, PolylineEntity):
         e.points = [fn(p) for p in e.points]
     else:
-        for attr in ("p1", "p2", "center", "start", "end"):
+        for attr in ("p1", "p2", "p3", "center", "start", "end"):
             v = getattr(e, attr, None)
             if isinstance(v, Vec2):
                 setattr(e, attr, fn(v))
@@ -163,10 +163,14 @@ class _ReplaceEntitiesUndoCommand(UndoCommand):
 # ---------------------------------------------------------------------------
 
 def _post_rotate_arc(e: BaseEntity, orig: BaseEntity, angle: float) -> None:
-    """Post-transform hook: rotate ``start_angle``/``end_angle`` on arcs."""
+    """Post-transform hook: rotate arc angles and convert linear→aligned on rotate."""
     if isinstance(e, ArcEntity):
         e.start_angle = _rotate_angle(orig.start_angle, angle)
         e.end_angle = _rotate_angle(orig.end_angle, angle)
+    # A rotated linear dimension is no longer axis-aligned — promote to aligned.
+    from app.entities.dimension import DimensionEntity
+    if isinstance(e, DimensionEntity) and e.dim_type == "linear":
+        e.dim_type = "aligned"
 
 
 def _post_scale_radius(e: BaseEntity, orig: BaseEntity, factor: float) -> None:

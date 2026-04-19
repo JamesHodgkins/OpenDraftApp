@@ -18,6 +18,7 @@ from app.editor.base_command import CommandBase
 from app.editor.undo import UndoCommand
 from app.entities import BaseEntity, Vec2, LineEntity, ArcEntity, CircleEntity
 from app.entities.rectangle import RectangleEntity
+from app.entities.ellipse import EllipseEntity
 from app.commands.modify_helpers import _copy_style
 from app.geometry import (
     _geo_angle_on_arc,
@@ -173,9 +174,12 @@ def _trim_line(
     boundaries = [0.0] + params + [1.0]
     pick_t = _line_param_of_point(line, pick_pt)
 
-    # Identify the picked segment
+    # Identify the picked segment, skipping degenerate zero-length intervals
+    # (which arise when an intersection lands exactly on an endpoint).
     pick_seg = -1
     for i in range(len(boundaries) - 1):
+        if boundaries[i + 1] - boundaries[i] < 1e-9:
+            continue
         if boundaries[i] - 1e-9 <= pick_t <= boundaries[i + 1] + 1e-9:
             pick_seg = i
             break
@@ -208,6 +212,8 @@ def _trim_arc(
 
     pick_seg = -1
     for i in range(len(boundaries) - 1):
+        if boundaries[i + 1] - boundaries[i] < 1e-9:
+            continue
         if boundaries[i] - 1e-9 <= pick_t <= boundaries[i + 1] + 1e-9:
             pick_seg = i
             break
@@ -304,6 +310,119 @@ def _trim_rect(
 
 
 # ---------------------------------------------------------------------------
+# Ellipse trim helpers
+# ---------------------------------------------------------------------------
+
+_ELLIPSE_TESS_STEPS = 128  # tessellation resolution for intersection finding
+
+
+def _ellipse_line_params(ell: "EllipseEntity", p1: Vec2, p2: Vec2) -> List[float]:
+    """Return parametric angles on *ell* where segment p1→p2 crosses it."""
+    params: List[float] = []
+    tess = ell._tessellated(steps=_ELLIPSE_TESS_STEPS)
+    span = ell._param_span()
+    n = len(tess) - 1
+    for i in range(n):
+        t = _seg_seg_param(tess[i], tess[i + 1], p1, p2)
+        if t is not None:
+            # Approximate parametric angle proportionally within the arc span
+            param = (ell.start_param + span * (i + t) / n) % (2 * math.pi)
+            params.append(param)
+    return params
+
+
+def _intersections_on_ellipse(ell: "EllipseEntity", others: List[BaseEntity]) -> List[float]:
+    """Sorted parametric angles on *ell* where it intersects entities in *others*."""
+    params: List[float] = []
+    for other in others:
+        if other.id == ell.id:
+            continue
+        if isinstance(other, LineEntity):
+            params.extend(_ellipse_line_params(ell, other.p1, other.p2))
+        elif isinstance(other, (ArcEntity, CircleEntity, EllipseEntity)):
+            # Tessellate the other entity and intersect segment by segment
+            if isinstance(other, EllipseEntity):
+                other_pts = other._tessellated(steps=_ELLIPSE_TESS_STEPS)
+            else:
+                # Arc or Circle — sample perimeter
+                steps = 64
+                if isinstance(other, ArcEntity):
+                    a_span = _arc_span(other.start_angle, other.end_angle, other.ccw)
+                    other_pts = [
+                        Vec2(other.center.x + other.radius * math.cos(other.start_angle + a_span * i / steps),
+                             other.center.y + other.radius * math.sin(other.start_angle + a_span * i / steps))
+                        for i in range(steps + 1)
+                    ]
+                else:
+                    other_pts = [
+                        Vec2(other.center.x + other.radius * math.cos(2 * math.pi * i / steps),
+                             other.center.y + other.radius * math.sin(2 * math.pi * i / steps))
+                        for i in range(steps + 1)
+                    ]
+            for j in range(len(other_pts) - 1):
+                params.extend(_ellipse_line_params(ell, other_pts[j], other_pts[j + 1]))
+    return sorted(set(params))
+
+
+def _ellipse_param_of_point(ell: "EllipseEntity", pt: Vec2) -> float:
+    """Return parametric angle on *ell* closest to *pt* (within arc span)."""
+    loc = ell._world_to_local(pt)
+    param = ell._nearest_param(loc)
+    if not ell._param_on_arc(param):
+        return ell.start_param
+    return param
+
+
+def _trim_ellipse(ell: "EllipseEntity", pick_pt: Vec2, others: List[BaseEntity]) -> Optional[List[BaseEntity]]:
+    """Return replacement entities for trimming *ell* at *pick_pt*."""
+    params = _intersections_on_ellipse(ell, others)
+    if not params:
+        return None
+
+    span = ell._param_span()
+    # Normalise all params into [start, start+span]
+    start = ell.start_param
+    boundaries = [0.0] + sorted(
+        ((p - start) % (2 * math.pi)) / span for p in params
+        if ell._param_on_arc(p)
+    ) + [1.0]
+    # Deduplicate
+    boundaries = [boundaries[0]] + [
+        b for i, b in enumerate(boundaries[1:]) if b - boundaries[i] > 1e-9
+    ]
+
+    pick_param = _ellipse_param_of_point(ell, pick_pt)
+    pick_t = ((pick_param - start) % (2 * math.pi)) / span
+
+    pick_seg = -1
+    for i in range(len(boundaries) - 1):
+        if boundaries[i + 1] - boundaries[i] < 1e-9:
+            continue
+        if boundaries[i] - 1e-9 <= pick_t <= boundaries[i + 1] + 1e-9:
+            pick_seg = i
+            break
+    if pick_seg == -1:
+        return None
+
+    style = _copy_style(ell)
+    result: List[BaseEntity] = []
+    for i in range(len(boundaries) - 1):
+        if i == pick_seg:
+            continue
+        t0, t1 = boundaries[i], boundaries[i + 1]
+        if t1 - t0 < 1e-10:
+            continue
+        new_start = (start + t0 * span) % (2 * math.pi)
+        new_end = (start + t1 * span) % (2 * math.pi)
+        result.append(EllipseEntity(
+            center=ell.center, radius_x=ell.radius_x, radius_y=ell.radius_y,
+            rotation=ell.rotation, start_param=new_start, end_param=new_end,
+            **style,
+        ))
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Pick-nearest-entity helper
 # ---------------------------------------------------------------------------
 
@@ -334,6 +453,8 @@ def _entity_dist(ent: BaseEntity, pt: Vec2) -> float:
         return abs(math.hypot(pt.x - ent.center.x, pt.y - ent.center.y) - ent.radius)
     if isinstance(ent, ArcEntity):
         return abs(math.hypot(pt.x - ent.center.x, pt.y - ent.center.y) - ent.radius)
+    if isinstance(ent, EllipseEntity):
+        return ent._distance_to_perimeter(pt)
     # Fallback: distance to bounding-box centre
     bb = ent.bounding_box()
     if bb:
@@ -348,23 +469,29 @@ def _entity_dist(ent: BaseEntity, pt: Vec2) -> float:
 
 def _trim_preview_segment(
     pt: Vec2, entities: List[BaseEntity], tolerance: float,
+    cutting_edges: Optional[List[BaseEntity]] = None,
 ) -> List[BaseEntity]:
     """Return the segment that *would* be removed if the user clicked at *pt*.
 
-    Used by the dynamic-preview callback to give hover feedback.
+    *entities* is the full entity list used for target picking.
+    *cutting_edges* restricts which entities act as cutting boundaries;
+    defaults to *entities* when None.
     """
     target = _nearest_entity(pt, entities, tolerance)
     if target is None:
         return []
 
-    # Compute the segment to be removed (the "picked" segment).
+    edges = cutting_edges if cutting_edges is not None else entities
+
     if isinstance(target, LineEntity):
-        params = _intersections_on_line(target, entities)
+        params = _intersections_on_line(target, edges)
         if not params:
             return []
         boundaries = [0.0] + params + [1.0]
         pick_t = _line_param_of_point(target, pt)
         for i in range(len(boundaries) - 1):
+            if boundaries[i + 1] - boundaries[i] < 1e-9:
+                continue
             if boundaries[i] - 1e-9 <= pick_t <= boundaries[i + 1] + 1e-9:
                 t0, t1 = boundaries[i], boundaries[i + 1]
                 if t1 - t0 < 1e-10:
@@ -375,13 +502,15 @@ def _trim_preview_segment(
                     **_copy_style(target),
                 )]
     elif isinstance(target, ArcEntity):
-        params = _intersections_on_arc(target, entities)
+        params = _intersections_on_arc(target, edges)
         if not params:
             return []
         boundaries = [0.0] + params + [1.0]
         pick_angle = math.atan2(pt.y - target.center.y, pt.x - target.center.x)
         pick_t = _arc_parameter(pick_angle, target.start_angle, target.end_angle, target.ccw)
         for i in range(len(boundaries) - 1):
+            if boundaries[i + 1] - boundaries[i] < 1e-9:
+                continue
             if boundaries[i] - 1e-9 <= pick_t <= boundaries[i + 1] + 1e-9:
                 t0, t1 = boundaries[i], boundaries[i + 1]
                 if t1 - t0 < 1e-10:
@@ -396,7 +525,7 @@ def _trim_preview_segment(
                     **_copy_style(target),
                 )]
     elif isinstance(target, CircleEntity):
-        angles = _intersections_on_circle(target, entities)
+        angles = _intersections_on_circle(target, edges)
         if len(angles) < 2:
             return []
         TWO_PI = 2.0 * math.pi
@@ -420,16 +549,18 @@ def _trim_preview_segment(
                     **_copy_style(target),
                 )]
     elif isinstance(target, RectangleEntity):
-        edges = target._edges()
-        clicked_edge = min(range(4), key=lambda i: _geo_pt_seg_dist(pt, edges[i][0], edges[i][1]))
-        p1, p2 = edges[clicked_edge]
+        rect_edges = target._edges()
+        clicked_edge = min(range(4), key=lambda i: _geo_pt_seg_dist(pt, rect_edges[i][0], rect_edges[i][1]))
+        p1, p2 = rect_edges[clicked_edge]
         temp_line = LineEntity(p1=p1, p2=p2, **_copy_style(target))
-        params = _intersections_on_line(temp_line, entities)
+        params = _intersections_on_line(temp_line, edges)
         if not params:
             return []
         boundaries = [0.0] + params + [1.0]
         pick_t = _line_param_of_point(temp_line, pt)
         for i in range(len(boundaries) - 1):
+            if boundaries[i + 1] - boundaries[i] < 1e-9:
+                continue
             if boundaries[i] - 1e-9 <= pick_t <= boundaries[i + 1] + 1e-9:
                 t0, t1 = boundaries[i], boundaries[i + 1]
                 if t1 - t0 < 1e-10:
@@ -451,8 +582,6 @@ class TrimCommand(CommandBase):
     """
 
     def execute(self) -> None:
-        # Suppress OSNAP and dynamic input — snapping to endpoints/midpoints
-        # and coordinate entry don't help when picking the segment to remove.
         self.editor.suppress_osnap = True
         self.editor.suppress_dynamic_input = True
         try:
@@ -461,50 +590,62 @@ class TrimCommand(CommandBase):
             self.editor.suppress_osnap = False
             self.editor.suppress_dynamic_input = False
             self.editor.clear_dynamic()
+            self.editor.clear_highlight()
 
     def _run_trim_loop(self) -> None:
         tol = self.editor.settings.trim_pick_tolerance
+        doc = self.editor.document
+
+        # If entities are preselected, use only those as cutting edges.
+        sel_ids = self.editor.selection.ids
+        if sel_ids:
+            cutting_edges = [e for e in doc.entities if e.id in sel_ids]
+            self.editor.set_highlight(cutting_edges)
+            prompt = "Trim (cutting edges highlighted): click segment to remove (Escape to exit)"
+        else:
+            cutting_edges = None  # resolved fresh each iteration from all entities
+            prompt = "Trim: click the segment to remove (Escape to exit)"
 
         def _preview(mouse: Vec2) -> List[BaseEntity]:
-            doc = self.editor.document
-            return _trim_preview_segment(mouse, list(doc.entities), tolerance=tol)
+            all_ents = list(self.editor.document.entities)
+            edges = cutting_edges if cutting_edges is not None else all_ents
+            return _trim_preview_segment(mouse, all_ents, tolerance=tol, cutting_edges=edges)
 
         self.editor.set_dynamic(_preview)
 
         while True:
-            pt = self.editor.get_point("Trim: click the segment to remove (Escape to exit)")
+            pt = self.editor.get_point(prompt)
 
             doc = self.editor.document
-            all_entities = list(doc.entities)
 
-            target = _nearest_entity(pt, all_entities, tolerance=tol)
+            target = _nearest_entity(pt, list(doc.entities), tolerance=tol)
             if target is None:
                 self.editor.status_message.emit("Trim: no entity at pick point")
                 continue
 
-            # Dispatch to the appropriate trim function.
             replacements: Optional[List[BaseEntity]] = None
+            trim_edges = cutting_edges if cutting_edges is not None else list(doc.entities)
             if isinstance(target, LineEntity):
-                replacements = _trim_line(target, pt, all_entities)
+                replacements = _trim_line(target, pt, trim_edges)
             elif isinstance(target, ArcEntity):
-                replacements = _trim_arc(target, pt, all_entities)
+                replacements = _trim_arc(target, pt, trim_edges)
             elif isinstance(target, CircleEntity):
-                replacements = _trim_circle(target, pt, all_entities)
+                replacements = _trim_circle(target, pt, trim_edges)
             elif isinstance(target, RectangleEntity):
-                replacements = _trim_rect(target, pt, all_entities)
+                replacements = _trim_rect(target, pt, trim_edges)
+            elif isinstance(target, EllipseEntity):
+                replacements = _trim_ellipse(target, pt, trim_edges)
 
             if replacements is None:
                 self.editor.status_message.emit("Trim: no cutting edges intersect that entity")
                 continue
 
-            # Find original index for undo.
             original_index = 0
             for i, ent in enumerate(doc.entities):
                 if ent.id == target.id:
                     original_index = i
                     break
 
-            # Apply the trim: remove original, add replacements.
             doc.remove_entity(target.id)
             self.editor.selection.remove(target.id)
             self.editor.entity_removed.emit(target.id)
@@ -513,6 +654,10 @@ class TrimCommand(CommandBase):
                 self.editor.entity_added.emit(ent)
             self.editor.document_changed.emit()
 
-            # Record a single undo command for the whole operation.
             self.editor._undo_stack.push(
                 _TrimUndoCommand(doc, target, original_index, replacements))
+
+            # If we trimmed a cutting edge, update the highlight list.
+            if cutting_edges is not None:
+                cutting_edges = [e for e in cutting_edges if e.id != target.id]
+                self.editor.set_highlight(cutting_edges)

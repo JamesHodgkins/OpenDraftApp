@@ -7,3 +7,7 @@ Public API:
 from controls.ribbon.ribbon_panel import RibbonPanel
 
 __all__ = ["RibbonPanel"]
+
+__all__ = ["RibbonPanel"]
+
+__all__ = ["RibbonPanel"]

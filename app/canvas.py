@@ -171,6 +171,8 @@ class CADCanvas(QWidget):
         # The entity being grip-edited (a shallow copy so we can mutate it
         # live during the drag without corrupting the document until commit).
         self._grip_entity_snapshot = None
+        # Deep copy of the entity's state before the grip drag started (for undo).
+        self._grip_before_snapshot = None
         # Mouse position in world coordinates during a grip drag.
         self._grip_drag_world: Optional[Vec2] = None
 
@@ -279,13 +281,25 @@ class CADCanvas(QWidget):
                 else:
                     final_pos = Vec2(world_pt.x(), world_pt.y())
                 if self._document is not None:
+                    import copy
+                    from app.commands.modify_helpers import _TransformUndoCommand
                     for e in self._document:
                         if e.id == self._active_grip.entity_id:
+                            before = self._grip_before_snapshot
                             e.move_grip(self._active_grip.index, final_pos)
+                            after = copy.deepcopy(e)
+                            if before is not None and self._editor is not None:
+                                self._editor._undo_stack.push(
+                                    _TransformUndoCommand(
+                                        self._document, [before], [after], "Grip Edit"
+                                    )
+                                )
+                                self._editor.document_changed.emit()
                             break
                 # Reset grip state.
                 self._active_grip = None
                 self._grip_entity_snapshot = None
+                self._grip_before_snapshot = None
                 self._grip_drag_world = None
                 self._snap_result = None
                 self.setCursor(Qt.CrossCursor)
@@ -303,6 +317,7 @@ class CADCanvas(QWidget):
                     for e in self._document:
                         if e.id == grip.entity_id:
                             self._grip_entity_snapshot = copy.deepcopy(e)
+                            self._grip_before_snapshot = copy.deepcopy(e)
                             break
                 self._grip_drag_world = Vec2(world_pt.x(), world_pt.y())
                 self.setFocus()
@@ -341,6 +356,9 @@ class CADCanvas(QWidget):
                         pt = Vec2(from_point.x, pt.y)
 
                 self.pointSelected.emit(pt.x, pt.y)
+                # Clear preview immediately so the stale rubberband highlight
+                # doesn't persist while the command processes the click.
+                self._preview_entities = []
                 # Clear tracked points after each click so the workspace
                 # stays clean between drawing steps.
                 self._draftmate.clear()
@@ -423,7 +441,7 @@ class CADCanvas(QWidget):
         snap_active = (
             self._active_grip is None
             and self._editor is not None
-            and getattr(self._editor, "_input_mode", "none") == "point"
+            and getattr(self._editor, "_input_mode", "none") in ("point", "angle", "length")
             and self._document is not None
             and self._osnap_master
             and not getattr(self._editor, "suppress_osnap", False)
@@ -806,6 +824,15 @@ class CADCanvas(QWidget):
         # ---- Draw grip squares for selected entities ----------------------
         if sel_ids and self._document is not None and (self._idle or self._active_grip is not None):
             self._draw_grips(painter, sel_ids)
+
+        # Draw highlighted cutting-edge / boundary entities (red)
+        if self._editor is not None:
+            highlight = self._editor.get_highlight()
+            if highlight:
+                hl_pen = QPen(QColor(220, 50, 50), 2)
+                painter.setPen(hl_pen)
+                for e in highlight:
+                    self._draw_entity(painter, e)
 
         # Draw dynamic / rubberband preview entities
         if self._preview_entities:

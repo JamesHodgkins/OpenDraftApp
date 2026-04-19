@@ -12,6 +12,7 @@ from app.commands import (  # noqa: F401
     draw_line,
     draw_circle,
     draw_arc,
+    draw_arc_3p,
     draw_rect,
     draw_polyline,
     draw_text,
@@ -24,4 +25,10 @@ from app.commands import (  # noqa: F401
     modify_scale,
     modify_mirror,
     modify_extend,
+    modify_offset,
+    draw_spline,
+    draw_ellipse,
+    draw_point,
+    modify_fillet,
+    modify_chamfer,
 )

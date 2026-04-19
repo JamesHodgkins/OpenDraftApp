@@ -186,7 +186,7 @@ class ArcEntity(BaseEntity):
 
     def move_grip(self, index: int, new_pos: Vec2) -> None:
         if index == 0:
-            # Move entire arc
+            # Centre grip — translate entire arc
             self.center = new_pos
         elif index == 1:
             # Move start endpoint — adjust start angle and radius
@@ -201,16 +201,9 @@ class ArcEntity(BaseEntity):
             self.radius = max(1e-6, math.hypot(
                 new_pos.x - self.center.x, new_pos.y - self.center.y))
         elif index == 3:
-            # Midpoint grip — move entire arc
-            span = _arc_span(self.start_angle, self.end_angle, self.ccw)
-            mid_angle = self.start_angle + span / 2
-            old_mid = Vec2(
-                self.center.x + self.radius * math.cos(mid_angle),
-                self.center.y + self.radius * math.sin(mid_angle),
-            )
-            dx = new_pos.x - old_mid.x
-            dy = new_pos.y - old_mid.y
-            self.center = Vec2(self.center.x + dx, self.center.y + dy)
+            # Midpoint grip — adjust radius, keep centre and angles fixed
+            self.radius = max(1e-6, math.hypot(
+                new_pos.x - self.center.x, new_pos.y - self.center.y))
 
     # ------------------------------------------------------------------
     # Serialisation

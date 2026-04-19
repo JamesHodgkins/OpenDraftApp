@@ -84,7 +84,7 @@ class _ToggleLabel(QLabel):
         " font-size: 11px; font-family: 'Segoe UI', sans-serif; }"
     )
     _OFF_SS = (
-        "QLabel { padding: 1px 5px; color: #9ca3af; font-size: 11px;"
+        "QLabel { padding: 1px 5px; color: #6b7280; font-size: 11px;"
         " font-family: 'Segoe UI', sans-serif; }"
     )
 
@@ -111,7 +111,7 @@ def _vsep(parent: Optional[QWidget] = None) -> QFrame:
     f.setFrameShape(QFrame.VLine)
     f.setFrameShadow(QFrame.Plain)
     f.setFixedWidth(1)
-    f.setStyleSheet("QFrame { color: #d1d5db; }")
+    f.setStyleSheet("QFrame { color: #6b7280; }")
     return f
 
 
@@ -143,7 +143,7 @@ class StatusBarWidget(QWidget):
         self.cmd_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.cmd_label.setStyleSheet(
             "QLabel { padding: 0 4px; font-size: 11px;"
-            " font-family: 'Segoe UI', sans-serif; color: #4b5563; }"
+            " font-family: 'Segoe UI', sans-serif; color: #d1d5db; }"
         )
         root.addWidget(self.cmd_label)
 
@@ -151,7 +151,7 @@ class StatusBarWidget(QWidget):
         root.addWidget(_vsep())
         self._snap_section_label = QLabel("SNAP")
         self._snap_section_label.setStyleSheet(
-            "QLabel { padding: 0 4px; font-size: 10px; color: #6b7280;"
+            "QLabel { padding: 0 4px; font-size: 10px; color: #9ca3af;"
             " font-family: 'Segoe UI', sans-serif; }"
         )
         root.addWidget(self._snap_section_label)
@@ -178,7 +178,7 @@ class StatusBarWidget(QWidget):
         root.addWidget(_vsep())
         self._tools_label = QLabel("TOOLS")
         self._tools_label.setStyleSheet(
-            "QLabel { padding: 0 4px; font-size: 10px; color: #6b7280;"
+            "QLabel { padding: 0 4px; font-size: 10px; color: #9ca3af;"
             " font-family: 'Segoe UI', sans-serif; }"
         )
         root.addWidget(self._tools_label)
@@ -196,7 +196,7 @@ class StatusBarWidget(QWidget):
         self.coord_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.coord_label.setStyleSheet(
             "QLabel { padding: 0 4px; font-size: 11px;"
-            " font-family: 'Consolas', monospace; color: #4b5563; }"
+            " font-family: 'Consolas', monospace; color: #d1d5db; }"
         )
         self.coord_label.setMinimumWidth(160)
         root.addWidget(self.coord_label)

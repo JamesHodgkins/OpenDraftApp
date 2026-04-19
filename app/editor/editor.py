@@ -101,6 +101,7 @@ class Editor(QObject):
         self._active_command: Optional[CommandBase] = None
         self._input_mode: str = "none"
         self._dynamic_callback: Optional[Callable[[Vec2], List[BaseEntity]]] = None
+        self._highlight_entities: List[BaseEntity] = []
         self._choice_options: list[str] = []   # keys active during "choice" mode
         # Set by commands before calling get_point() so the OSNAP engine can
         # compute perpendicular snaps relative to the previously selected point.
@@ -268,13 +269,15 @@ class Editor(QObject):
             return
         self._put_input(value)
 
-    def provide_choice(self, key: str) -> None:
-        """Deliver a choice key to the currently waiting command."""
+    def provide_choice(self, value: str) -> None:
+        """Deliver a choice value to the currently waiting command."""
         if self._input_mode != "choice":
             return
-        if key.upper() not in [o.upper() for o in self._choice_options]:
-            return
-        self._put_input(key.upper())
+        # Match case-insensitively, return the original option string
+        for opt in self._choice_options:
+            if opt.lower() == value.lower():
+                self._put_input(opt)
+                return
 
     # ------------------------------------------------------- blocking input API
     # Called *from the command thread only*.
@@ -327,6 +330,8 @@ class Editor(QObject):
         Raises :class:`~app.editor.base_command.CommandCancelled` if cancelled.
         """
         self._length_base = base
+        if base is not None:
+            self.snap_from_point = base
         self.status_message.emit(prompt)
         self._set_input_mode("length")
         return self._wait_for_input()
@@ -341,6 +346,8 @@ class Editor(QObject):
         Raises :class:`~app.editor.base_command.CommandCancelled` if cancelled.
         """
         self._angle_center = center
+        if center is not None:
+            self.snap_from_point = center
         self.status_message.emit(prompt)
         self._set_input_mode("angle")
         return self._wait_for_input()
@@ -365,9 +372,8 @@ class Editor(QObject):
         options:
             Single-character keys, e.g. ``["Y", "N"]``.  Case-insensitive.
         """
-        self._choice_options = [o.upper() for o in options]
-        option_hint = "/".join(self._choice_options)
-        self.status_message.emit(f"{prompt} [{option_hint}]")
+        self._choice_options = list(options)
+        self.status_message.emit(prompt)
         self._set_input_mode("choice")
         return self._wait_for_input()
 
@@ -390,6 +396,19 @@ class Editor(QObject):
     def clear_dynamic(self) -> None:
         """Remove the active preview callback and refresh the canvas."""
         self._dynamic_callback = None
+        self.document_changed.emit()
+
+    def set_highlight(self, entities: List[BaseEntity]) -> None:
+        """Set entities to render with a highlight colour (e.g. cutting edges)."""
+        self._highlight_entities = list(entities)
+
+    def get_highlight(self) -> List[BaseEntity]:
+        """Return the current highlight entity list (called from GUI thread)."""
+        return self._highlight_entities
+
+    def clear_highlight(self) -> None:
+        """Remove highlight entities and refresh the canvas."""
+        self._highlight_entities = []
         self.document_changed.emit()
 
     def get_dynamic(self, mouse: Vec2) -> List[BaseEntity]:

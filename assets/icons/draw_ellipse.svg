@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="100%" height="100%" viewBox="0 0 32 32" version="1.1" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+  <!-- Ellipse with center and axis endpoints -->
+  <ellipse cx="16" cy="16" rx="12" ry="7" style="fill:none;stroke:#e4e6ea;stroke-width:2;"/>
+  <circle cx="16" cy="16" r="2.5" style="fill:#0fb881;"/>
+  <circle cx="28" cy="16" r="2.5" style="fill:#6366f1;"/>
+  <circle cx="16" cy="9" r="2.5" style="fill:#6366f1;"/>
+</svg>

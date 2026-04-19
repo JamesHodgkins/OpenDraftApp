@@ -25,6 +25,7 @@ class RotateCommand(CommandBase):
             return
 
         center = self.editor.get_point("Rotate: pick rotation center")
+        self.editor.snap_from_point = center
         cx, cy = center.x, center.y
 
         def _preview(mouse: Vec2) -> List[BaseEntity]:

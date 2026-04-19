@@ -1,101 +1,115 @@
-# OpenDraft PySide6 CAD Application
+# OpenDraft
 
-A 2D CAD application built with PySide6 featuring dynamic input, object snapping, and precision drawing tools.
+![ODLogo](./Docs/Branding/od_logo.png#gh-light-mode-only)  
+![ODLogo](./Docs/Branding/od_logo_reverse.png#gh-dark-mode-only)
+
+OpenDraft is an open-source 2D CAD application built with Python and PySide6. It aims to provide a lightweight, user-friendly, and extendable CAD solution for 2D drafting. The project is currently in active early development.
+
+> **Note:** This project is in early development. Breaking changes may occur without notice.
 
 ## Features
 
-- **Dynamic Input System:** Input boxes that follow your cursor during point selection, supporting multiple coordinate formats (relative, absolute, polar)
-- **Object Snapping (OSNAP):** Snap to endpoints, midpoints, centers, and intersections
-- **Pan & Zoom:** Navigate the canvas with middle-mouse button for panning and scroll wheel for zooming
-- **Layer Management:** Create and manage layers, control visibility and properties
-- **Selection Tools:** Single-click and drag-select entities with shift-modifier for toggling
-- **Drawing Commands:** Draw lines, circles, arcs, rectangles, polylines, text, and dimensions
+The following features are currently implemented:
 
-## Setup
+**Drawing Tools**
+- Lines, circles, arcs (3-point and center-radius), rectangles, polylines
+- Ellipses, splines, and point/node entities
+- Text annotation and basic dimensioning
 
-1. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. Run the app:
-   ```bash
-   python main.py
-   ```
+**Modify Tools**
+- Move, Copy, Rotate, Scale, Mirror
+- Offset, Fillet, Chamfer
+- Extend, Trim, Delete
 
-## Dynamic Input Guide
+**Canvas & Interaction**
+- Zoomable, pannable viewport with grid display
+- Object snap engine (endpoint, midpoint, center, nearest, perpendicular)
+- Dynamic input widget for keyboard-driven coordinate entry
+- Undo/redo support
+- Entity selection with grip editing
 
-During point selection in drawing commands:
-- **Move mouse:** Live coordinate updates in dynamic input widget
-- **Type coordinates:** Override with precise values
-  - Relative: `10,20` (offset from previous point)
-  - Absolute: `#100,50` (world coordinates)
-  - Polar: `100<45` (distance and angle)
-- **Press Tab:** Switch between coordinate formats
-- **Press Enter:** Confirm input values
-- **Press Esc:** Cancel and use cursor selection
+**UI**
+- Ribbon-based interface with tab/panel layout and overflow handling
+- Layer manager
+- Status bar and command palette
+- Color picker with AutoCAD Color Index (ACI) support
 
-See [DYNAMIC_INPUT_GUIDE.md](DYNAMIC_INPUT_GUIDE.md) for detailed usage examples and [DYNAMIC_INPUT.md](DYNAMIC_INPUT.md) for technical documentation.
+## Roadmap
 
-## Project Structure
+The following features are planned or in progress — see [TODO.md](./TODO.md) for the full list:
 
+- Hatch fills (solid, ANSI31, crosshatch patterns)
+- Dimension styles (arrowhead types, text height, precision)
+- PDF and SVG export
+- Construction lines (Xline/Ray)
+- Array commands (rectangular and polar)
+- Advanced selection modes (crossing window, Select All, Quick Select)
+- Additional snap modes (intersection, quadrant, tangent, node)
+- Properties palette and Match Properties
+- Layer enhancements (lock, freeze, linetypes)
+
+## Dependencies
+
+OpenDraft depends on:
+
+- [PySide6](https://doc.qt.io/qtforpython/) — Qt6 bindings for Python (UI framework and rendering)
+- [watchfiles](https://watchfiles.helpmanual.io/) — File watching for auto-reload during development
+
+**Development / Testing:**
+- [pytest](https://pytest.org/) — Test runner
+- [pytest-qt](https://pytest-qt.readthedocs.io/) — Qt integration for pytest
+
+## Getting Started
+
+```bash
+# Clone the repository
+git clone https://github.com/JamesHodgkins/OpenDraft.git
+cd OpenDraft
+
+# Create and activate a virtual environment
+python -m venv .venv
+.venv\Scripts\activate  # Windows
+source .venv/bin/activate  # macOS/Linux
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the application
+python main.py
 ```
-main.py                      # Application entry point
-requirements.txt            # Python dependencies
-REFERENCE.md               # Entity and geometry documentation
-DYNAMIC_INPUT.md           # Dynamic input system documentation
-DYNAMIC_INPUT_GUIDE.md     # User guide for dynamic input
-├── app/
-│   ├── __init__.py
-│   ├── main_window.py      # Main application window
-│   ├── canvas.py           # CAD viewport with pan/zoom
-│   ├── document.py         # Document and entity storage
-│   ├── commands/           # Drawing and editing commands
-│   ├── editor/             # Command execution and input handling
-│   │   ├── dynamic_input_parser.py  # Input format parsing
-│   │   ├── osnap_engine.py          # Object snapping
-│   │   └── ...
-│   ├── entities/           # Line, circle, arc, text, etc.
-│   ├── ui/                 # Dialog and widget components
-│   │   └── dynamic_input_widget.py  # Dynamic input UI
-│   ├── controls/           # Ribbon and toolbar widget controls
-│   └── ...
-├── tests/                  # Unit tests
-└── assets/                 # Fonts, icons, images
+
+## Running Tests
+
+```bash
+pytest
 ```
 
-## Keyboard Shortcuts
+## Why Another CAD Package?
 
-| Key | Action |
-|-----|--------|
-| Esc | Cancel command / Clear selection |
-| Tab | Move between X and Y input fields (during point input) |
-| Shift+Tab | Cycle coordinate formats (during point input) |
-| Enter | Confirm dynamic input |
-| Shift+Click | Toggle entity selection |
-| Middle-Drag | Pan canvas |
-| Scroll | Zoom in/out |
+While existing open-source CAD solutions such as LibreCAD and FreeCAD are capable tools, OpenDraft aims to offer a distinct approach:
 
-## Documentation
+- **Lightweight**: Minimal resource usage while maintaining essential functionality.
+- **User-Friendly**: Familiar ribbon-based interface designed for users of all experience levels.
+- **Extendable**: Command-based architecture designed for easy addition of new tools.
+- **Modern Stack**: Pure Python with PySide6 — no compiled extensions required.
+- **Free Forever**: Open-source and community-driven, providing professional-grade CAD functionality at no cost.
 
-- [Dynamic Input Guide](DYNAMIC_INPUT_GUIDE.md) - User guide with examples and keyboard shortcuts
-- [Dynamic Input Technical Docs](DYNAMIC_INPUT.md) - Architecture and implementation details
-- [Entity Reference](REFERENCE.md) - Geometry and entity type documentation
+## License
 
-## Architecture
+OpenDraft is licensed under the GNU General Public License v3.0 (GPL-3.0). Full license text is available in the [LICENSE](./LICENSE) file.
 
-The application uses a **worker thread model** where commands run in a separate thread and block on user input. The dynamic input system seamlessly integrates with this architecture through Qt's signal-slot mechanism, allowing precise coordinate input while maintaining a responsive UI.
+## Contributing
 
-### Key Components
+We welcome contributions! Please review the [contribution guidelines](./CONTRIBUTING.md) for details.
 
-- **Editor:** Central command controller with thread-safe input handling
-- **Canvas:** Viewport with pan/zoom, OSNAP, and dynamic input integration
-- **Document:** Stores entities organized by layer
-- **Commands:** Discrete, reusable drawing operations
+## Feedback, Support and Contact
 
-## Customization
+Please use the [issue tracker](https://github.com/JamesHodgkins/OpenDraft/issues) for bug reports or feature requests.
 
-Edit configuration files and command implementations to customize:
-- Ribbon buttons and panels → `app/config/ribbon_config.py`
-- Drawing commands → `app/commands/`
-- Dynamic input behavior → `app/ui/dynamic_input_widget.py`
-- Styling → `assets/themes/ribbon.qss`
+Email: jhodgkins@proton.me
+
+## Acknowledgments
+
+We extend our gratitude to the creators and contributors of open-source CAD projects, whose work has inspired and supported OpenDraft's development.
+
+Thank you for your interest in OpenDraft!  

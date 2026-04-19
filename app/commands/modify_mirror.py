@@ -66,6 +66,7 @@ class MirrorCommand(CommandBase):
             return
 
         p1 = self.editor.get_point("Mirror: pick first point of mirror axis")
+        self.editor.snap_from_point = p1
 
         def _preview(mouse: Vec2) -> List[BaseEntity]:
             ax, ay = p1.x, p1.y

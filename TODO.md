@@ -20,7 +20,7 @@ These buttons or commands already exist in the UI or codebase but have no implem
 
 ### Dimension Rendering
 
-- [ ] **DimensionEntity.draw()** — render extension lines, dimension line, arrowheads, and the measurement text on the canvas
+- [x] **DimensionEntity.draw()** — render extension lines, dimension line, arrowheads, and the measurement text on the canvas
 - [ ] **Dimension styles** — arrowhead type (filled triangle, tick, dot), text height, offset distances, precision (decimal places), units suffix
 
 ### Measurements
@@ -40,13 +40,13 @@ Standard 2D CAD operations that are entirely absent.
 
 ### Drawing Commands
 
-- [ ] **Spline / Bezier** — pick control points, smooth curve through them; essential for organic geometry
-- [ ] **Ellipse** — center + two axis points; include elliptical arcs
-- [ ] **Point / Node** — place a single point entity (useful as construction geometry and for DIVIDE / MEASURE)
+- [x] **Spline / Bezier** — pick control points, smooth curve through them; essential for organic geometry
+- [x] **Ellipse** — center + two axis points; include elliptical arcs
+- [x] **Point / Node** — place a single point entity (useful as construction geometry and for DIVIDE / MEASURE)
 - [ ] **Construction Line (Xline / Ray)** — infinite or semi-infinite lines used as guides
-- [ ] **Offset** — select entity, input offset distance; create a parallel copy at that distance (works for lines, arcs, polylines, circles)
-- [ ] **Fillet** — round a corner between two edges with a given radius; radius = 0 gives a sharp trim-to-corner
-- [ ] **Chamfer** — bevel a corner between two edges by specified distances or angle
+- [x] **Offset** — select entity, input offset distance; create a parallel copy at that distance (works for lines, arcs, polylines, circles)
+- [x] **Fillet** — round a corner between two edges with a given radius; radius = 0 gives a sharp trim-to-corner
+- [x] **Chamfer** — bevel a corner between two edges by specified distances or angle
 - [ ] **Divide** — place N evenly spaced point entities along an entity
 - [ ] **Measure (along entity)** — place point entities at specified interval along an entity
 
@@ -248,7 +248,7 @@ Issues identified in `AUDIT.md` (2026-04-18). Grouped by priority matching the a
 
 ### AA-P3 — Maintainability
 
-- [x] **`RibbonPanel.setup_document()` refactor** — reviewed: `findChildren` is the correct Qt pattern for factory-built widgets; the three binding closures each do a distinct job with no duplication; a `ControlBinding` protocol would add indirection without reducing complexity. No change warranted.
+- [x] **`RibbonPanel.setup_document()` refactor** — extracted all domain logic into `app/ribbon_bridge.py` (`RibbonDocumentBridge`); ribbon now emits `colorChangeRequested`, `lineStyleChanged`, `lineWeightChanged`, `layerChanged` signals; public methods (`set_swatch_color`, `populate_layers`, etc.) replace direct document access; `RibbonPanel` in `ribbon_panel_widget.py` renamed to `RibbonPanelFrame` to resolve name collision; overflow chevron added via `_OverflowTabContent` for adaptive panel layout
 - [x] **`LayerManagerDialog._append_row()` refactor** — reviewed: six genuinely different cell types; `_on_style_change` / `_on_weight_change` are already named methods, not anonymous lambdas; all mutations already route through `Editor.set_layer_property`. A `LayerRowBuilder` extract would increase indirection without reducing coupling. No change warranted.
 - [x] **Pyright / mypy configuration** — added `pyrightconfig.json` in standard mode; fixed `snap_candidates()`, `nearest_snap()`, `perp_snaps()`, and `draw()` annotations in `ArcEntity` (bare `List`, `Optional[object]`, untyped params)
 - [x] **Structured logging** — replaced `warnings.warn()` in `command_registry.py` and `editor.py` with `logging.getLogger(__name__)`; added `app/logger.py` with rotating file handler wired from `MainWindow`
@@ -256,6 +256,7 @@ Issues identified in `AUDIT.md` (2026-04-18). Grouped by priority matching the a
 - [x] **Fix `ArcEntity.crosses_rect()` import** — removed `__import__('app.entities.base', ...)` hack; `BBox` was already imported at module level
 - [x] **Deduplicate Escape handling** — extracted `CADCanvas.handle_escape()` as the single authoritative handler; `MainWindow` Escape shortcut now delegates directly to it
 - [x] **Deduplicate Ortho/Draftmate mutual exclusion** — extracted `CADCanvas._set_ortho(on)` / `_set_draftmate(on)` methods; F8/F10 keys and status-bar buttons all call through these; mutual exclusion enforced in one place
+- [x] **Ribbon audit — Major issues (§2.1–§2.8)** — consolidated `ButtonSize`/`IconSize` enums into a single `Sizing` NamedTuple; centralised 27+ hardcoded colour values into `COLORS`; stripped ~120 dead QSS rules; added `__all__` exports to all 7 ribbon modules; created 5 missing icon SVGs; wrote 30 ribbon tests covering models, factories, split buttons, and the top-level `RibbonPanel` widget
 
 ---
 

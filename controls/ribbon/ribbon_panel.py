@@ -3,25 +3,29 @@ Main Ribbon Panel Component.
 
 Provides the top-level ribbon widget: a tab bar at the top and a stacked
 set of tool-panel rows below, one for each tab.
+
+This module contains **no** application-specific imports.  Document/editor
+wiring is handled externally by :class:`~app.ribbon_bridge.RibbonDocumentBridge`.
 """
 from typing import List, Dict, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
-    QTabBar, QStackedWidget,
+    QTabBar, QStackedWidget, QComboBox, QPushButton,
+    QToolButton, QMenu, QWidgetAction, QSizePolicy, QLabel,
 )
-# Add QComboBox for layer select lookup
-from PySide6.QtWidgets import QComboBox
-from PySide6.QtCore import Qt, Signal, QRect
-from PySide6.QtGui import QPainter, QColor, QPaintEvent, QMouseEvent
+from PySide6.QtCore import Qt, Signal, QRect, QSize
+from PySide6.QtGui import QPainter, QColor, QPaintEvent, QMouseEvent, QResizeEvent
 import logging
 
 _LOG = logging.getLogger(__name__)
 
-from controls.ribbon.ribbon_panel_widget import RibbonPanel as RibbonPanelWidget
-from controls.ribbon.ribbon_factory import PanelFactory
+from controls.ribbon.ribbon_panel_widget import RibbonPanelFrame
+from controls.ribbon.ribbon_factory import PanelFactory, ColorSwatchButton
 from controls.ribbon.ribbon_models import RibbonConfiguration, TabDefinition, PanelDefinition
 from controls.ribbon.ribbon_constants import SIZE, COLORS, MARGINS
+
+__all__ = ["RibbonPanel"]
 
 
 class _PanelSeparator(QWidget):
@@ -34,7 +38,7 @@ class _PanelSeparator(QWidget):
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
         # Both themes currently use #2D2D2D (45,45,45) background.
         # A solid 25-step lighter grey is clearly visible but unobtrusive.
-        self._color = QColor(70, 70, 70)
+        self._color = QColor(COLORS.SEPARATOR)
 
     def paintEvent(self, event):  # noqa: N802
         p = QPainter(self)
@@ -102,22 +106,136 @@ class _RibbonTabBar(QTabBar):
 
     def _tab_fill(self, index: int) -> Optional[QColor]:
         if index == self.currentIndex():
-            return QColor("#2D2D2D")
+            return QColor(COLORS.BACKGROUND_DARK)
         if index == self._hovered_index:
             return QColor(255, 255, 255, 18) if self._dark else QColor(17, 24, 39, 14)
         return None
 
     def _tab_text_color(self, index: int) -> QColor:
         if index == self.currentIndex():
-            return QColor("#f3f4f6")
+            return QColor(COLORS.TAB_TEXT_ACTIVE)
         if self._dark:
-            return QColor("#f3f4f6") if index == self.currentIndex() else QColor("#9ca3af")
-        return QColor("#111827") if index == self.currentIndex() else QColor("#6b7280")
+            return QColor(COLORS.TAB_TEXT_INACTIVE_DARK)
+        return QColor(COLORS.TAB_TEXT_INACTIVE_LIGHT)
+
+
+class _OverflowTabContent(QWidget):
+    """Tab content widget that hides panels which overflow and shows a chevron.
+
+    All panels + separators are added to an inner ``QHBoxLayout``.  On each
+    ``resizeEvent`` the widget walks the children left-to-right, hiding any
+    panel (and its preceding separator) once the accumulated width exceeds
+    the available width minus the chevron button width.  Hidden panels are
+    accessible via a ``>>`` popup menu.
+    """
+
+    _CHEVRON_WIDTH = 24
+
+    def __init__(self, dark: bool = False, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setObjectName("RibbonTabContent")
+        self.setProperty("dark", dark)
+        bg = COLORS.BACKGROUND_DARK if dark else COLORS.BACKGROUND_LIGHT
+        self.setStyleSheet(f"QWidget#RibbonTabContent {{ background: {bg}; }}")
+
+        self._inner_layout = QHBoxLayout()
+        self._inner_layout.setContentsMargins(*MARGINS.SMALL)
+        self._inner_layout.setSpacing(0)
+
+        # Chevron button lives outside the inner layout at the far right.
+        self._chevron = QToolButton(self)
+        self._chevron.setObjectName("ribbonOverflowChevron")
+        self._chevron.setText("\u00bb")  # »
+        self._chevron.setFixedWidth(self._CHEVRON_WIDTH)
+        self._chevron.setPopupMode(QToolButton.InstantPopup)
+        self._chevron.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._chevron.setStyleSheet(
+            f"QToolButton {{ border: none; font-size: 14px; color: {COLORS.TAB_TEXT_INACTIVE_DARK}; }}"
+            f"QToolButton:hover {{ color: {COLORS.TAB_TEXT_ACTIVE}; background: {COLORS.TAB_HOVER_DARK}; }}"
+        )
+        self._chevron.hide()
+
+        # Panels + separators tracked in insertion order
+        self._items: list[QWidget] = []
+
+        outer = QHBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addLayout(self._inner_layout)
+        outer.addStretch()
+        outer.addWidget(self._chevron)
+        self.setLayout(outer)
+
+    def add_panel(self, widget: QWidget) -> None:
+        """Append a panel (or separator) to the content area."""
+        self._items.append(widget)
+        self._inner_layout.addWidget(widget)
+
+    # ------------------------------------------------------------------
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _reflow(self) -> None:
+        """Show/hide panels based on available width."""
+        available = self.width() - self._CHEVRON_WIDTH - MARGINS.SMALL[0] - MARGINS.SMALL[2]
+        used = 0
+        overflowed = False
+        hidden_panels: list[QWidget] = []
+
+        for item in self._items:
+            # Determine the natural width the item wants
+            hint = item.sizeHint()
+            w = hint.width() if hint.isValid() else item.minimumSizeHint().width()
+            if w <= 0:
+                w = item.width()
+
+            if not overflowed and (used + w) <= available:
+                item.show()
+                used += w
+            else:
+                overflowed = True
+                item.hide()
+                # Only track real panels, not separators
+                if isinstance(item, RibbonPanelFrame):
+                    hidden_panels.append(item)
+
+        if hidden_panels:
+            self._chevron.show()
+            self._build_overflow_menu(hidden_panels)
+        else:
+            self._chevron.hide()
+
+    def _build_overflow_menu(self, panels: list[QWidget]) -> None:
+        """Build a popup showing the hidden panels."""
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {COLORS.BACKGROUND_DARK}; border: 1px solid {COLORS.MENU_BORDER}; padding: 4px; }}"
+        )
+        for panel in panels:
+            action = QWidgetAction(menu)
+            # Extract the panel's title from its QLabel child
+            title_label = panel.findChild(QLabel)
+            title = title_label.text() if title_label else "Panel"
+            btn = QPushButton(title)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {COLORS.TAB_TEXT_ACTIVE}; border: none; "
+                f"padding: 6px 16px; text-align: left; font-size: 12px; }}"
+                f"QPushButton:hover {{ background: {COLORS.TAB_HOVER_DARK}; }}"
+            )
+            btn.clicked.connect(menu.close)
+            action.setDefaultWidget(btn)
+            menu.addAction(action)
+        self._chevron.setMenu(menu)
 
 
 class RibbonPanel(QWidget):
     """
     Main ribbon widget with tabs and tool panels.
+
+    Emits signals for property-control interactions.  Application-level
+    wiring (to document/editor) should be done via an external bridge
+    — see :class:`~app.ribbon_bridge.RibbonDocumentBridge`.
 
     Args:
         ribbon_config: Typed :class:`~controls.ribbon.ribbon_models.RibbonConfiguration`
@@ -130,6 +248,21 @@ class RibbonPanel(QWidget):
     #: ``action`` string from the button's tool definition (e.g.
     #: ``"lineCommand"``).
     actionTriggered = Signal(str)
+
+    #: Emitted when the user clicks the colour swatch to request a change.
+    colorChangeRequested = Signal()
+
+    #: Emitted when the user picks a new line style from the combo.
+    #: Payload is ``""`` for "by layer" or the item text (e.g. ``"Dashed"``).
+    lineStyleChanged = Signal(str)
+
+    #: Emitted when the user picks a new line weight from the combo.
+    #: Payload is ``""`` for "by layer" or the item text (e.g. ``"0.50 mm"``).
+    lineWeightChanged = Signal(str)
+
+    #: Emitted when the user picks a different layer from the combo.
+    #: Payload is the layer name string.
+    layerChanged = Signal(str)
 
     def __init__(
         self,
@@ -167,261 +300,127 @@ class RibbonPanel(QWidget):
         self.tab_bar.currentChanged.connect(self.stacked.setCurrentIndex)
         self.setLayout(main_layout)
 
-        # Held after setup_document() for refresh_layers()
-        self._document = None
-        self._editor = None
+        # Wire property-control signals (internal → public signals)
+        self._connect_property_controls()
 
     # ------------------------------------------------------------------
-    # Document wiring
+    # Public API — called by RibbonDocumentBridge (or tests)
     # ------------------------------------------------------------------
 
-    def setup_document(self, doc, editor=None) -> None:
-        """Wire live document data to the Properties-panel controls.
+    def set_swatch_color(self, color: Optional[str]) -> None:
+        """Update all colour-swatch buttons to display *color*.
 
-        Must be called after the ribbon is fully constructed (e.g. from
-        ``MainWindow.__init__``).  Safe to call multiple times.
-
-        Parameters
-        ----------
-        doc:
-            The application :class:`~app.document.DocumentStore`.
-        editor:
-            The application :class:`~app.editor.Editor` — required for
-            selection-aware behaviour (layer / property changes apply to
-            selected entities when a selection is active).
+        Accepts ACI strings (``"aci:N"``) as well as plain ``#rrggbb`` hex.
+        Pass ``None`` to show "by layer".
         """
-        self._document = doc
-        self._editor = editor
-        self.refresh_layers()
-
-        # ── color swatch ─────────────────────────────────────────────
-        # Use findChildren (plural) so every tab's instance gets wired.
-        from PySide6.QtWidgets import QPushButton, QDialog
-        from app.colors.color import Color as _Color
-        from app.ui.color_picker import ColorPickerDialog as _ColorPickerDialog
         for btn in self.findChildren(QPushButton, "colorSwatchBtn"):
-            def _pick_color(_btn=btn):
-                _doc = self._document
-                _editor = self._editor
-                # Determine a sensible starting colour
-                if _editor and _editor.selection:
-                    first_id = next(iter(_editor.selection.ids))
-                    e = _doc.get_entity(first_id)
-                    raw = (e.color if e and e.color else None)
-                else:
-                    raw = _doc.active_color
-
-                if raw is not None:
-                    initial = _Color.from_string(raw)
-                else:
-                    initial = _Color(aci=7)
-
-                dlg = _ColorPickerDialog(initial=initial, parent=self, title="Override colour")
-                if dlg.exec() != QDialog.Accepted:
-                    return
-
-                chosen = dlg.chosen_color()
-                # chosen is None when the user clicked "By Layer" — clear override
-                color_str = chosen.to_string() if chosen is not None else None
-                if _editor and _editor.selection:
-                    _editor.set_entity_properties(
-                        list(_editor.selection.ids), "color", color_str,
-                        description="Change colour",
-                    )
-                else:
-                    _doc.active_color = color_str
-                    try:
-                        _doc._notify()
-                    except Exception:
+            if not isinstance(btn, ColorSwatchButton):
+                continue
+            if color:
+                try:
+                    # Inline-resolve ACI → hex so the ribbon stays domain-free.
+                    # The import is from the ribbon's own factory, not app code.
+                    resolved = color
+                    if color.startswith("aci:"):
+                        # lightweight fallback: leave as-is; bridge already resolves
                         pass
+                    btn.set_color(resolved)
+                except Exception:
+                    btn.set_color(color)
+            else:
+                btn.set_color(None)
 
-                # Update all swatch visuals immediately
-                for _b in self.findChildren(QPushButton, "colorSwatchBtn"):
-                    self._set_swatch_color(_b, color_str)
-
-            btn.clicked.connect(_pick_color)
-
-        # ── line-style combo ─────────────────────────────────────────
-        from PySide6.QtWidgets import QComboBox as _QComboBox
-        for style_combo in self.findChildren(_QComboBox, "lineStyleCombo"):
-            def _style_changed(idx, _combo=style_combo):
-                _doc = self._document
-                _editor = self._editor
-                val = None if idx == 0 else _combo.itemText(idx).lower()
-                if _editor and _editor.selection:
-                    _editor.set_entity_properties(
-                        list(_editor.selection.ids), "line_style", val,
-                        description="Change line style",
-                    )
-                else:
-                    _doc.active_line_style = val
-
-            style_combo.currentIndexChanged.connect(_style_changed)
-            # Also listen to user activation (fires even if the index didn't change)
-            try:
-                style_combo.activated.connect(_style_changed)
-            except Exception:
-                pass
-
-        # ── thickness combo ───────────────────────────────────────────
-        for thick_combo in self.findChildren(_QComboBox, "thicknessCombo"):
-            def _thick_changed(idx, _combo=thick_combo):
-                _doc = self._document
-                _editor = self._editor
-                if idx == 0:
-                    val = None
-                else:
-                    try:
-                        val = float(_combo.itemText(idx).split()[0])
-                    except (ValueError, IndexError):
-                        val = None
-                if _editor and _editor.selection:
-                    _editor.set_entity_properties(
-                        list(_editor.selection.ids), "line_weight", val,
-                        description="Change line weight",
-                    )
-                else:
-                    _doc.active_thickness = val
-
-            thick_combo.currentIndexChanged.connect(_thick_changed)
-            # Also handle activation so choosing the same visible item (e.g. "by layer")
-            # still triggers the handler when user explicitly picks it from the popup.
-            try:
-                thick_combo.activated.connect(_thick_changed)
-            except Exception:
-                pass
-
-        # ── selection awareness ───────────────────────────────────────
-        if editor is not None:
-            editor.selection.changed.connect(self._refresh_controls_from_selection)
-
-    # ------------------------------------------------------------------
-    # Selection-driven control refresh
-    # ------------------------------------------------------------------
-
-    def _refresh_controls_from_selection(self) -> None:
-        """Update ribbon controls to reflect the current selection state.
-
-        Called automatically whenever ``editor.selection`` changes.
-        - No selection: show document-level active layer / overrides.
-        - One or more entities selected: show their common properties
-          (or leave unchanged for mixed values).
-        """
-        doc = self._document
-        editor = self._editor
-        if doc is None:
-            return
-
-        sel_ids = editor.selection.ids if editor else set()
-
-        # ── layer combo ───────────────────────────────────────────────
+    def set_layer_selection(self, layer_name: Optional[str]) -> None:
+        """Select *layer_name* in all layer combos (without emitting signals)."""
         for combo in self._get_layer_combos():
             combo.blockSignals(True)
-            if sel_ids:
-                layers = {
-                    doc.get_entity(eid).layer
-                    for eid in sel_ids
-                    if doc.get_entity(eid) is not None
-                }
-                if len(layers) == 1:
-                    idx = combo.findText(next(iter(layers)))
-                    if idx >= 0:
-                        combo.setCurrentIndex(idx)
-                # mixed selection: leave combo unchanged
-            else:
-                idx = combo.findText(doc.active_layer)
+            if layer_name is not None:
+                idx = combo.findText(layer_name)
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
             combo.blockSignals(False)
 
-        # ── color swatch ──────────────────────────────────────────────
-        from PySide6.QtWidgets import QPushButton as _QPushButton
-        from PySide6.QtWidgets import QComboBox as _QComboBox
-        if sel_ids:
-            colors = {
-                getattr(doc.get_entity(eid), "color", None)
-                for eid in sel_ids
-                if doc.get_entity(eid) is not None
-            }
-            color = next(iter(colors)) if len(colors) == 1 else None
-        else:
-            color = doc.active_color
-        for btn in self.findChildren(_QPushButton, "colorSwatchBtn"):
-            self._set_swatch_color(btn, color)
-
-        # ── style combo ───────────────────────────────────────────────
-        if sel_ids:
-            styles = {
-                getattr(doc.get_entity(eid), "line_style", None)
-                for eid in sel_ids
-                if doc.get_entity(eid) is not None
-            }
-            style_val = next(iter(styles)) if len(styles) == 1 else None
-        else:
-            style_val = doc.active_line_style
-        for style_combo in self.findChildren(_QComboBox, "lineStyleCombo"):
-            style_combo.blockSignals(True)
-            self._set_combo_text(style_combo, style_val, case_fold=True)
-            style_combo.blockSignals(False)
-
-        # ── thickness combo ───────────────────────────────────────────
-        if sel_ids:
-            weights = {
-                getattr(doc.get_entity(eid), "line_weight", None)
-                for eid in sel_ids
-                if doc.get_entity(eid) is not None
-            }
-            weight_val = next(iter(weights)) if len(weights) == 1 else None
-        else:
-            weight_val = doc.active_thickness
-        for thick_combo in self.findChildren(_QComboBox, "thicknessCombo"):
-            thick_combo.blockSignals(True)
-            if weight_val is None:
-                thick_combo.setCurrentIndex(0)
+    def set_line_style_selection(self, style: Optional[str]) -> None:
+        """Select *style* in all line-style combos (without emitting signals)."""
+        for combo in self.findChildren(QComboBox, "lineStyleCombo"):
+            combo.blockSignals(True)
+            if style is None:
+                combo.setCurrentIndex(0)
             else:
-                for i in range(1, thick_combo.count()):
+                idx = combo.findText(style)
+                if idx < 0:
+                    idx = combo.findText(style.capitalize())
+                combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.blockSignals(False)
+
+    def set_line_weight_selection(self, weight: Optional[float]) -> None:
+        """Select *weight* in all thickness combos (without emitting signals)."""
+        for combo in self.findChildren(QComboBox, "thicknessCombo"):
+            combo.blockSignals(True)
+            if weight is None:
+                combo.setCurrentIndex(0)
+            else:
+                for i in range(1, combo.count()):
                     try:
-                        if abs(float(thick_combo.itemText(i).split()[0]) - weight_val) < 0.001:
-                            thick_combo.setCurrentIndex(i)
+                        if abs(float(combo.itemText(i).split()[0]) - weight) < 0.001:
+                            combo.setCurrentIndex(i)
                             break
                     except (ValueError, IndexError):
                         pass
-            thick_combo.blockSignals(False)
+            combo.blockSignals(False)
 
-    # ------------------------------------------------------------------
-    # Static helpers
-    # ------------------------------------------------------------------
+    def populate_layers(self, layer_names: List[str], active_layer: Optional[str] = None) -> None:
+        """Repopulate all layer-select combos with *layer_names*.
 
-    @staticmethod
-    def _set_swatch_color(btn, color: Optional[str]) -> None:
-        """Apply a colour string to a ColorSwatchButton.
-
-        Accepts ACI strings (``"aci:N"``) as well as plain ``#rrggbb`` hex.
+        Call this whenever layers are added, removed or renamed.
         """
-        from controls.ribbon.ribbon_factory import ColorSwatchButton as _ColorSwatchButton
-        if not isinstance(btn, _ColorSwatchButton):
-            return
-        if color:
-            from app.colors.color import Color as _Color
-            try:
-                resolved = _Color.from_string(color).to_hex()
-            except Exception:
-                resolved = color
-            btn.set_color(resolved)
-        else:
-            btn.set_color(None)
+        for combo in self._get_layer_combos():
+            combo.blockSignals(True)
+            combo.clear()
+            for name in layer_names:
+                combo.addItem(name)
+            if active_layer is not None:
+                idx = combo.findText(active_layer)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
 
-    @staticmethod
-    def _set_combo_text(combo, value: Optional[str], *, case_fold: bool = False) -> None:
-        """Select the combo item matching *value*, or index 0 if None / not found."""
-        if value is None:
-            combo.setCurrentIndex(0)
-            return
-        # Try exact match first, then case-folded capitalisation
-        idx = combo.findText(value)
-        if idx < 0 and case_fold:
-            idx = combo.findText(value.capitalize())
-        combo.setCurrentIndex(idx if idx >= 0 else 0)
+    # Keep refresh_layers as a convenience alias (MainWindow calls it)
+    def refresh_layers(self) -> None:
+        """Compatibility shim — bridge should call ``populate_layers()``."""
+        _LOG.debug("refresh_layers() called without bridge; no-op.")
+
+    # ------------------------------------------------------------------
+    # Internal signal wiring
+    # ------------------------------------------------------------------
+
+    def _connect_property_controls(self) -> None:
+        """Connect factory-built property widgets to the public signals."""
+        # Color swatches → colorChangeRequested
+        for btn in self.findChildren(QPushButton, "colorSwatchBtn"):
+            btn.clicked.connect(self.colorChangeRequested.emit)
+
+        # Line-style combos → lineStyleChanged
+        for combo in self.findChildren(QComboBox, "lineStyleCombo"):
+            def _style_cb(idx, _c=combo):
+                val = "" if idx == 0 else _c.itemText(idx)
+                self.lineStyleChanged.emit(val)
+            combo.currentIndexChanged.connect(_style_cb)
+
+        # Thickness combos → lineWeightChanged
+        for combo in self.findChildren(QComboBox, "thicknessCombo"):
+            def _weight_cb(idx, _c=combo):
+                val = "" if idx == 0 else _c.itemText(idx)
+                self.lineWeightChanged.emit(val)
+            combo.currentIndexChanged.connect(_weight_cb)
+
+        # Layer combos → layerChanged
+        for combo in self._get_layer_combos():
+            combo.currentTextChanged.connect(self.layerChanged.emit)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _get_layer_combos(self) -> "List[QComboBox]":
         """Return all ``layerSelectCombo`` widgets found in the ribbon."""
@@ -440,52 +439,6 @@ class RibbonPanel(QWidget):
                 combos.append(c)
         return combos
 
-    def refresh_layers(self) -> None:
-        """Repopulate the layer-select combo from the current document.
-
-        Call this whenever layers are added, removed or renamed.
-        """
-        doc = self._document
-        if doc is None:
-            return
-
-        combos = self._get_layer_combos()
-        if not combos:
-            return
-
-        for combo in combos:
-            combo.blockSignals(True)
-            combo.clear()
-            for layer in doc.layers:
-                combo.addItem(layer.name)
-            # Restore current selection
-            idx = combo.findText(doc.active_layer)
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
-            combo.blockSignals(False)
-
-            # Connect once — store the slot on the widget so multiple calls to
-            # refresh_layers() don't stack up duplicate connections.
-            if not hasattr(combo, "_layer_slot"):
-                def _slot(name, _ribbon=self):
-                    _doc = _ribbon._document
-                    _editor = _ribbon._editor
-                    if _editor and _editor.selection:
-                        # Move all selected entities to the chosen layer (undoable)
-                        _editor.set_entity_properties(
-                            list(_editor.selection.ids), "layer", name,
-                            description="Change entity layer",
-                        )
-                    else:
-                        # No selection — change the active (current) layer
-                        if _editor:
-                            _editor.set_active_layer(name)
-                        else:
-                            _doc.active_layer = name
-
-                combo._layer_slot = _slot
-                combo.currentTextChanged.connect(_slot)
-
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -495,30 +448,18 @@ class RibbonPanel(QWidget):
         tab: TabDefinition,
         panels: Dict[str, PanelDefinition],
         dark: bool,
-    ) -> QWidget:
-        tab_widget = QWidget()
-        tab_widget.setObjectName("RibbonTabContent")
-        tab_widget.setProperty("dark", dark)
-        bg = COLORS.BACKGROUND_DARK if dark else COLORS.BACKGROUND_LIGHT
-        # Use objectName selector so this rule does NOT bleed into child widgets
-        tab_widget.setStyleSheet(f"QWidget#RibbonTabContent {{ background: {bg}; }}")
-
-        tab_layout = QHBoxLayout()
-        tab_layout.setContentsMargins(*MARGINS.SMALL)
-        # spacing will be provided by the separator line rather than layout gaps
-        tab_layout.setSpacing(0)
+    ) -> _OverflowTabContent:
+        tab_widget = _OverflowTabContent(dark=dark)
 
         panel_names = [name for name in tab.panels if name in panels]
         for idx, panel_name in enumerate(panel_names):
             panel_def = panels[panel_name]
             panel_widget = self._build_panel(panel_name, panel_def, dark=dark)
-            tab_layout.addWidget(panel_widget, alignment=Qt.AlignTop)
+            tab_widget.add_panel(panel_widget)
             # insert a vertical rule between panels (not after last)
             if idx < len(panel_names) - 1:
-                tab_layout.addWidget(_PanelSeparator(dark=dark))
+                tab_widget.add_panel(_PanelSeparator(dark=dark))
 
-        tab_layout.addStretch()
-        tab_widget.setLayout(tab_layout)
         return tab_widget
 
     def _build_panel(
@@ -526,7 +467,7 @@ class RibbonPanel(QWidget):
         panel_name: str,
         panel_def: PanelDefinition,
         dark: bool = False,
-    ) -> RibbonPanelWidget:
+    ) -> RibbonPanelFrame:
         factory = PanelFactory(dark=dark, action_handler=self.actionTriggered.emit)
         content = factory.create_panel_content(panel_def.tools)
-        return RibbonPanelWidget(panel_name, content, dark=dark)
+        return RibbonPanelFrame(panel_name, content, dark=dark)

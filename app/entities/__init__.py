@@ -23,6 +23,9 @@ from app.entities.polyline import PolylineEntity
 from app.entities.text import TextEntity
 from app.entities.dimension import DimensionEntity
 from app.entities.hatch import HatchEntity
+from app.entities.spline import SplineEntity
+from app.entities.ellipse import EllipseEntity
+from app.entities.point import PointEntity
 
 __all__ = [
     "BaseEntity",
@@ -37,6 +40,9 @@ __all__ = [
     "TextEntity",
     "DimensionEntity",
     "HatchEntity",
+    "SplineEntity",
+    "EllipseEntity",
+    "PointEntity",
     "entity_from_dict",
 ]
 

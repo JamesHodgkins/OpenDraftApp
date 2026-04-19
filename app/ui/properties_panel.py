@@ -861,6 +861,13 @@ class PropertiesPanel(QWidget):
         self._content_layout.addWidget(frame)
 
     def _build_dimension_section(self, entities) -> None:
+        def _apply_ext_offset(e, s): e.ext_offset = max(0.0, _parse_float(s, e.ext_offset))
+        def _apply_dim_offset(e, s): e.dim_offset = max(0.0, _parse_float(s, e.dim_offset))
+        def _apply_arrow_size(e, s): e.arrow_size = max(0.0, _parse_float(s, e.arrow_size))
+        def _apply_mark_type(e, s):
+            if s in ("arrow", "mark", "none"):
+                e.mark_type = s
+
         frame = self._make_section_frame()
         grid = QGridLayout(frame)
         grid.setContentsMargins(4, 2, 4, 4)
@@ -868,15 +875,31 @@ class PropertiesPanel(QWidget):
         grid.setColumnStretch(1, 1)
         grid.addWidget(_header("Dimension", frame), 0, 0, 1, 2)
 
-        r = _PropRow(grid, 1, "Type", parent=frame, read_only=True)
+        r_type = _PropRow(grid, 1, "Type", parent=frame, read_only=True)
         types = [e.dim_type for e in entities]
         is_u = len(set(types)) == 1
-        r.set_value(types[0] if is_u else _VARIOUS, is_u)
+        r_type.set_value(types[0] if is_u else _VARIOUS, is_u)
 
-        r2 = _PropRow(grid, 2, "Text height", parent=frame, read_only=True)
-        vals = [e.text_height for e in entities]
-        is_u2 = len(set(vals)) == 1
-        r2.set_value(_fmt_float(vals[0]) if is_u2 else _VARIOUS, is_u2)
+        r_mark = _PropRow(grid, 2, "Mark", widget_type="combo",
+                          options=["arrow", "mark", "none"], parent=frame)
+        marks = [e.mark_type for e in entities]
+        is_u = len(set(marks)) == 1
+        r_mark.set_value(marks[0] if is_u else _VARIOUS, is_u)
+        r_mark.connect_changed(
+            lambda row=r_mark, fn=_apply_mark_type: self._apply_geo(entities, row, fn))
+
+        specs = [
+            ("Arrow size",  lambda e: e.arrow_size,  _apply_arrow_size),
+            ("Ext offset",  lambda e: e.ext_offset,  _apply_ext_offset),
+            ("Dim offset",  lambda e: e.dim_offset,  _apply_dim_offset),
+        ]
+        for i, (key, getter, apply_fn) in enumerate(specs, start=3):
+            r = _PropRow(grid, i, key, parent=frame)
+            raw = [getter(e) for e in entities]
+            is_u = len(set(raw)) == 1
+            r.set_value(_fmt_float(raw[0]) if is_u else _VARIOUS, is_u)
+            r.connect_changed(
+                lambda row=r, fn=apply_fn: self._apply_geo(entities, row, fn))
 
         self._content_layout.addWidget(frame)
 

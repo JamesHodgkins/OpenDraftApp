@@ -16,7 +16,11 @@ from PySide6.QtGui import QIcon, QPainter
 from PySide6.QtCore import Qt, QSize
 
 from controls.icon_widget import Icon, load_pixmap
-from controls.ribbon.ribbon_constants import SIZE, Styles, ButtonSize, IconSize, COLORS
+from controls.ribbon.ribbon_constants import SIZE, Styles, COLORS
+
+__all__ = ["RibbonSplitButton"]
+
+__all__ = ["RibbonSplitButton"]
 
 
 class _SmallSplitMainButton(QPushButton):
@@ -107,7 +111,7 @@ class RibbonSplitButton(QWidget):
             QMenu {{
                 background: {COLORS.BACKGROUND_DARK};
                 color: {COLORS.TEXT_PRIMARY_DARK};
-                border: 1px solid #3a3a3a;
+                border: 1px solid {COLORS.CONTROL_BG};
                 border-radius: 4px;
                 padding: 4px 0px;
             }}
@@ -127,7 +131,7 @@ class RibbonSplitButton(QWidget):
             icon_obj = None
             if icon_path:
                 icon_name = os.path.splitext(os.path.basename(icon_path))[0]
-                pix = load_pixmap(icon_name, IconSize.MENU.value)
+                pix = load_pixmap(icon_name, SIZE.MENU_ICON_SIZE)
                 if pix and not pix.isNull():
                     icon_obj = QIcon(pix)
             action = menu.addAction(icon_obj if icon_obj else QIcon(), item["label"])
@@ -149,7 +153,7 @@ class RibbonSplitButton(QWidget):
         # Horizontal split button: icon+label on left, arrow on right.  We want the
         # *total* width to equal a normal small button so the ribbon stays compact.
         total_w = SIZE.SMALL_BUTTON_WIDTH
-        arrow_w = ButtonSize.DROPDOWN_ARROW.value[0]
+        arrow_w = SIZE.DROPDOWN_ARROW_WIDTH
         label_w = total_w - arrow_w
 
         layout = QHBoxLayout()
@@ -181,8 +185,8 @@ class RibbonSplitButton(QWidget):
         )
         self.setLayout(layout)
         # Compute height from child sizes to avoid overlap (icon + dropdown + spacing)
-        large_w = ButtonSize.LARGE.value[0]
-        icon_h = ButtonSize.ICON_LARGE.value[1]
+        large_w = SIZE.LARGE_BUTTON_WIDTH
+        icon_h = SIZE.ICON_LARGE_HEIGHT
         dropdown_h = SIZE.DROPDOWN_TEXT_HEIGHT
         spacing = layout.spacing()
         total_h = icon_h + dropdown_h + spacing
@@ -202,14 +206,14 @@ class RibbonSplitButton(QWidget):
         btn = _SmallSplitMainButton(self)
         if main_icon:
             icon_name = os.path.splitext(os.path.basename(main_icon))[0]
-            pix = load_pixmap(icon_name, IconSize.SMALL.value)
+            pix = load_pixmap(icon_name, SIZE.SMALL_ICON_SIZE)
             if pix and not pix.isNull():
                 btn.setIcon(QIcon(pix))
-        btn.setIconSize(QSize(IconSize.SMALL.value, IconSize.SMALL.value))
+        btn.setIconSize(QSize(SIZE.SMALL_ICON_SIZE, SIZE.SMALL_ICON_SIZE))
         btn.setText(main_label)
         # default size originates from the ICON_LABEL constant, but callers can
         # override via the `width` argument (used by small split buttons).
-        default_w, _ = ButtonSize.ICON_LABEL.value
+        default_w = SIZE.ICON_LABEL_WIDTH
         btn.setFixedSize(width or default_w, SIZE.SMALL_BUTTON_HEIGHT)
         btn.clicked.connect(main_action)
         btn.setStyleSheet(Styles.small_icon_label_button())
@@ -221,7 +225,7 @@ class RibbonSplitButton(QWidget):
         btn.setText(Styles.ARROW_DOWN)
         btn.setMenu(menu)
         btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        w, _ = ButtonSize.DROPDOWN_ARROW.value
+        w = SIZE.DROPDOWN_ARROW_WIDTH
         btn.setFixedSize(w, SIZE.SMALL_BUTTON_HEIGHT)
         btn.setStyleSheet(Styles.dropdown_arrow_button())
         return btn
@@ -235,11 +239,11 @@ class RibbonSplitButton(QWidget):
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         if main_icon:
             icon_name = os.path.splitext(os.path.basename(main_icon))[0]
-            pix = load_pixmap(icon_name, IconSize.LARGE.value)
+            pix = load_pixmap(icon_name, SIZE.LARGE_ICON_SIZE)
             if pix and not pix.isNull():
                 btn.setIcon(QIcon(pix))
-        btn.setIconSize(QSize(IconSize.LARGE.value, IconSize.LARGE.value))
-        w, h = ButtonSize.ICON_LARGE.value
+        btn.setIconSize(QSize(SIZE.LARGE_ICON_SIZE, SIZE.LARGE_ICON_SIZE))
+        w, h = SIZE.ICON_LARGE_WIDTH, SIZE.ICON_LARGE_HEIGHT
         btn.setFixedSize(w, h)
         btn.clicked.connect(main_action)
         btn.setStyleSheet(Styles.large_icon_button())
@@ -251,7 +255,6 @@ class RibbonSplitButton(QWidget):
         btn.setText(f"{main_label} {Styles.ARROW_DOWN}")
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         btn.setMenu(menu)
-        large_w = ButtonSize.LARGE.value[0]
-        btn.setFixedSize(large_w, SIZE.DROPDOWN_TEXT_HEIGHT)
+        btn.setFixedSize(SIZE.LARGE_BUTTON_WIDTH, SIZE.DROPDOWN_TEXT_HEIGHT)
         btn.setStyleSheet(Styles.dropdown_text_button())
         return btn

@@ -38,31 +38,63 @@ class ExtendCommand(CommandBase):
             self.editor.suppress_osnap = False
             self.editor.suppress_dynamic_input = False
             self.editor.clear_dynamic()
+            self.editor.clear_highlight()
 
     def _run(self) -> None:
         doc = self.editor.document
-        boundary_pt = self.editor.get_point("Extend: click the boundary entity")
-        boundary = _pick_entity(boundary_pt, list(doc.entities),
-                                tolerance=self.editor.settings.extend_boundary_tolerance)
-        if boundary is None:
-            self.editor.status_message.emit("Extend: no entity found at that point")
-            return
+        sel_ids = self.editor.selection.ids
 
-        self.editor.status_message.emit(
-            f"Extend: boundary set ({boundary.type}). Click near endpoint to extend (Escape to exit)")
+        if sel_ids:
+            boundaries = [e for e in doc.entities if e.id in sel_ids]
+            self.editor.set_highlight(boundaries)
+            self.editor.status_message.emit(
+                f"Extend: {len(boundaries)} boundary edge(s) from selection (highlighted). "
+                "Click near an endpoint to extend (Escape to exit)")
+        else:
+            # No preselection — all entities act as boundaries (no highlight).
+            boundaries = list(doc.entities)
+            self.editor.status_message.emit(
+                "Extend: click near the endpoint to extend (Escape to exit)")
+
+        tol = self.editor.settings.extend_target_tolerance
+        boundary_ids: Optional[set] = {e.id for e in boundaries} if sel_ids else None
+
+        def _get_boundaries(ents: List[BaseEntity]) -> List[BaseEntity]:
+            if boundary_ids is None:
+                return ents
+            return [e for e in ents if e.id in boundary_ids]
+
+        def _preview(mouse: Vec2) -> List[BaseEntity]:
+            ents = list(self.editor.document.entities)
+            bds = _get_boundaries(ents)
+            target = _pick_entity(mouse, ents, tolerance=tol)
+            if target is None or (boundary_ids is not None and target.id in boundary_ids):
+                return []
+            for boundary in bds:
+                result = _extend_entity(target, mouse, boundary, ents)
+                if result is not None:
+                    return [result]
+            return []
+
+        self.editor.set_dynamic(_preview)
 
         while True:
             pick_pt = self.editor.get_point(
                 "Extend: click near the endpoint to extend (Escape to exit)")
 
             entities = list(doc.entities)
-            target = _pick_entity(pick_pt, entities,
-                                  tolerance=self.editor.settings.extend_target_tolerance)
-            if target is None or target.id == boundary.id:
+            bds = _get_boundaries(entities)
+            target = _pick_entity(pick_pt, entities, tolerance=tol)
+            if target is None or (boundary_ids is not None and target.id in boundary_ids):
                 self.editor.status_message.emit("Extend: no entity at pick point")
                 continue
 
-            result = _extend_entity(target, pick_pt, boundary, entities)
+            result = None
+            for boundary in bds:
+                result = _extend_entity(target, pick_pt, boundary, entities)
+                if result is not None:
+                    break
+
             if result is None:
                 self.editor.status_message.emit(
                     "Extend: no intersection found with the boundary")

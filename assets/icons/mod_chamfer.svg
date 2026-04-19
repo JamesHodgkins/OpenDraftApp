@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="100%" height="100%" viewBox="0 0 32 32" version="1.1" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+  <!-- Chamfer: two lines meeting at a corner with a bevel cut -->
+  <path d="M6,26 L18,26" style="fill:none;stroke:#e4e6ea;stroke-width:2;stroke-linecap:round;"/>
+  <path d="M26,6 L26,18" style="fill:none;stroke:#e4e6ea;stroke-width:2;stroke-linecap:round;"/>
+  <line x1="18" y1="26" x2="26" y2="18" style="stroke:#6366f1;stroke-width:2;stroke-linecap:round;"/>
+  <circle cx="18" cy="26" r="2.5" style="fill:#0fb881;"/>
+  <circle cx="26" cy="18" r="2.5" style="fill:#0fb881;"/>
+</svg>

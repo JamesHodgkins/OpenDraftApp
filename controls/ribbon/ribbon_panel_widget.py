@@ -10,8 +10,10 @@ from PySide6.QtCore import Qt
 
 from controls.ribbon.ribbon_constants import Styles, MARGINS
 
+__all__ = ["RibbonPanelFrame"]
 
-class RibbonPanel(QFrame):
+
+class RibbonPanelFrame(QFrame):
     """
     A panel container for the ribbon interface.
 
@@ -40,16 +42,17 @@ class RibbonPanel(QFrame):
 
         layout = QVBoxLayout()
         layout.setContentsMargins(*MARGINS.SMALL)
-        layout.setSpacing(1)
+        layout.setSpacing(0)
 
         layout.addWidget(content_widget, alignment=Qt.AlignTop)
         layout.addStretch(1)
 
         title_label = QLabel(title)
-        title_label.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
+        title_label.setFixedHeight(14)
+        title_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_label.setProperty("ribbonPanelTitle", True)
         title_label.setProperty("dark", dark)
         title_label.setStyleSheet(Styles.panel_title(dark))
-        layout.addWidget(title_label, alignment=Qt.AlignHCenter | Qt.AlignBottom)
+        layout.addWidget(title_label, alignment=Qt.AlignHCenter)
 
         self.setLayout(layout)

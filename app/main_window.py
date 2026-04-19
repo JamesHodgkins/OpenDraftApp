@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QFrame,
-    QDockWidget, QToolBar,
+    QDockWidget,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut, QKeySequence, QIcon
@@ -28,6 +28,7 @@ from app.ui.properties_panel import PropertiesPanel
 from app.config.ribbon_config import RIBBON_CONFIG
 from app.editor.command_registry import autodiscover, registered_commands
 from app.logger import configure_logging
+from app.ribbon_bridge import RibbonDocumentBridge
 
 configure_logging()
 
@@ -42,7 +43,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenDraft 2D CAD App")
-        _icon = Path(__file__).parent.parent / "assets" / "svg" / "badge_logo.svg"
+        _icon = Path(__file__).parent.parent / "assets" / "svg" / "badge_logo_dark.svg"
         self.setWindowIcon(QIcon(str(_icon)))
 
         # ---- Core subsystems (created before widgets so canvas can receive
@@ -58,16 +59,7 @@ class MainWindow(QMainWindow):
         )
         self._ribbon = ribbon
 
-        ribbon_bar = QToolBar("Ribbon", self)
-        ribbon_bar.setObjectName("RibbonToolBar")
-        ribbon_bar.setMovable(False)
-        ribbon_bar.setFloatable(False)
-        ribbon_bar.setContentsMargins(0, 0, 0, 0)
-        if (rb_layout := ribbon_bar.layout()) is not None:
-            rb_layout.setContentsMargins(0, 0, 0, 0)
-            rb_layout.setSpacing(0)
-        ribbon_bar.addWidget(ribbon)
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, ribbon_bar)
+        self.setMenuWidget(ribbon)
 
         # ---- Canvas is the sole central widget — docks snap beside it -----
         canvas = CADCanvas(document=doc, editor=self.editor)
@@ -114,8 +106,8 @@ class MainWindow(QMainWindow):
         # Escape key on canvas → cancel the active command
         canvas.cancelRequested.connect(self.editor.cancel)
 
-        # Wire PropertyPanel controls to the live document
-        ribbon.setup_document(doc, editor=self.editor)
+        # Wire ribbon property controls via the decoupled bridge
+        self._bridge = RibbonDocumentBridge(ribbon, doc, self.editor)
 
         # Ribbon button → route to the correct handler
         ribbon.actionTriggered.connect(self._on_action)
@@ -161,9 +153,8 @@ class MainWindow(QMainWindow):
         # -------------------------------------------------------------------
         # Window sizing/positioning
         # -------------------------------------------------------------------
-        self.setMinimumSize(1400, 768)
-        self.resize(1400, 768)
-        self._center_on_screen()
+        self.setMinimumSize(800, 400)
+        self.showMaximized()
 
         # Editor status message → left side of status bar
         self.editor.status_message.connect(self._status_widget.cmd_label.setText)
@@ -295,7 +286,7 @@ class MainWindow(QMainWindow):
             # Live-refresh the canvas whenever a layer property changes
             self._layer_dlg.layers_changed.connect(self._canvas.refresh)
             # Repopulate the layer combo if layers are added/removed/renamed
-            self._layer_dlg.layers_changed.connect(self._ribbon.refresh_layers)
+            self._layer_dlg.layers_changed.connect(self._bridge.refresh_layers)
         self._layer_dlg.exec()  # modal — canvas refresh signal still fires during exec()
 
     # -----------------------------------------------------------------------

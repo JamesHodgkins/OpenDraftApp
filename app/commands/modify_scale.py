@@ -24,6 +24,7 @@ class ScaleCommand(CommandBase):
             return
 
         base = self.editor.get_point("Scale: pick base point")
+        self.editor.snap_from_point = base
         cx, cy = base.x, base.y
 
         def _preview(mouse: Vec2) -> List[BaseEntity]:
@@ -34,8 +35,9 @@ class ScaleCommand(CommandBase):
             return [_transform_entity(ent, pt_fn, post_fn) for ent in entities]
 
         self.editor.set_dynamic(_preview)
-        factor = self.editor.get_length("Scale: pick a point or enter scale factor", base=base)
+        raw = self.editor.get_length("Scale: pick a point or enter scale factor", base=base)
         self.editor.clear_dynamic()
+        factor = raw / 100.0 if raw > 1e-6 else raw
 
         if abs(factor) < 1e-9:
             self.editor.status_message.emit("Scale: factor too small, cancelled")

@@ -54,10 +54,14 @@ PANEL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         {"label": "Rect",   "icon": "draw_rect",   "type": "small", "action": "rectCommand"},
         {"label": "Circle", "icon": "draw_circle", "type": "small", "action": "circleCommand"},
         {"label": "Arc", "type": "split-small", "mainAction": "arc3PointCommand", "items": [
+            {"label": "Arc (3 Points)",           "icon": "draw_arc", "action": "arc3PointCommand"},
             {"label": "Arc (Center, Start, End)", "icon": "draw_arc", "action": "arcCenterStartEndCommand"},
             {"label": "Arc (Start, End, Radius)", "icon": "draw_arc", "action": "arcStartEndRadiusCommand"},
         ]},
-        {"label": "Text", "icon": "draw_text", "type": "large", "action": "textCommand"},
+        {"label": "Text",    "icon": "draw_text",    "type": "large",  "action": "textCommand"},
+        {"label": "Spline",  "icon": "draw_spline",  "type": "small",  "action": "splineCommand"},
+        {"label": "Ellipse", "icon": "draw_ellipse", "type": "small",  "action": "ellipseCommand"},
+        {"label": "Point",   "icon": "draw_point",   "type": "small",  "action": "pointCommand"},
     ]},
     "Annotate": {"tools": [
         {"label": "Dimension", "type": "split", "mainAction": "linearDimensionCommand", "items": [
@@ -70,14 +74,18 @@ PANEL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         {"label": "Copy", "icon": "mod_copy", "type": "large", "action": "copyCommand"},
         {"type": "stack", "columns": [
             [
-                {"label": "Rotate", "icon": "mod_rotate", "type": "small", "action": "rotateCommand"},
-                {"label": "Scale",  "icon": "mod_scale",  "type": "small", "action": "scaleCommand"},
-                {"label": "Mirror", "icon": "mod_mirror", "type": "small", "action": "mirrorCommand"},
+                {"label": "Rotate",  "icon": "mod_rotate",  "type": "small", "action": "rotateCommand"},
+                {"label": "Scale",   "icon": "mod_scale",   "type": "small", "action": "scaleCommand"},
+                {"label": "Mirror",  "icon": "mod_mirror",  "type": "small", "action": "mirrorCommand"},
             ],
             [
-                {"label": "Trim",   "icon": "mod_trim",   "type": "small", "action": "trimCommand"},
-                {"label": "Extend", "icon": "mod_extend", "type": "small", "action": "extendCommand"},
-                {"label": "Delete", "icon": "icon-cancel", "type": "small", "action": "deleteCommand"},
+                {"label": "Trim",    "icon": "mod_trim",    "type": "small", "action": "trimCommand"},
+                {"label": "Extend",  "icon": "mod_extend",  "type": "small", "action": "extendCommand"},
+                {"label": "Delete",  "icon": "icon-cancel", "type": "small", "action": "deleteCommand"},
+            ],
+            [
+                {"label": "Fillet",  "icon": "mod_fillet",  "type": "small", "action": "filletCommand"},
+                {"label": "Chamfer", "icon": "mod_chamfer", "type": "small", "action": "chamferCommand"},
             ],
         ]},
     ]},
