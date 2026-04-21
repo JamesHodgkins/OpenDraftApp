@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QPushButton, QComboBox, QDialog
 
 from app.colors.color import Color
 from app.ui.color_picker import ColorPickerDialog
+from app.ui.quick_color_popup import QuickColorPopup
 
 _LOG = logging.getLogger(__name__)
 
@@ -72,31 +73,63 @@ class RibbonDocumentBridge:
     # ------------------------------------------------------------------
 
     def _on_color_change_requested(self) -> None:
-        """Open the colour picker and apply the result."""
+        """Show quick colour popup; allow opening the full picker."""
         doc = self._doc
         editor = self._editor
         ribbon = self._ribbon
 
-        # Determine a sensible starting colour
+        raw = self._current_color_string()
+
+        anchor = None
+        if hasattr(ribbon, "color_swatch_anchor"):
+            try:
+                anchor = ribbon.color_swatch_anchor()
+            except Exception:
+                anchor = None
+        if anchor is None:
+            anchor = ribbon.findChild(QPushButton, "colorSwatchBtn")
+        if anchor is None:
+            # Fallback if we can't find the swatch button for any reason.
+            self._open_full_color_picker(raw)
+            return
+
+        popup = QuickColorPopup(initial=raw, parent=ribbon.window())
+        popup.colorPicked.connect(self._apply_color_string)
+        popup.moreRequested.connect(lambda: self._open_full_color_picker(raw))
+        popup.popup_below(anchor)
+
+    def _current_color_string(self) -> Optional[str]:
+        """Return the current colour override string (selection or active)."""
+        doc = self._doc
+        editor = self._editor
         if editor and editor.selection:
             first_id = next(iter(editor.selection.ids))
             e = doc.get_entity(first_id)
-            raw = (e.color if e and e.color else None)
-        else:
-            raw = doc.active_color
+            return (e.color if e and e.color else None)
+        return doc.active_color
 
+    def _open_full_color_picker(self, raw: Optional[str]) -> None:
+        """Open the full tabbed colour dialog starting from *raw*."""
+        ribbon = self._ribbon
         initial = Color.from_string(raw) if raw is not None else Color(aci=7)
-
         dlg = ColorPickerDialog(initial=initial, parent=ribbon, title="Override colour")
         if dlg.exec() != QDialog.Accepted:
             return
-
         chosen = dlg.chosen_color()
         color_str = chosen.to_string() if chosen is not None else None
+        self._apply_color_string(color_str)
+
+    def _apply_color_string(self, color_str: Optional[str]) -> None:
+        """Apply *color_str* as the active override or selection override."""
+        doc = self._doc
+        editor = self._editor
+        ribbon = self._ribbon
 
         if editor and editor.selection:
             editor.set_entity_properties(
-                list(editor.selection.ids), "color", color_str,
+                list(editor.selection.ids),
+                "color",
+                color_str,
                 description="Change colour",
             )
         else:
@@ -106,7 +139,6 @@ class RibbonDocumentBridge:
             except Exception:
                 _LOG.warning("doc._notify() failed after colour change", exc_info=True)
 
-        # Update swatch visuals
         ribbon.set_swatch_color(color_str)
 
     def _on_line_style_changed(self, value: str) -> None:

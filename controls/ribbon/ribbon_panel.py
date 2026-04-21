@@ -487,6 +487,10 @@ class RibbonPanel(QWidget):
         self.tab_bar.currentChanged.connect(self.stacked.setCurrentIndex)
         self.setLayout(main_layout)
 
+        # Tracks the most recently clicked colour swatch button so external
+        # code (bridge) can anchor popups correctly.
+        self._last_color_swatch_btn: Optional[QPushButton] = None
+
         # Wire property-control signals (internal → public signals)
         self._connect_property_controls()
 
@@ -577,6 +581,10 @@ class RibbonPanel(QWidget):
         """Compatibility shim — bridge should call ``populate_layers()``."""
         _LOG.debug("refresh_layers() called without bridge; no-op.")
 
+    def color_swatch_anchor(self) -> Optional[QPushButton]:
+        """Return the most recently clicked colour swatch button (if any)."""
+        return self._last_color_swatch_btn
+
     # ------------------------------------------------------------------
     # Internal signal wiring
     # ------------------------------------------------------------------
@@ -585,7 +593,11 @@ class RibbonPanel(QWidget):
         """Connect factory-built property widgets to the public signals."""
         # Color swatches → colorChangeRequested
         for btn in self.findChildren(QPushButton, "colorSwatchBtn"):
-            btn.clicked.connect(self.colorChangeRequested.emit)
+            btn.clicked.connect(lambda checked=False, b=btn: self._on_color_swatch_clicked(b))
+
+    def _on_color_swatch_clicked(self, btn: QPushButton) -> None:
+        self._last_color_swatch_btn = btn
+        self.colorChangeRequested.emit()
 
         # Line-style combos → lineStyleChanged
         for combo in self.findChildren(QComboBox, "lineStyleCombo"):

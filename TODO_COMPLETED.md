@@ -27,3 +27,7 @@
 - [x] **§2.7 Deferred imports** — confirmed zero `from app.*` imports in ribbon package; removed last deferred `from PySide6.QtWidgets import QLabel`
 - [x] **§2.8 Missing icons** — created 5 SVGs: `draw_spline.svg`, `draw_ellipse.svg`, `draw_point.svg`, `mod_fillet.svg`, `mod_chamfer.svg`
 
+### UX
+
+- [x] **Ribbon quick colour popup** — ribbon colour swatch now opens a compact common-colours panel (incl. ByLayer) with a "More…" affordance for the full colour picker
+

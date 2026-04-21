@@ -177,6 +177,7 @@ Standard 2D CAD operations that are entirely absent.
 ### Usability
 
 - [ ] **Tooltip previews** — show a small icon or description when hovering over ribbon buttons
+- [x] **Ribbon quick colour popup** — clicking the ribbon colour swatch should show a compact palette (common colours + ByLayer) with an option to open the full colour picker
 - [ ] **Context menu (right-click on canvas)** — recent commands, selection operations, entity-specific options
 - [ ] **Context menu on entity (right-click)** — Properties, Delete, Move, Copy, etc.
 - [ ] **Grip editing improvements** — show grip count, support multi-grip drag with relative offset
