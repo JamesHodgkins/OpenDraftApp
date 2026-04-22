@@ -167,6 +167,11 @@ def _post_rotate_arc(e: BaseEntity, orig: BaseEntity, angle: float) -> None:
     if isinstance(e, ArcEntity):
         e.start_angle = _rotate_angle(orig.start_angle, angle)
         e.end_angle = _rotate_angle(orig.end_angle, angle)
+    # Ellipse orientation is stored as a world-frame rotation of its local axes.
+    # Rotating the entity in world space therefore adds to this rotation.
+    from app.entities.ellipse import EllipseEntity
+    if isinstance(e, EllipseEntity):
+        e.rotation = orig.rotation + angle
     # A rotated linear dimension is no longer axis-aligned — promote to aligned.
     from app.entities.dimension import DimensionEntity
     if isinstance(e, DimensionEntity) and e.dim_type == "linear":
