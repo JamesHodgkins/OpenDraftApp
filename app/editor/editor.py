@@ -116,6 +116,10 @@ class Editor(QObject):
         # When True, the canvas will not show the dynamic input widget.
         self.suppress_dynamic_input: bool = False
 
+        # Last started command action-name, used by UI affordances such as
+        # "Repeat: <command>" in the canvas context menu.
+        self._last_command_name: Optional[str] = None
+
         # Selection set — tracks currently selected entity IDs.
         self.selection = SelectionSet(parent=self)
 
@@ -146,6 +150,11 @@ class Editor(QObject):
     def is_running(self) -> bool:
         """``True`` while a command thread is alive."""
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def last_command_name(self) -> Optional[str]:
+        """Action-name of the most recently started command (or ``None``)."""
+        return self._last_command_name
 
     # --------------------------------------------------------------- command API
 
@@ -673,6 +682,7 @@ class Editor(QObject):
 
     def _run_in_thread(self, cmd: CommandBase, name: str) -> None:
         """Target function for the command worker thread."""
+        self._last_command_name = name
         self.command_started.emit(name)
         try:
             cmd.execute()

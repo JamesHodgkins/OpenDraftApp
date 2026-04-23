@@ -63,6 +63,7 @@ from app.editor.hit_testing import (
 )
 from app.ui.dynamic_input_widget import DynamicInputWidget
 from app.ui.command_palette import CommandPaletteWidget
+from app.ui.canvas_context_menu import CanvasContextMenu
 from app.canvas_viewport import ViewportTransform
 from app.canvas_grid import GridRenderer
 
@@ -591,6 +592,85 @@ class CADCanvas(QWidget):
         if event.button() == Qt.MiddleButton:
             self._panning = False
             self.setCursor(Qt.CrossCursor)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802
+        """Right-click context menu for common editing actions.
+
+        Behaviour:
+        - If idle and the click hits an entity, that entity becomes selected
+          before the menu opens (standard CAD behaviour).
+        - Menu actions are enabled/disabled based on editor state.
+        """
+        if self._editor is None:
+            return
+        is_idle = self._idle
+
+        # ---- Update selection based on right-click hit test (idle only) ----
+        if is_idle:
+            clicked_id: Optional[str] = None
+            if self._document is not None:
+                try:
+                    click_world_qpt = self.screen_to_world(QPointF(event.pos()))
+                    click_world = Vec2(click_world_qpt.x(), click_world_qpt.y())
+                    tolerance = self._pick_tolerance_px / self.scale
+                    for e in self._document:
+                        layer = self._document.get_layer(e.layer)
+                        if layer is not None and not layer.visible:
+                            continue
+                        if hit_test_point(e, click_world, tolerance):
+                            clicked_id = e.id
+                            break
+                except Exception:
+                    clicked_id = None
+
+            if clicked_id is not None:
+                # Replace selection with the clicked entity if it wasn't selected.
+                if clicked_id not in self._editor.selection:
+                    self._editor.selection.set({clicked_id})
+                self._hovered_entity_id = clicked_id
+
+        undo_stack = self._editor.undo_stack
+        has_sel = bool(self._editor.selection)
+        last_cmd = self._editor.last_command_name
+        can_repeat = bool(last_cmd) and is_idle
+
+        def _do_delete() -> None:
+            if not self._editor.is_running and self._editor.selection:
+                self._editor.delete_selection()
+                self._editor.document_changed.emit()
+                self._hovered_entity_id = None
+                self.update()
+
+        def _do_repeat() -> None:
+            if not can_repeat:
+                return
+            # Repeat should not cancel an active command (menu isn't shown then),
+            # but guard anyway.
+            if self._editor.is_running:
+                return
+            if last_cmd:
+                self._editor.run_command(last_cmd)
+
+        menu = CanvasContextMenu(
+            parent=self,
+            is_idle=is_idle,
+            can_undo=undo_stack.can_undo,
+            can_redo=undo_stack.can_redo,
+            undo_text="Undo",
+            redo_text="Redo",
+            has_selection=has_sel,
+            repeat_label=f"Repeat: {last_cmd}" if last_cmd else "Repeat",
+            can_repeat=can_repeat,
+            on_cancel=self._editor.cancel,
+            on_undo=self._editor.undo,
+            on_redo=self._editor.redo,
+            on_delete=_do_delete,
+            on_repeat=_do_repeat,
+            on_move=lambda: self._editor.run_command("moveCommand"),
+            on_rotate=lambda: self._editor.run_command("rotateCommand"),
+            on_scale=lambda: self._editor.run_command("scaleCommand"),
+        )
+        menu.exec(event.globalPos())
 
     def leaveEvent(self, event) -> None:  # noqa: N802
         """Clear hover highlight when the cursor leaves the canvas."""

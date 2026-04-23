@@ -30,4 +30,5 @@
 ### UX
 
 - [x] **Ribbon quick colour popup** — ribbon colour swatch now opens a compact common-colours panel (incl. ByLayer) with a "More…" affordance for the full colour picker
+- [x] **Canvas context menu** — added right-click context menu on the canvas (Undo/Redo/Delete/Modify→Rotate) with right-click-to-select behaviour and command-safe selection handling
 

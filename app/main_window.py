@@ -120,9 +120,10 @@ class MainWindow(QMainWindow):
         )
         # Redraw when selection changes (already on GUI thread).
         self.editor.selection.changed.connect(canvas.refresh)
-        # Clear selection when a new command starts so drawing commands work
-        # on a clean slate.
-        self.editor.command_started.connect(lambda _: self.editor.selection.clear())
+        # NOTE: Do not auto-clear selection on command start.
+        #
+        # Modify commands (Rotate/Move/Mirror/etc.) rely on the current
+        # selection. Clearing here would make those commands no-op.
         # -------------------------------------------------------------------
 
         # Wrap canvas in a container so we can paint a stable 1px separator
