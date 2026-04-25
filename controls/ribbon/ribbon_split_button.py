@@ -52,12 +52,13 @@ class _SmallSplitMainButton(QPushButton):
         text_left = icon_left + icon_size.width() + self._ICON_TEXT_GAP
         text_width = max(0, self.width() - text_left - self._TEXT_RIGHT_PADDING)
         painter.setPen(self.palette().buttonText().color())
+        alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         painter.drawText(
             text_left,
             0,
             text_width,
             self.height(),
-            Qt.AlignLeft | Qt.AlignVCenter,
+            alignment,
             self.text(),
         )
         painter.end()

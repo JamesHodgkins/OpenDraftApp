@@ -21,6 +21,7 @@ Tracking note (2026-04-25): Updated CI workflow to force Node 24 for JavaScript 
 Tracking note (2026-04-25): Further hardened CI Qt test execution for exit code 134 by using `QT_QPA_PLATFORM=minimal`, software OpenGL (`QT_OPENGL=software`, `LIBGL_ALWAYS_SOFTWARE=1`), Python fault-handler output, and verbose pytest diagnostics.
 Tracking note (2026-04-25): Fixed CI `qtbot` fixture failure by installing Python dependencies from `requirements.txt` (which includes `pytest-qt`) instead of ad-hoc package installation in `.github/workflows/ci.yml`.
 Tracking note (2026-04-25): Fixed Pyright CI log visibility by allowing `pyright --outputjson` to continue (`|| true`) and adding robust JSON/missing-report handling so parsed type errors are printed before failing the workflow.
+Tracking note (2026-04-25): Updated `_SmallSplitMainButton.paintEvent()` in `controls/ribbon/ribbon_split_button.py` to use `Qt.AlignmentFlag` for text alignment (`AlignLeft | AlignVCenter`) in `painter.drawText(...)`, matching current PySide6 typing expectations.
 
 ---
 

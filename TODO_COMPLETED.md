@@ -187,3 +187,8 @@
 - [x] **Added report guards** — Pyright post-processing now checks for missing `pyright-report.json` and emits a clear failure message when output is absent
 - [x] **Improved parse failure clarity** — JSON decode failures now print raw Pyright output before raising, making malformed output/debugging issues observable in workflow logs
 
+### Ribbon Split Button AlignmentFlag Cleanup (2026-04-25)
+
+- [x] **Alignment API modernization** — updated `_SmallSplitMainButton.paintEvent()` in `controls/ribbon/ribbon_split_button.py` to use `Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter` for the `QPainter.drawText(...)` alignment argument
+- [x] **Typing/tooling compatibility** — replaced legacy `Qt.AlignLeft | Qt.AlignVCenter` usage to align with current PySide6 enum-scoped typing recommendations
+
