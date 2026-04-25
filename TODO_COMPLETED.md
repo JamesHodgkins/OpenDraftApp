@@ -192,3 +192,8 @@
 - [x] **Alignment API modernization** — updated `_SmallSplitMainButton.paintEvent()` in `controls/ribbon/ribbon_split_button.py` to use `Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter` for the `QPainter.drawText(...)` alignment argument
 - [x] **Typing/tooling compatibility** — replaced legacy `Qt.AlignLeft | Qt.AlignVCenter` usage to align with current PySide6 enum-scoped typing recommendations
 
+### Ribbon Split Button QIcon Enum Fix (2026-04-25)
+
+- [x] **Pyright enum compatibility** — replaced legacy `QIcon.Normal/Disabled` with `QIcon.Mode.Normal/Disabled` and `QIcon.On/Off` with `QIcon.State.On/Off` in `_SmallSplitMainButton.paintEvent()`
+- [x] **No behavioral change** — retained identical icon mode/state selection logic for enabled/disabled and pressed/unpressed rendering paths
+

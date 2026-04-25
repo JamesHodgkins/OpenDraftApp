@@ -44,8 +44,8 @@ class _SmallSplitMainButton(QPushButton):
         icon_top = ((self.height() - icon_size.height()) // 2) + self._ICON_TOP_OFFSET
         icon_left = self._ICON_LEFT_OFFSET
         if not self.icon().isNull():
-            mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
-            state = QIcon.On if self.isDown() else QIcon.Off
+            mode = QIcon.Mode.Normal if self.isEnabled() else QIcon.Mode.Disabled
+            state = QIcon.State.On if self.isDown() else QIcon.State.Off
             pixmap = self.icon().pixmap(icon_size, mode, state)
             painter.drawPixmap(icon_left, icon_top, pixmap)
 
