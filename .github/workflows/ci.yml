@@ -49,13 +49,25 @@ jobs:
 
       - name: Run Pyright type-check
         run: |
-          pyright --outputjson > pyright-report.json
+          pyright --outputjson > pyright-report.json || true
           python - <<'PY'
           import json
           import pathlib
           import sys
 
-          data = json.loads(pathlib.Path("pyright-report.json").read_text(encoding="utf-8"))
+          report_path = pathlib.Path("pyright-report.json")
+          if not report_path.exists():
+            print("Pyright did not produce pyright-report.json")
+            sys.exit(1)
+
+          raw = report_path.read_text(encoding="utf-8")
+          try:
+            data = json.loads(raw)
+          except json.JSONDecodeError:
+            print("Could not parse pyright JSON output. Raw output follows:")
+            print(raw)
+            raise
+
           errors = [
             d
             for d in data.get("generalDiagnostics", [])

@@ -181,3 +181,9 @@
 - [x] **Dependency install corrected** — workflow install step now uses `python -m pip install -r requirements.txt pyright`, ensuring test plugin dependencies are consistent with the repository
 - [x] **Test collection restored** — pytest can now discover `qtbot` fixture from `pytest-qt` during CI test setup
 
+### CI Pyright Diagnostics Visibility Fix (2026-04-25)
+
+- [x] **Removed early shell-exit trap** — updated CI to run `pyright --outputjson > pyright-report.json || true` so the diagnostics parsing script still executes when Pyright returns non-zero
+- [x] **Added report guards** — Pyright post-processing now checks for missing `pyright-report.json` and emits a clear failure message when output is absent
+- [x] **Improved parse failure clarity** — JSON decode failures now print raw Pyright output before raising, making malformed output/debugging issues observable in workflow logs
+
