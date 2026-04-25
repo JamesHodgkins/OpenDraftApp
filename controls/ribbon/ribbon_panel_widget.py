@@ -164,8 +164,9 @@ class RibbonPanelFrame(QFrame):
         spacing = content_layout.spacing() if content_layout else 0
         cm = content_layout.contentsMargins() if content_layout else None
         content_lr = (cm.left() + cm.right()) if cm else 0
-        pm = self.layout().contentsMargins() if self.layout() else None
-        panel_lr = (pm.left() + pm.right()) if pm else 4
+        panel_layout = self.layout()
+        pm = panel_layout.contentsMargins() if panel_layout is not None else None
+        panel_lr = (pm.left() + pm.right()) if pm is not None else 4
         total = content_lr + panel_lr
         for i, tool in enumerate(tools):
             hint = tool.sizeHint()
@@ -185,8 +186,9 @@ class RibbonPanelFrame(QFrame):
             return base
         first_hint = tools[0].sizeHint()
         first_w = first_hint.width() if first_hint.isValid() else 40
-        pm = self.layout().contentsMargins() if self.layout() else None
-        extra = (pm.left() + pm.right()) if pm else 4
+        panel_layout = self.layout()
+        pm = panel_layout.contentsMargins() if panel_layout is not None else None
+        extra = (pm.left() + pm.right()) if pm is not None else 4
         return QSize(first_w + self._CHEVRON_WIDTH + extra, base.height())
 
     # ------------------------------------------------------------------
@@ -227,8 +229,9 @@ class RibbonPanelFrame(QFrame):
         spacing = content_layout.spacing() if content_layout else 0
         cm = content_layout.contentsMargins() if content_layout else None
         content_lr = (cm.left() + cm.right()) if cm else 0
-        pm = self.layout().contentsMargins() if self.layout() else None
-        panel_lr = (pm.left() + pm.right()) if pm else 0
+        panel_layout = self.layout()
+        pm = panel_layout.contentsMargins() if panel_layout is not None else None
+        panel_lr = (pm.left() + pm.right()) if pm is not None else 0
 
         available = self.width() - panel_lr - content_lr
 
@@ -304,7 +307,7 @@ class RibbonPanelFrame(QFrame):
         while content_layout.count() > 0:
             content_layout.takeAt(0)
         for tool in self._tool_items:
-            content_layout.addWidget(tool, alignment=Qt.AlignmentFlag.AlignTop)
+            content_layout.addWidget(tool, 0, Qt.AlignmentFlag.AlignTop)
         if self._constrained:
             self._reflow_tools()
         else:

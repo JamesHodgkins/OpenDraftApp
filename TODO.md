@@ -24,6 +24,7 @@ Tracking note (2026-04-25): Fixed Pyright CI log visibility by allowing `pyright
 Tracking note (2026-04-25): Updated `_SmallSplitMainButton.paintEvent()` in `controls/ribbon/ribbon_split_button.py` to use `Qt.AlignmentFlag` for text alignment (`AlignLeft | AlignVCenter`) in `painter.drawText(...)`, matching current PySide6 typing expectations.
 Tracking note (2026-04-25): Fixed Pyright errors in `controls/ribbon/ribbon_split_button.py` by replacing `QIcon.On/Off` and `QIcon.Normal/Disabled` with scoped enum members `QIcon.State.*` and `QIcon.Mode.*` in custom split-button painting.
 Tracking note (2026-04-25): Applied ribbon-wide Pyright enum cleanup by replacing legacy `Qt.Align*` usage with `Qt.AlignmentFlag.*`, switching split-button bevel drawing to `QStyle.ControlElement.CE_PushButtonBevel`, modernizing `RibbonLargeButton` icon mode/state enums, and removing unused `Icon` imports in ribbon controls.
+Tracking note (2026-04-25): Fixed Pyright Optional-layout and addWidget signature diagnostics in `controls/ribbon/ribbon_panel_widget.py` by introducing explicit `self.layout()` narrowing before `contentsMargins()` access and switching tool restore calls to positional `addWidget(tool, 0, Qt.AlignmentFlag.AlignTop)`.
 
 ---
 

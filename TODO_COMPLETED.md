@@ -204,3 +204,9 @@
 - [x] **`QStyle` control-element typing fixed** — updated split-button bevel draw call to `QStyle.ControlElement.CE_PushButtonBevel` for PySide6 stub compatibility
 - [x] **Additional enum modernization** — updated `RibbonLargeButton` icon state/mode usage to `QIcon.State.*` and `QIcon.Mode.*`; replaced `Qt.TextWordWrap` with `Qt.TextFlag.TextWordWrap` in custom large-button text drawing
 
+### Ribbon Panel Widget Layout Typing Fix (2026-04-25)
+
+- [x] **Optional layout narrowing** — updated `natural_width()`, `minimumSizeHint()`, and `_reflow_tools()` in `controls/ribbon/ribbon_panel_widget.py` to store `self.layout()` in a local variable and narrow before calling `contentsMargins()`
+- [x] **addWidget overload compatibility** — changed `_restore_tools()` to use positional `addWidget(tool, 0, Qt.AlignmentFlag.AlignTop)` so Pyright resolves the supported overload without keyword-argument mismatch
+- [x] **Behavior preserved** — kept runtime layout margin defaults and restored-tool top alignment semantics unchanged
+
