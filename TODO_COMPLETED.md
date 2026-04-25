@@ -157,3 +157,9 @@
 - [x] **Reduced event-handler complexity** — grip-specific branches in `CADCanvas.mousePressEvent`, `CADCanvas.mouseMoveEvent`, and `CADCanvas.handle_escape` now delegate to helper functions while keeping canvas as orchestration layer
 - [x] **Regression validation** — static diagnostics clear for `app/canvas.py` and `app/canvas_grip_flow.py`; full headless test suite passes (`272 passed`)
 
+### CI Workflow YAML Syntax Fix (2026-04-25)
+
+- [x] **Fixed invalid multiline `run` syntax** — replaced broken quoted multi-line `python -c` block in `.github/workflows/ci.yml` with a valid YAML block scalar (`run: |`)
+- [x] **Preserved Pyright error surfacing** — kept JSON post-processing behavior by writing `pyright --outputjson` to a file and parsing it in an inline heredoc Python script
+- [x] **Push/PR workflow compatibility restored** — workflow file now conforms to GitHub Actions YAML parsing rules, preventing pre-run "Invalid workflow file" failures
+

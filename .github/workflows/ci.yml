@@ -37,11 +37,24 @@ jobs:
         run: pytest
 
       - name: Run Pyright type-check
-        run: pyright --outputjson | python -c "
-import json, sys
-data = json.load(sys.stdin)
-errors = [d for d in data.get('generalDiagnostics', []) if d['severity'] == 'error']
-for e in errors:
-    print(f\"{e['file']}:{e['range']['start']['line']+1}: {e['message']}\")
-sys.exit(1 if errors else 0)
-"
+        run: |
+          pyright --outputjson > pyright-report.json
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          data = json.loads(pathlib.Path("pyright-report.json").read_text(encoding="utf-8"))
+          errors = [
+            d
+            for d in data.get("generalDiagnostics", [])
+            if d.get("severity") == "error"
+          ]
+          for entry in errors:
+            start = entry.get("range", {}).get("start", {})
+            line_number = int(start.get("line", 0)) + 1
+            file_path = entry.get("file", "<unknown>")
+            message = entry.get("message", "").strip()
+            print(f"{file_path}:{line_number}: {message}")
+          sys.exit(1 if errors else 0)
+          PY

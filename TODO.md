@@ -16,6 +16,7 @@ Tracking note (2026-04-25): Normalized PySide6 enum usage and nullable typing in
 Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting cursor/selection/hit-testing interaction rules into `app/canvas_interaction.py`; validated with full `pytest` pass.
 Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting command-mode snap/draftmate/input gating flow into `app/canvas_command_flow.py`; validated with full `pytest` pass.
 Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting grip-edit lifecycle logic into `app/canvas_grip_flow.py`; validated with full `pytest` pass.
+Tracking note (2026-04-25): Fixed GitHub Actions YAML syntax in `.github/workflows/ci.yml` by converting the Pyright post-processing step to a block `run: |` script with heredoc Python parsing.
 
 ---
 
