@@ -204,6 +204,7 @@ Standard 2D CAD operations that are entirely absent.
 - [ ] **Context menu extensions (right-click on canvas)** — add recent commands and richer entity-specific options (core context menu + command options are already implemented)
 - [ ] **Context menu on entity (right-click)** — Properties, Delete, Move, Copy, etc.
 - [ ] **Grip editing improvements** — show grip count, support multi-grip drag with relative offset
+- [x] **Grip editing: linked coincident grips** — when dragging a grip, move any coincident grips on other *selected* entities at the same time (single undo step)
 - [ ] **Cursor crosshair** — replace default cursor with a full-screen crosshair during drawing commands
 - [ ] **Transparent commands** — allow zoom/pan during another active command without cancelling it (already partially working; audit edge cases)
 

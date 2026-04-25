@@ -157,6 +157,10 @@
 - [x] **Reduced event-handler complexity** — grip-specific branches in `CADCanvas.mousePressEvent`, `CADCanvas.mouseMoveEvent`, and `CADCanvas.handle_escape` now delegate to helper functions while keeping canvas as orchestration layer
 - [x] **Regression validation** — static diagnostics clear for `app/canvas.py` and `app/canvas_grip_flow.py`; full headless test suite passes (`272 passed`)
 
+### Grip Editing Linked Coincident Grips (2026-04-25)
+
+- [x] **Linked coincident grips** — when dragging a grip, any coincident grips on other *selected* entities are moved together during preview and commit, with a single grouped undo step
+
 ### CI Workflow YAML Syntax Fix (2026-04-25)
 
 - [x] **Fixed invalid multiline `run` syntax** — replaced broken quoted multi-line `python -c` block in `.github/workflows/ci.yml` with a valid YAML block scalar (`run: |`)

@@ -245,7 +245,7 @@ def draw_grips(
     grip_half_size: int,
     hot_grip: Optional[GripPoint],
     active_grip: Optional[GripPoint],
-    active_entity_snapshot,
+    active_entity_snapshots: Optional[dict[str, object]] = None,
 ) -> None:
     """Draw CAD grip squares for selected entities."""
     size = grip_half_size
@@ -263,12 +263,10 @@ def draw_grips(
             continue
 
         draw_entity = entity
-        if (
-            active_grip is not None
-            and active_entity_snapshot is not None
-            and entity.id == active_grip.entity_id
-        ):
-            draw_entity = active_entity_snapshot
+        if active_entity_snapshots is not None:
+            snap = active_entity_snapshots.get(entity.id)
+            if snap is not None:
+                draw_entity = snap
 
         for grip in draw_entity.grip_points():
             sp = world_to_screen(QPointF(grip.position.x, grip.position.y))
