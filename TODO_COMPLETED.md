@@ -163,3 +163,9 @@
 - [x] **Preserved Pyright error surfacing** — kept JSON post-processing behavior by writing `pyright --outputjson` to a file and parsing it in an inline heredoc Python script
 - [x] **Push/PR workflow compatibility restored** — workflow file now conforms to GitHub Actions YAML parsing rules, preventing pre-run "Invalid workflow file" failures
 
+### CI Node24 + Headless Stability Update (2026-04-25)
+
+- [x] **Node 24 deprecation mitigation** — added workflow-level `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` and upgraded GitHub actions to current major versions (`actions/checkout@v5`, `actions/setup-python@v6`)
+- [x] **Headless Qt test hardening** — switched pytest execution to `xvfb-run -a pytest` and set up a dedicated `XDG_RUNTIME_DIR` in CI to reduce Qt platform aborts (exit code `134`)
+- [x] **Forward compatibility improved** — workflow now proactively aligns with GitHub’s Node 20 deprecation timeline while preserving existing pytest + pyright checks
+

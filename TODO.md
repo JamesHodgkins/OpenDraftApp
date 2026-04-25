@@ -17,6 +17,7 @@ Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting curs
 Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting command-mode snap/draftmate/input gating flow into `app/canvas_command_flow.py`; validated with full `pytest` pass.
 Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting grip-edit lifecycle logic into `app/canvas_grip_flow.py`; validated with full `pytest` pass.
 Tracking note (2026-04-25): Fixed GitHub Actions YAML syntax in `.github/workflows/ci.yml` by converting the Pyright post-processing step to a block `run: |` script with heredoc Python parsing.
+Tracking note (2026-04-25): Updated CI workflow to force Node 24 for JavaScript actions, bumped `actions/checkout` and `actions/setup-python` to current major versions, and switched pytest execution to `xvfb-run` with an explicit `XDG_RUNTIME_DIR` to reduce Qt headless aborts (exit code 134).
 
 ---
 
