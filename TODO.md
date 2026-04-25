@@ -19,6 +19,7 @@ Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting grip
 Tracking note (2026-04-25): Fixed GitHub Actions YAML syntax in `.github/workflows/ci.yml` by converting the Pyright post-processing step to a block `run: |` script with heredoc Python parsing.
 Tracking note (2026-04-25): Updated CI workflow to force Node 24 for JavaScript actions, bumped `actions/checkout` and `actions/setup-python` to current major versions, and switched pytest execution to `xvfb-run` with an explicit `XDG_RUNTIME_DIR` to reduce Qt headless aborts (exit code 134).
 Tracking note (2026-04-25): Further hardened CI Qt test execution for exit code 134 by using `QT_QPA_PLATFORM=minimal`, software OpenGL (`QT_OPENGL=software`, `LIBGL_ALWAYS_SOFTWARE=1`), Python fault-handler output, and verbose pytest diagnostics.
+Tracking note (2026-04-25): Fixed CI `qtbot` fixture failure by installing Python dependencies from `requirements.txt` (which includes `pytest-qt`) instead of ad-hoc package installation in `.github/workflows/ci.yml`.
 
 ---
 

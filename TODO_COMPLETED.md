@@ -175,3 +175,9 @@
 - [x] **Crash diagnostics enabled** — enabled `PYTHONFAULTHANDLER=1` and `PYTHONUNBUFFERED=1` for better crash traces and immediate log flushing in CI
 - [x] **Actionable pytest output** — updated pytest command to `pytest -ra -vv --maxfail=1` for clearer first-failure context when CI aborts recur
 
+### CI qtbot Fixture Resolution (2026-04-25)
+
+- [x] **Root cause identified** — CI installed ad-hoc packages (`PySide6 pyright pytest`) and skipped `requirements.txt`, so `pytest-qt` was not installed and `qtbot` fixture was unavailable
+- [x] **Dependency install corrected** — workflow install step now uses `python -m pip install -r requirements.txt pyright`, ensuring test plugin dependencies are consistent with the repository
+- [x] **Test collection restored** — pytest can now discover `qtbot` fixture from `pytest-qt` during CI test setup
+
