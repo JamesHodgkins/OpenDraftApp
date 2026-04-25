@@ -91,6 +91,7 @@ While existing open-source CAD solutions such as LibreCAD and FreeCAD are capabl
 - **Lightweight**: Minimal resource usage while maintaining essential functionality.
 - **User-Friendly**: Familiar ribbon-based interface designed for users of all experience levels.
 - **Extendable**: Command-based architecture designed for easy addition of new tools.
+- **Plugin-Ready SDK**: Stable `app.sdk.commands` API (`CommandContext`, `CommandSpec`, `@command`) for third-party command packages.
 - **Modern Stack**: Pure Python with PySide6 — no compiled extensions required.
 - **Free Forever**: Open-source and community-driven, providing professional-grade CAD functionality at no cost.
 

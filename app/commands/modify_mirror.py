@@ -73,9 +73,8 @@ class MirrorCommand(CommandBase):
             bx, by = mouse.x, mouse.y
             return [_mirror_entity(e, ax, ay, bx, by) for e in entities]
 
-        self.editor.set_dynamic(_preview)
-        p2 = self.editor.get_point("Mirror: pick second point of mirror axis")
-        self.editor.clear_dynamic()
+        with self.editor.preview(_preview):
+            p2 = self.editor.get_point("Mirror: pick second point of mirror axis")
 
         ax, ay = p1.x, p1.y
         bx, by = p2.x, p2.y
@@ -83,7 +82,6 @@ class MirrorCommand(CommandBase):
 
         mirrored = [_mirror_entity(e, ax, ay, bx, by) for e in entities]
 
-        self.editor.set_dynamic(None)
         keep_originals = (self.editor.get_choice(
             "Mirror: keep originals?", ["Y", "N"]) == "Y")
 
@@ -91,7 +89,7 @@ class MirrorCommand(CommandBase):
             for ent in mirrored:
                 doc.add_entity(ent)
                 self.editor.entity_added.emit(ent)
-            self.editor._undo_stack.push(
+            self.editor.push_undo_command(
                 _ReplaceEntitiesUndoCommand(doc, [], [], mirrored, "Mirror (keep)"))
         else:
             orig_indices: List[int] = []
@@ -106,10 +104,9 @@ class MirrorCommand(CommandBase):
             for ent in mirrored:
                 doc.add_entity(ent)
                 self.editor.entity_added.emit(ent)
-            self.editor._undo_stack.push(
+            self.editor.push_undo_command(
                 _ReplaceEntitiesUndoCommand(
                     doc, entities, orig_indices, mirrored, "Mirror (delete originals)"))
 
         self.editor.selection.clear()
-        doc._notify()
-        self.editor.document_changed.emit()
+        self.editor.notify_document()

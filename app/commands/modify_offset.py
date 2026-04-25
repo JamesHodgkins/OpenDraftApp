@@ -175,9 +175,8 @@ class OffsetCommand(CommandBase):
                     added.append(new_ent)
 
         if added:
-            self.editor._undo_stack.push(
+            self.editor.push_undo_command(
                 _ReplaceEntitiesUndoCommand(doc, [], [], added, "Offset"))
-            doc._notify()
-            self.editor.document_changed.emit()
+            self.editor.notify_document()
         else:
             self.editor.status_message.emit("Offset: no valid results (distance too large?)")

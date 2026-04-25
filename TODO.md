@@ -4,6 +4,19 @@ A prioritized list of missing features, unimplemented stubs, and future improvem
 
 Once tasks are complete, they are purged over to TODO_COMPLETED.md for record.
 
+Tracking note (2026-04-24): Undo entity index sync regression fix logged in TODO_COMPLETED.md.
+Tracking note (2026-04-24): Move/Copy displacement input now uses base-point vector semantics for Ortho and dynamic vector entry; details logged in TODO_COMPLETED.md.
+Tracking note (2026-04-24): Added fallback vector rubberband visual feedback for base-point point input; details logged in TODO_COMPLETED.md.
+Tracking note (2026-04-24): Vector rubberband now remains visible even when command-specific preview entities are active.
+Tracking note (2026-04-24): Rotate/Scale commands now use vector point input flow (with retained angle/factor options) for ortho and rubberband consistency.
+Tracking note (2026-04-24): Rotate base vector now defines the effective zero-axis for standard rotation-vector picks.
+Tracking note (2026-04-24): Rotate prompts/options now explicitly indicate when input is relative to the base vector reference axis.
+Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting rendering and pen-resolution helpers into `app/canvas_painting.py`; validated with full `pytest` pass.
+Tracking note (2026-04-25): Normalized PySide6 enum usage and nullable typing in `app/canvas.py` to clear Pylance errors (for example `Qt.MouseButton`, `Qt.CursorShape`, `Qt.Key`) with canvas tests passing.
+Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting cursor/selection/hit-testing interaction rules into `app/canvas_interaction.py`; validated with full `pytest` pass.
+Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting command-mode snap/draftmate/input gating flow into `app/canvas_command_flow.py`; validated with full `pytest` pass.
+Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting grip-edit lifecycle logic into `app/canvas_grip_flow.py`; validated with full `pytest` pass.
+
 ---
 
 ## Priority 1 — Complete Existing Stubs
@@ -178,7 +191,7 @@ Standard 2D CAD operations that are entirely absent.
 
 - [ ] **Tooltip previews** — show a small icon or description when hovering over ribbon buttons
 - [x] **Ribbon quick colour popup** — clicking the ribbon colour swatch should show a compact palette (common colours + ByLayer) with an option to open the full colour picker
-- [ ] **Context menu (right-click on canvas)** — recent commands, selection operations, entity-specific options
+- [ ] **Context menu extensions (right-click on canvas)** — add recent commands and richer entity-specific options (core context menu + command options are already implemented)
 - [ ] **Context menu on entity (right-click)** — Properties, Delete, Move, Copy, etc.
 - [ ] **Grip editing improvements** — show grip count, support multi-grip drag with relative offset
 - [ ] **Cursor crosshair** — replace default cursor with a full-screen crosshair during drawing commands
@@ -236,8 +249,19 @@ Issues identified in `AUDIT.md` (2026-04-18). Grouped by priority matching the a
 ### AA-P1 — Architecture
 
 - [x] **Extract `app/geometry.py`** — consolidated arc/intersection helpers from `modify_trim.py` into `app/geometry.py`; `modify_extend.py` now imports from `app.geometry` instead of the brittle `from app.commands.modify_trim import ...` cross-import; base `_geo_*` helpers re-exported from `app.geometry` for a single import site
-- [x] **Refactor `CADCanvas`** — extracted `ViewportTransform` → `app/canvas_viewport.py` (pan/zoom, screen↔world, origin anchor) and `GridRenderer` → `app/canvas_grid.py` (adaptive multi-level grid); canvas delegates via proxy properties and `_draw_grid()` delegation; reduced from 1,419 → 1,229 lines
+- [x] **Refactor `CADCanvas`** — extracted `ViewportTransform` → `app/canvas_viewport.py` (pan/zoom, screen↔world, origin anchor), `GridRenderer` → `app/canvas_grid.py` (adaptive multi-level grid), rendering/pen helpers → `app/canvas_painting.py` (OSNAP marker, Draftmate guides, grips, selection rectangle, vector rubberband, base/overlay pen composition), interaction-rule helpers → `app/canvas_interaction.py` (point resolution, drag thresholding, selection matching, grip/entity hit detection), command-flow helpers → `app/canvas_command_flow.py` (snap/draftmate/input gating), and grip lifecycle helpers → `app/canvas_grip_flow.py` (activate, preview drag, commit/reset); canvas delegates via proxy properties and thin wrapper methods
 - [x] **CI pipeline** — added `.github/workflows/ci.yml` running `pytest` (headless via `QT_QPA_PLATFORM=offscreen`) and `pyright` type-check on every push and PR
+
+### AA-P1b — Command API / Plugin Architecture
+
+- [x] **Create a stable command SDK layer** — added `app/sdk/commands` with public `CommandContext`, `CommandSpec`, and registration decorators (`@command`, `@register`) that route through the core registry
+- [x] **Adopt metadata-rich command specs** — registry now supports metadata-rich `@command(...)` fields and merges ribbon-derived `CommandSpec` metadata (id/display name/description/category/aliases/icon/source/min API version) into core command specs
+- [x] **Enforce command namespacing and collision policy** — command IDs are now canonicalized to namespaced form (`core.*` for legacy core IDs) and registry registration fails fast on command-id/alias collisions
+- [x] **Add plugin discovery via Python entry points** — startup now loads built-ins via `app.commands` autodiscovery and external plugins via `autodiscover_entry_points("opendraft.commands")`
+- [x] **Implement action resolution + startup validation** — added generic action-source validators and startup ribbon-action validation logging against local handlers plus registered commands
+- [x] **Expose high-level command helpers** — added public `EditorTransaction`, `Editor.preview()` / `Editor.highlighted()`, `Editor.push_undo_command()` / `Editor.notify_document()`, and SDK `CommandContext` wrappers; migrated modify commands off direct `editor._undo_stack` usage
+- [x] **Support command catalog refresh** — added command-catalog snapshot/version APIs plus non-core unregister + plugin reload refresh flow; `MainWindow.refresh_command_catalog()` now repopulates command pickers from the refreshed catalog
+- [x] **Add command-architecture contract tests** — added `tests/test_command_architecture_contract.py` covering cancellation lifecycle reset, start-after-cancel behavior, helper undo/redo guarantees, and alive-thread start guard; validated alongside existing collision/plugin/action suites
 
 ### AA-P2 — Technical Debt
 

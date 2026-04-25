@@ -107,11 +107,10 @@ class ExtendCommand(CommandBase):
             self.editor.entity_removed.emit(target.id)
             doc.add_entity(result)
             self.editor.entity_added.emit(result)
-            self.editor._undo_stack.push(
+            self.editor.push_undo_command(
                 _ReplaceEntitiesUndoCommand(
                     doc, [target], [orig_idx], [result], "Extend"))
-            doc._notify()
-            self.editor.document_changed.emit()
+            self.editor.notify_document()
 
 
 def _pick_entity(pt: Vec2, entities: List[BaseEntity],

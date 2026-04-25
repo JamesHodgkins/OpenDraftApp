@@ -135,7 +135,7 @@ class _FilletUndoCommand(UndoCommand):
             pos = min(idx, len(self._doc.entities))
             self._doc.entities.insert(pos, orig)
             self._doc._entity_by_id[orig.id] = orig
-        self._doc._notify()
+        self._doc.notify_changed()
 
 
 # ---------------------------------------------------------------------------
@@ -205,5 +205,5 @@ class FilletCommand(CommandBase):
 
         cmd = _FilletUndoCommand(doc, line1, idx1, line2, idx2, replacements)
         cmd.redo()
-        self.editor._undo_stack.push(cmd)
+        self.editor.push_undo_command(cmd)
         self.editor.document_changed.emit()

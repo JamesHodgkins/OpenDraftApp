@@ -35,10 +35,11 @@ emission from non-GUI threads)
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import queue
 import threading
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Literal, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -53,18 +54,143 @@ from app.editor.settings import EditorSettings
 from app.editor.undo import (
     AddEntityUndoCommand,
     AddLayerUndoCommand,
+    CompositeUndoCommand,
     RemoveEntitiesUndoCommand,
     RemoveLayerUndoCommand,
     RenameLayerUndoCommand,
     SetActiveLayerUndoCommand,
     SetEntityPropertiesUndoCommand,
     SetLayerPropertyUndoCommand,
+    UndoCommand,
     UndoStack,
 )
 
 
 # Sentinel placed in the queue by cancel() to unblock a waiting command.
 _SENTINEL = object()
+_COMMAND_OPTION_PREFIX = "__command_option__:"
+
+InputKind = Literal[
+    "point",
+    "integer",
+    "string",
+    "float",
+    "angle",
+    "length",
+    "choice",
+    "command_option",
+]
+
+
+@dataclass(frozen=True)
+class _InputEvent:
+    """Internal input envelope passed through the editor queue."""
+
+    kind: InputKind
+    value: Any
+
+
+@dataclass(frozen=True)
+class CommandOptionSelection:
+    """A right-click command option selected from the canvas context menu."""
+
+    label: str
+
+
+class EditorTransaction:
+    """Public transaction helper for batching undo and redraw notifications."""
+
+    def __init__(self, editor: "Editor", description: str = "Command change") -> None:
+        self._editor = editor
+        self._description = description
+        self._undo_commands: list[UndoCommand] = []
+        self._notify_document: bool = False
+        self._emit_document_changed: bool = False
+        self._committed: bool = False
+
+    def __enter__(self) -> "EditorTransaction":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if exc_type is None:
+            self.commit()
+
+    def add_undo(self, cmd: UndoCommand) -> None:
+        """Queue an undo command that should be committed with this transaction."""
+        self._undo_commands.append(cmd)
+
+    def notify_document(self) -> None:
+        """Request a full document notify + redraw when the transaction commits."""
+        self._notify_document = True
+
+    def emit_document_changed(self) -> None:
+        """Request only a redraw signal when the transaction commits."""
+        self._emit_document_changed = True
+
+    def entity_added(self, entity: BaseEntity) -> None:
+        """Emit the standard editor signal for an entity addition."""
+        self._editor.entity_added.emit(entity)
+
+    def entity_removed(self, entity_id: str) -> None:
+        """Emit the standard editor signal for an entity removal."""
+        self._editor.entity_removed.emit(entity_id)
+
+    def commit(self) -> None:
+        """Commit queued undo commands and deferred notifications once."""
+        if self._committed:
+            return
+
+        if self._undo_commands:
+            if len(self._undo_commands) == 1:
+                self._editor.push_undo_command(self._undo_commands[0])
+            else:
+                self._editor.push_undo_command(
+                    CompositeUndoCommand(
+                        self._undo_commands,
+                        description=self._description,
+                    )
+                )
+
+        if self._notify_document:
+            self._editor.notify_document()
+        elif self._emit_document_changed:
+            self._editor.document_changed.emit()
+
+        self._committed = True
+
+
+class _EditorPreviewScope:
+    """Context manager that installs and clears dynamic preview callbacks."""
+
+    def __init__(
+        self,
+        editor: "Editor",
+        fn: Callable[[Vec2], List[BaseEntity]],
+    ) -> None:
+        self._editor = editor
+        self._fn = fn
+
+    def __enter__(self) -> "_EditorPreviewScope":
+        self._editor.set_dynamic(self._fn)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._editor.clear_dynamic()
+
+
+class _EditorHighlightScope:
+    """Context manager that installs and clears temporary highlight entities."""
+
+    def __init__(self, editor: "Editor", entities: List[BaseEntity]) -> None:
+        self._editor = editor
+        self._entities = list(entities)
+
+    def __enter__(self) -> "_EditorHighlightScope":
+        self._editor.set_highlight(self._entities)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._editor.clear_highlight()
 
 
 class Editor(QObject):
@@ -96,6 +222,7 @@ class Editor(QObject):
         self._document: DocumentStore = document if document is not None else DocumentStore()
         self.settings: EditorSettings = EditorSettings()
         self._thread: Optional[threading.Thread] = None
+        self._command_lock = threading.RLock()
         self._input_queue: queue.Queue[Any] = queue.Queue(maxsize=1)
         self._cancelled = threading.Event()
         self._active_command: Optional[CommandBase] = None
@@ -103,6 +230,7 @@ class Editor(QObject):
         self._dynamic_callback: Optional[Callable[[Vec2], List[BaseEntity]]] = None
         self._highlight_entities: List[BaseEntity] = []
         self._choice_options: list[str] = []   # keys active during "choice" mode
+        self._command_option_labels: list[str] = []  # labels exposed to context menu
         # Set by commands before calling get_point() so the OSNAP engine can
         # compute perpendicular snaps relative to the previously selected point.
         self.snap_from_point: Optional[Vec2] = None
@@ -147,6 +275,29 @@ class Editor(QObject):
         return self._active_command
 
     @property
+    def input_mode(self) -> str:
+        """Current input mode (e.g. ``"point"``, ``"choice"``, ``"none"``)."""
+        return self._input_mode
+
+    @property
+    def choice_options(self) -> list[str]:
+        """Current choice options (only meaningful while in ``"choice"`` mode)."""
+        return list(self._choice_options) if self._input_mode == "choice" else []
+
+    @property
+    def command_option_labels(self) -> list[str]:
+        """Labels shown under right-click 'Command options' while a command runs."""
+        return list(self._command_option_labels) if self.is_running else []
+
+    def set_command_options(self, options: list[str]) -> None:
+        """Expose command-specific right-click options for the active command."""
+        self._command_option_labels = list(options)
+
+    def clear_command_options(self) -> None:
+        """Remove any command-specific right-click options."""
+        self._command_option_labels = []
+
+    @property
     def is_running(self) -> bool:
         """``True`` while a command thread is alive."""
         return self._thread is not None and self._thread.is_alive()
@@ -169,59 +320,65 @@ class Editor(QObject):
             Action-name string matching the ``@command("…")`` decorator,
             e.g. ``"lineCommand"``.
         """
-        # Cancel any running command and wait for it to finish.
-        if self.is_running:
-            self.cancel()
-            if self._thread:
-                self._thread.join(timeout=2.0)
-                if self._thread.is_alive():
-                    _log.warning(
-                        "Command thread %r did not terminate within 2 s after cancel "
-                        "— starting new command anyway. "
-                        "Check that all get_point/get_integer paths honour cancellation.",
-                        self._thread.name,
-                    )
+        with self._command_lock:
+            # Cancel any running command and wait for it to finish.
+            if self.is_running:
+                self.cancel()
+                if self._thread:
+                    self._thread.join(timeout=2.0)
+                    if self._thread.is_alive():
+                        _log.warning(
+                            "Command thread %r did not terminate within 2 s after cancel. "
+                            "Refusing to start %r while a previous command is still alive.",
+                            self._thread.name,
+                            name,
+                        )
+                        self.status_message.emit(
+                            "Previous command is still cancelling; try again in a moment."
+                        )
+                        return
 
-        cls = get_command(name)
-        if cls is None:
-            self.status_message.emit(f"Unknown command: {name}")
-            return
+            cls = get_command(name)
+            if cls is None:
+                self.status_message.emit(f"Unknown command: {name}")
+                return
 
-        self._cancelled.clear()
-        self._drain_queue()
+            self._cancelled.clear()
+            self._drain_queue()
 
-        cmd = cls(self)
-        self._active_command = cmd
-        self._thread = threading.Thread(
-            target=self._run_in_thread,
-            args=(cmd, name),
-            daemon=True,
-            name=f"cmd-{name}",
-        )
-        self._thread.start()
+            cmd = cls(self)
+            self._active_command = cmd
+            self._thread = threading.Thread(
+                target=self._run_in_thread,
+                args=(cmd, name),
+                daemon=True,
+                name=f"cmd-{name}",
+            )
+            self._thread.start()
 
     def cancel(self) -> None:
         """Cancel the currently running command (equivalent to pressing Escape).
 
         Safe to call from any thread.
         """
-        if not self.is_running:
-            return
-        self._cancelled.set()
-        # Unblock any queued ``_wait_for_input`` call.
-        try:
-            self._input_queue.put_nowait(_SENTINEL)
-        except queue.Full:
-            # A value is already in the queue; swap it for the sentinel so the
-            # waiting call sees it immediately.
-            try:
-                self._input_queue.get_nowait()
-            except queue.Empty:
-                pass
+        with self._command_lock:
+            if not self.is_running:
+                return
+            self._cancelled.set()
+            # Unblock any queued ``_wait_for_input`` call.
             try:
                 self._input_queue.put_nowait(_SENTINEL)
             except queue.Full:
-                pass
+                # A value is already in the queue; swap it for the sentinel so the
+                # waiting call sees it immediately.
+                try:
+                    self._input_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self._input_queue.put_nowait(_SENTINEL)
+                except queue.Full:
+                    pass
 
     # ---------------------------------------------------------- input providers
     # Called by the UI (canvas mouse clicks, dialog boxes, etc.)
@@ -236,47 +393,47 @@ class Editor(QObject):
             import math
             center = self._angle_center or Vec2(0, 0)
             deg = math.degrees(math.atan2(pt.y - center.y, pt.x - center.x))
-            self._put_input(deg)
+            self._put_input_event("angle", deg)
             return
         if self._input_mode == "length":
             import math
             base = self._length_base or Vec2(0, 0)
             dist = math.hypot(pt.x - base.x, pt.y - base.y)
-            self._put_input(dist)
+            self._put_input_event("length", dist)
             return
         if self._input_mode != "point":
             return
-        self._put_input(pt)
+        self._put_input_event("point", pt)
 
     def provide_integer(self, value: int) -> None:
         """Deliver an integer value to the currently waiting command."""
         if self._input_mode != "integer":
             return
-        self._put_input(value)
+        self._put_input_event("integer", value)
 
     def provide_string(self, value: str) -> None:
         """Deliver a string value to the currently waiting command."""
         if self._input_mode != "string":
             return
-        self._put_input(value)
+        self._put_input_event("string", value)
 
     def provide_float(self, value: float) -> None:
         """Deliver a float value to the currently waiting command."""
         if self._input_mode != "float":
             return
-        self._put_input(value)
+        self._put_input_event("float", value)
 
     def provide_angle(self, value: float) -> None:
         """Deliver an angle in degrees to the currently waiting command."""
         if self._input_mode != "angle":
             return
-        self._put_input(value)
+        self._put_input_event("angle", value)
 
     def provide_length(self, value: float) -> None:
         """Deliver a length/distance value to the currently waiting command."""
         if self._input_mode != "length":
             return
-        self._put_input(value)
+        self._put_input_event("length", value)
 
     def provide_choice(self, value: str) -> None:
         """Deliver a choice value to the currently waiting command."""
@@ -285,13 +442,31 @@ class Editor(QObject):
         # Match case-insensitively, return the original option string
         for opt in self._choice_options:
             if opt.lower() == value.lower():
-                self._put_input(opt)
+                self._put_input_event("choice", opt)
+                return
+
+    def provide_command_option(self, value: str) -> None:
+        """Deliver a command option selected from the canvas context menu.
+
+        This is independent of ``input_mode`` so commands can expose options
+        without entering the editor's "choice" input mode.
+        """
+        if not self.is_running:
+            return
+        for opt in self._command_option_labels:
+            if opt.lower() == value.lower():
+                self._put_input_event("command_option", opt)
                 return
 
     # ------------------------------------------------------- blocking input API
     # Called *from the command thread only*.
 
-    def get_point(self, prompt: str = "Select a point") -> Vec2:
+    def get_point(
+        self,
+        prompt: str = "Select a point",
+        *,
+        allow_command_options: bool = False,
+    ) -> Vec2 | CommandOptionSelection:
         """Block the command thread until the user clicks a point on the canvas.
 
         Raises :class:`~app.editor.base_command.CommandCancelled` if Escape
@@ -309,7 +484,13 @@ class Editor(QObject):
         """
         self.status_message.emit(prompt)
         self._set_input_mode("point")
-        return self._wait_for_input()
+        accepted: set[InputKind] = {"point"}
+        if allow_command_options:
+            accepted.add("command_option")
+        value = self._wait_for_input(accepted)
+        if isinstance(value, CommandOptionSelection):
+            return value
+        return value
 
     def get_integer(self, prompt: str = "Enter an integer") -> int:
         """Block the command thread until an integer is provided.
@@ -318,7 +499,7 @@ class Editor(QObject):
         """
         self.status_message.emit(prompt)
         self._set_input_mode("integer")
-        return self._wait_for_input()
+        return self._wait_for_input({"integer"})
 
     def get_float(self, prompt: str = "Enter a value") -> float:
         """Block the command thread until a float is provided.
@@ -327,7 +508,7 @@ class Editor(QObject):
         """
         self.status_message.emit(prompt)
         self._set_input_mode("float")
-        return self._wait_for_input()
+        return self._wait_for_input({"float"})
 
     def get_length(self, prompt: str = "Enter length", base: "Optional[Vec2]" = None) -> float:
         """Block the command thread until a length/distance is provided.
@@ -343,9 +524,15 @@ class Editor(QObject):
             self.snap_from_point = base
         self.status_message.emit(prompt)
         self._set_input_mode("length")
-        return self._wait_for_input()
+        return self._wait_for_input({"length"})
 
-    def get_angle(self, prompt: str = "Enter angle (degrees)", center: "Optional[Vec2]" = None) -> float:
+    def get_angle(
+        self,
+        prompt: str = "Enter angle (degrees)",
+        center: "Optional[Vec2]" = None,
+        *,
+        allow_command_options: bool = False,
+    ) -> float | CommandOptionSelection:
         """Block the command thread until an angle is provided.
 
         Accepts either a typed number (degrees) or a Vec2 click on the canvas
@@ -359,7 +546,13 @@ class Editor(QObject):
             self.snap_from_point = center
         self.status_message.emit(prompt)
         self._set_input_mode("angle")
-        return self._wait_for_input()
+        accepted: set[InputKind] = {"angle"}
+        if allow_command_options:
+            accepted.add("command_option")
+        value = self._wait_for_input(accepted)
+        if isinstance(value, CommandOptionSelection):
+            return value
+        return float(value)
 
     def get_string(self, prompt: str = "Enter text") -> str:
         """Block the command thread until a string is provided.
@@ -368,7 +561,7 @@ class Editor(QObject):
         """
         self.status_message.emit(prompt)
         self._set_input_mode("string")
-        return self._wait_for_input()
+        return self._wait_for_input({"string"})
 
     def get_choice(self, prompt: str, options: list[str]) -> str:
         """Block the command thread until one of *options* is pressed.
@@ -384,7 +577,38 @@ class Editor(QObject):
         self._choice_options = list(options)
         self.status_message.emit(prompt)
         self._set_input_mode("choice")
-        return self._wait_for_input()
+        return self._wait_for_input({"choice"})
+
+    def get_command_option(self, prompt: str, options: list[str]) -> str:
+        """Block the command thread until a context-menu command option is chosen.
+
+        Unlike :meth:`get_choice`, this does not change :attr:`input_mode` or
+        drive the dynamic input widget; it only populates the canvas context
+        menu "Command options" submenu.
+        """
+        self.set_command_options(options)
+        self.status_message.emit(prompt)
+        # Ensure we are not still in a previous input mode (e.g. "point") while
+        # waiting for a context-menu option; otherwise left clicks may enqueue
+        # stale point inputs while the command is blocked on the option queue.
+        self._set_input_mode("none")
+        try:
+            value = self._wait_for_input({"command_option"})
+            choice = self.parse_command_option(value)
+            return choice if choice is not None else str(value)
+        finally:
+            # Once a selection is made (or the command is cancelled), clear the
+            # labels so subsequent right-clicks don't present stale options
+            # while the command is waiting for a different input type.
+            self.clear_command_options()
+
+    def parse_command_option(self, value: Any) -> Optional[str]:
+        """Return a command-option label from *value*, else ``None``."""
+        if isinstance(value, CommandOptionSelection):
+            return value.label
+        if isinstance(value, str) and value.startswith(_COMMAND_OPTION_PREFIX):
+            return value[len(_COMMAND_OPTION_PREFIX):]
+        return None
 
     # -------------------------------------------- dynamic / rubberband preview
     # Called from the command thread; get_dynamic() called from the GUI thread.
@@ -407,6 +631,13 @@ class Editor(QObject):
         self._dynamic_callback = None
         self.document_changed.emit()
 
+    def preview(
+        self,
+        fn: Callable[[Vec2], List[BaseEntity]],
+    ) -> _EditorPreviewScope:
+        """Return a context manager that scopes a dynamic preview callback."""
+        return _EditorPreviewScope(self, fn)
+
     def set_highlight(self, entities: List[BaseEntity]) -> None:
         """Set entities to render with a highlight colour (e.g. cutting edges)."""
         self._highlight_entities = list(entities)
@@ -419,6 +650,10 @@ class Editor(QObject):
         """Remove highlight entities and refresh the canvas."""
         self._highlight_entities = []
         self.document_changed.emit()
+
+    def highlighted(self, entities: List[BaseEntity]) -> _EditorHighlightScope:
+        """Return a context manager that scopes temporary highlights."""
+        return _EditorHighlightScope(self, entities)
 
     def get_dynamic(self, mouse: Vec2) -> List[BaseEntity]:
         """Return preview entities for *mouse* (call from GUI thread only)."""
@@ -520,6 +755,11 @@ class Editor(QObject):
         self.selection.clear()
         return removed_entities
 
+    def notify_document(self) -> None:
+        """Trigger document listeners and a canvas redraw after direct mutations."""
+        self._document.notify_changed()
+        self.document_changed.emit()
+
     # ------------------------------------------------------------------
     # Undo / redo
     # ------------------------------------------------------------------
@@ -528,6 +768,14 @@ class Editor(QObject):
     def undo_stack(self) -> UndoStack:
         """The editor's undo/redo history stack."""
         return self._undo_stack
+
+    def push_undo_command(self, cmd: UndoCommand) -> None:
+        """Push an undo command onto the editor history."""
+        self._undo_stack.push(cmd)
+
+    def transaction(self, description: str = "Command change") -> EditorTransaction:
+        """Create a transaction helper that batches undo + redraw commit steps."""
+        return EditorTransaction(self, description=description)
 
     def undo(self) -> bool:
         """Undo the last recorded action.
@@ -577,7 +825,7 @@ class Editor(QObject):
             self._undo_stack.push(
                 SetEntityPropertiesUndoCommand(doc, changes, description)
             )
-            doc._notify()
+            doc.notify_changed()
             self.document_changed.emit()
 
     def set_layer_property(
@@ -603,7 +851,7 @@ class Editor(QObject):
                 doc, layer_name, attr, old_val, new_value, description
             )
         )
-        doc._notify()
+        doc.notify_changed()
         self.document_changed.emit()
 
     def rename_layer(self, old_name: str, new_name: str) -> None:
@@ -616,7 +864,7 @@ class Editor(QObject):
         if doc.active_layer == old_name:
             doc.active_layer = new_name
         self._undo_stack.push(RenameLayerUndoCommand(doc, old_name, new_name))
-        doc._notify()
+        doc.notify_changed()
         self.document_changed.emit()
 
     def add_layer(self, layer) -> None:
@@ -663,7 +911,7 @@ class Editor(QObject):
                 doc, lyr, layer_index, reassigned, was_active
             )
         )
-        doc._notify()
+        doc.notify_changed()
         self.document_changed.emit()
         return True
 
@@ -675,7 +923,7 @@ class Editor(QObject):
             return
         doc.active_layer = new_name
         self._undo_stack.push(SetActiveLayerUndoCommand(doc, old_name, new_name))
-        doc._notify()
+        doc.notify_changed()
         self.document_changed.emit()
 
     # -------------------------------------------------------------- internals
@@ -697,17 +945,27 @@ class Editor(QObject):
             self._active_command = None
             self._dynamic_callback = None
             self.snap_from_point = None
+            self.suppress_osnap = False
+            self.suppress_dynamic_input = False
+            self._command_option_labels = []
+            self._thread = None
             self._set_input_mode("none")
             self.status_message.emit("")
             self.command_finished.emit()
 
-    def _wait_for_input(self) -> Any:
+    def _wait_for_input(self, accepted_kinds: "Optional[set[InputKind]]" = None) -> Any:
         """Block the command thread until a value or sentinel arrives."""
         while True:
             try:
                 value = self._input_queue.get(timeout=0.05)
                 if value is _SENTINEL:
                     raise CommandCancelled()
+                if isinstance(value, _InputEvent):
+                    if accepted_kinds is not None and value.kind not in accepted_kinds:
+                        continue
+                    if value.kind == "command_option":
+                        return CommandOptionSelection(str(value.value))
+                    return value.value
                 return value
             except queue.Empty:
                 # Periodically check for a cancellation that arrived without
@@ -716,12 +974,32 @@ class Editor(QObject):
                 if self._cancelled.is_set():
                     raise CommandCancelled()
 
+    def _put_input_event(self, kind: InputKind, value: Any) -> None:
+        """Enqueue an internal typed input event."""
+        self._put_input(_InputEvent(kind=kind, value=value))
+
     def _put_input(self, value: Any) -> None:
         """Place *value* in the input queue (non-blocking; drops if full)."""
+        if self._cancelled.is_set():
+            return
         try:
             self._input_queue.put_nowait(value)
         except queue.Full:
-            pass  # A value already queued; the command isn't waiting yet.
+            try:
+                queued = self._input_queue.get_nowait()
+            except queue.Empty:
+                queued = None
+            # Preserve cancellation sentinel if it was already queued.
+            if queued is _SENTINEL:
+                try:
+                    self._input_queue.put_nowait(_SENTINEL)
+                except queue.Full:
+                    pass
+                return
+            try:
+                self._input_queue.put_nowait(value)
+            except queue.Full:
+                pass
 
     def _set_input_mode(self, mode: str) -> None:
         # Always emit so the dynamic input widget re-activates on every new

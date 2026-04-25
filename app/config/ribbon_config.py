@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from app.sdk.commands.spec import CommandSpec
 from controls.ribbon.ribbon_models import RibbonConfiguration
 
 # ---------------------------------------------------------------------------
@@ -126,6 +127,163 @@ PANEL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         {"label": "Export SVG", "icon": "utils_exp_svg", "type": "large", "status": "placeholder"},
     ]},
 }
+
+
+def _append_command_spec(
+    specs: Dict[str, CommandSpec],
+    *,
+    command_id: str,
+    label: str | None,
+    category: str,
+    icon: str | None,
+    source: str,
+    min_api_version: str,
+) -> None:
+    existing = specs.get(command_id)
+    if existing is None:
+        specs[command_id] = CommandSpec(
+            id=command_id,
+            display_name=label,
+            category=category,
+            icon=icon,
+            source=source,
+            min_api_version=min_api_version,
+        )
+        return
+
+    # Keep first non-empty values while allowing later entries to fill gaps.
+    specs[command_id] = CommandSpec(
+        id=command_id,
+        display_name=existing.display_name or label,
+        description=existing.description,
+        category=existing.category if existing.category != "General" else category,
+        aliases=existing.aliases,
+        icon=existing.icon or icon,
+        source=existing.source or source,
+        min_api_version=existing.min_api_version or min_api_version,
+    )
+
+
+def _walk_panel_tools(
+    panel_name: str,
+    tools: List[Dict[str, Any]],
+    specs: Dict[str, CommandSpec],
+    *,
+    source: str,
+    min_api_version: str,
+) -> None:
+    for tool in tools:
+        tool_type = str(tool.get("type", ""))
+
+        if tool_type in ("split", "split-small"):
+            main_action = tool.get("mainAction")
+            if isinstance(main_action, str) and main_action:
+                _append_command_spec(
+                    specs,
+                    command_id=main_action,
+                    label=tool.get("label"),
+                    category=panel_name,
+                    icon=tool.get("icon"),
+                    source=source,
+                    min_api_version=min_api_version,
+                )
+            for item in tool.get("items", []):
+                action = item.get("action")
+                if isinstance(action, str) and action:
+                    _append_command_spec(
+                        specs,
+                        command_id=action,
+                        label=item.get("label"),
+                        category=panel_name,
+                        icon=item.get("icon"),
+                        source=source,
+                        min_api_version=min_api_version,
+                    )
+            continue
+
+        if tool_type == "stack":
+            for column in tool.get("columns", []):
+                if isinstance(column, list):
+                    _walk_panel_tools(
+                        panel_name,
+                        column,
+                        specs,
+                        source=source,
+                        min_api_version=min_api_version,
+                    )
+            continue
+
+        action = tool.get("action")
+        if isinstance(action, str) and action:
+            _append_command_spec(
+                specs,
+                command_id=action,
+                label=tool.get("label"),
+                category=panel_name,
+                icon=tool.get("icon"),
+                source=source,
+                min_api_version=min_api_version,
+            )
+
+
+def _collect_actions_from_tools(tools: List[Dict[str, Any]], actions: set[str]) -> None:
+    for tool in tools:
+        tool_type = str(tool.get("type", ""))
+
+        if tool_type in ("split", "split-small"):
+            main_action = tool.get("mainAction")
+            if isinstance(main_action, str) and main_action:
+                actions.add(main_action)
+            for item in tool.get("items", []):
+                action = item.get("action")
+                if isinstance(action, str) and action:
+                    actions.add(action)
+            continue
+
+        if tool_type == "stack":
+            for column in tool.get("columns", []):
+                if isinstance(column, list):
+                    _collect_actions_from_tools(column, actions)
+            continue
+
+        action = tool.get("action")
+        if isinstance(action, str) and action:
+            actions.add(action)
+
+
+def command_specs_from_ribbon(
+    panel_definitions: Dict[str, Dict[str, Any]] | None = None,
+    *,
+    source: str = "core",
+    min_api_version: str = "1.0",
+) -> Dict[str, CommandSpec]:
+    """Build command metadata specs from ribbon panel definitions."""
+    defs = panel_definitions if panel_definitions is not None else PANEL_DEFINITIONS
+    specs: Dict[str, CommandSpec] = {}
+    for panel_name, panel_def in defs.items():
+        tools = panel_def.get("tools", [])
+        if isinstance(tools, list):
+            _walk_panel_tools(
+                panel_name,
+                tools,
+                specs,
+                source=source,
+                min_api_version=min_api_version,
+            )
+    return specs
+
+
+def ribbon_action_names(
+    panel_definitions: Dict[str, Dict[str, Any]] | None = None,
+) -> set[str]:
+    """Return all ribbon action IDs referenced by panel definitions."""
+    defs = panel_definitions if panel_definitions is not None else PANEL_DEFINITIONS
+    actions: set[str] = set()
+    for panel_def in defs.values():
+        tools = panel_def.get("tools", [])
+        if isinstance(tools, list):
+            _collect_actions_from_tools(tools, actions)
+    return actions
 
 # ---------------------------------------------------------------------------
 # Typed configuration (preferred over the raw-dict constants above)

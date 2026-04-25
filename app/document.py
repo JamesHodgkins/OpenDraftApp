@@ -163,6 +163,10 @@ class DocumentStore:
         self._generation += 1
         self._notifier.changed.emit()
 
+    def notify_changed(self) -> None:
+        """Public helper to notify listeners after in-place document edits."""
+        self._notify()
+
     # ------------------------------------------------------------------
     # Entity CRUD
     # ------------------------------------------------------------------

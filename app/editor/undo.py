@@ -116,6 +116,8 @@ class RemoveEntitiesUndoCommand(UndoCommand):
         for idx, ent in zip(self._indices, self._entities):
             pos = min(idx, len(self._doc.entities))
             self._doc.entities.insert(pos, ent)
+            # Keep the O(1) id index consistent with the entities list.
+            self._doc._entity_by_id[ent.id] = ent
         self._doc._notify()
 
 
@@ -320,6 +322,26 @@ class SetActiveLayerUndoCommand(UndoCommand):
     def undo(self) -> None:
         self._doc.active_layer = self._old
         self._doc._notify()
+
+
+class CompositeUndoCommand(UndoCommand):
+    """Undo command that groups multiple child commands as one step."""
+
+    def __init__(
+        self,
+        commands: List[UndoCommand],
+        description: str = "Composite edit",
+    ) -> None:
+        self._commands = list(commands)
+        self.description = description
+
+    def redo(self) -> None:
+        for cmd in self._commands:
+            cmd.redo()
+
+    def undo(self) -> None:
+        for cmd in reversed(self._commands):
+            cmd.undo()
 
 
 # ---------------------------------------------------------------------------

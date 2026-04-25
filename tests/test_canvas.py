@@ -81,9 +81,9 @@ class TestOriginAnchoring:
     def test_resize_preserves_anchor(self, canvas):
         canvas.set_origin_anchor("bottom-left", inset_x_px=10, inset_y_px=10)
         canvas.setFixedSize(1024, 768)
-        # _update_offset_for_origin is called by resizeEvent, but
-        # setFixedSize may not fire events in test; call manually.
-        canvas._update_offset_for_origin()
+        # update_offset_for_size is called by resizeEvent, but setFixedSize
+        # may not fire events in test; call it manually.
+        canvas._vp.update_offset_for_size(canvas.width(), canvas.height())
         sp = canvas.world_to_screen(QPointF(0, 0))
         assert sp.x() == pytest.approx(10.0, abs=1.0)
         assert sp.y() == pytest.approx(canvas.height() - 10.0, abs=1.0)
@@ -107,13 +107,13 @@ class TestScaling:
     def test_zoom_in(self, canvas):
         """Doubling scale should double screen distances."""
         canvas.scale = 1.0
-        canvas._update_offset_for_origin()
+        canvas._vp.update_offset_for_size(canvas.width(), canvas.height())
         s0 = canvas.world_to_screen(QPointF(0, 0))
         s10 = canvas.world_to_screen(QPointF(10, 0))
         delta1 = s10.x() - s0.x()
 
         canvas.scale = 2.0
-        canvas._update_offset_for_origin()
+        canvas._vp.update_offset_for_size(canvas.width(), canvas.height())
         s0 = canvas.world_to_screen(QPointF(0, 0))
         s10 = canvas.world_to_screen(QPointF(10, 0))
         delta2 = s10.x() - s0.x()
@@ -223,3 +223,46 @@ def test_delete_without_selection_does_nothing(canvas):
     canvas.keyPressEvent(key(None, Qt.Key_Delete))
     # entity still present
     assert doc.get_entity(e.id) is e
+
+
+def test_vector_rubberband_points_require_point_mode_base_and_cursor(canvas):
+    base = Vec2(1, 2)
+    tip = Vec2(6, 7)
+
+    canvas._editor._input_mode = "point"
+    canvas._editor.snap_from_point = base
+    canvas._cursor_world = tip
+    canvas._preview_entities = []
+
+    assert canvas._vector_rubberband_world_points() == (base, tip)
+
+
+def test_vector_rubberband_points_visible_with_preview_entities(canvas):
+    base = Vec2(1, 2)
+    tip = Vec2(6, 7)
+
+    canvas._editor._input_mode = "point"
+    canvas._editor.snap_from_point = base
+    canvas._cursor_world = tip
+
+    # Command preview entities should not suppress the vector guide.
+    canvas._preview_entities = [LineEntity(p1=Vec2(0, 0), p2=Vec2(1, 1))]
+    assert canvas._vector_rubberband_world_points() == (base, tip)
+
+
+def test_vector_rubberband_points_hidden_for_missing_context(canvas):
+    tip = Vec2(6, 7)
+
+    canvas._editor._input_mode = "point"
+    canvas._editor.snap_from_point = None
+    canvas._cursor_world = tip
+    assert canvas._vector_rubberband_world_points() is None
+
+    canvas._editor._input_mode = "integer"
+    assert canvas._vector_rubberband_world_points() is None
+
+
+def test_input_mode_none_clears_cursor_world_state(canvas):
+    canvas._cursor_world = Vec2(3, 4)
+    canvas._on_editor_input_mode_changed("none")
+    assert canvas._cursor_world is None

@@ -64,6 +64,10 @@ git checkout -b feature/your-feature-name
 Follow these conventions when contributing:
 
 - Commands live in `app/commands/` and should follow the existing command pattern
+- Public command SDK lives in `app/sdk/commands/` (`CommandContext`, `CommandSpec`, `@command`) for plugin/third-party command authors
+- Command logic should use helper APIs (`preview`, `highlighted`, `transaction`, `push_undo`, `notify_document`) instead of touching private internals like `editor._undo_stack` or `doc._notify`
+- Third-party command IDs must be namespaced (for example `vendor.toolName`) to avoid registry collisions
+- Third-party command packages should expose an `opendraft.commands` entry point whose target imports/registers plugin commands
 - New entity types go in `app/entities/` with a corresponding entry in `app/entities/__init__.py`
 - Ribbon entries are configured in `app/config/ribbon_config.py`
 - Keep code clean and consistent with the surrounding style — avoid unnecessary abstractions

@@ -4,6 +4,7 @@ Main application window for OpenDraft.
 Assembles the top-level layout and wires all major subsystems together.
 Ribbon configuration data lives in :mod:`app.config.ribbon_config`.
 """
+import logging
 from typing import Optional
 
 from pathlib import Path
@@ -25,10 +26,23 @@ from app.ui.layer_manager import LayerManagerDialog
 from app.ui.draftmate_settings import DraftmateSettingsDialog
 from app.ui.status_bar import StatusBarWidget
 from app.ui.properties_panel import PropertiesPanel
-from app.config.ribbon_config import RIBBON_CONFIG
-from app.editor.command_registry import autodiscover, registered_commands
+from app.config.ribbon_config import (
+    RIBBON_CONFIG,
+    command_specs_from_ribbon,
+    ribbon_action_names,
+)
+from app.editor.command_registry import (
+    apply_command_specs,
+    autodiscover,
+    autodiscover_entry_points,
+    command_catalog,
+    refresh_command_catalog as refresh_registered_command_catalog,
+    validate_action_sources,
+)
 from app.logger import configure_logging
 from app.ribbon_bridge import RibbonDocumentBridge
+
+_log = logging.getLogger(__name__)
 
 configure_logging()
 
@@ -36,6 +50,27 @@ configure_logging()
 # Using autodiscover() instead of a bare `import app.commands` side-effect
 # import makes the intent explicit and prevents linters from stripping it.
 autodiscover("app.commands")
+autodiscover_entry_points("opendraft.commands")
+apply_command_specs(command_specs_from_ribbon())
+
+_LOCAL_ACTION_NAMES = {
+    "toggleLayerModal",
+    "togglePropertiesPanel",
+    "toggleSettingsModal",
+    "undo",
+    "redo",
+}
+
+_STARTUP_ACTION_REPORTS = validate_action_sources(
+    {"ribbon": ribbon_action_names()},
+    local_actions=_LOCAL_ACTION_NAMES,
+)
+_UNRESOLVED_RIBBON_ACTIONS = _STARTUP_ACTION_REPORTS["ribbon"].unresolved_actions
+if _UNRESOLVED_RIBBON_ACTIONS:
+    _log.warning(
+        "Unresolved ribbon actions at startup: %s",
+        ", ".join(_UNRESOLVED_RIBBON_ACTIONS),
+    )
 
 class MainWindow(QMainWindow):
     """Top-level application window."""
@@ -77,8 +112,8 @@ class MainWindow(QMainWindow):
         redo_shortcut.activated.connect(self.editor.redo)
 
         # Delete key — delete selected entities when no command is running.
-        # Must call delete_selection() directly (not via run_command) because
-        # command_started clears the selection before the thread can act on it.
+        # Call delete_selection() directly (not via run_command) because
+        # delete is an immediate UI action, not a threaded command workflow.
         del_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete), self)
         def _handle_delete():
             if not self.editor.is_running and self.editor.selection:
@@ -95,7 +130,7 @@ class MainWindow(QMainWindow):
 
         # Command palette — populate once all commands are registered, then
         # open it whenever the canvas fires paletteRequested (Space key).
-        canvas._command_palette.populate(registered_commands())
+        self._refresh_command_pickers()
         canvas.paletteRequested.connect(canvas._command_palette.open)  # seed str passed through
         canvas._command_palette.command_selected.connect(self.editor.run_command)
 
@@ -245,9 +280,27 @@ class MainWindow(QMainWindow):
     # Action routing
     # -----------------------------------------------------------------------
 
+    def _refresh_command_pickers(self) -> None:
+        """Repopulate command pickers from the latest catalog snapshot."""
+        self._canvas._command_palette.populate(command_catalog())
+
+    def refresh_command_catalog(self, *, reload_plugins: bool = True) -> None:
+        """Refresh plugin commands and repopulate picker UIs.
+
+        Intended for future plugin manager flows that install/unload plugins
+        at runtime and need picker UIs to reflect the latest command set.
+        """
+        report = refresh_registered_command_catalog(reload_plugins=reload_plugins)
+        self._refresh_command_pickers()
+        _log.info(
+            "Command catalog refreshed: %d commands, %d removed, %d entry points loaded",
+            report.command_count,
+            len(report.removed_command_ids),
+            len(report.loaded_entry_points),
+        )
+
     # Actions handled directly by MainWindow (not forwarded to the editor)
-    _LOCAL_ACTIONS = {"toggleLayerModal", "togglePropertiesPanel", "toggleSettingsModal",
-                       "undo", "redo"}
+    _LOCAL_ACTIONS = set(_LOCAL_ACTION_NAMES)
 
     def _on_action(self, name: str) -> None:
         """Route ribbon actions to the correct handler.
@@ -259,12 +312,12 @@ class MainWindow(QMainWindow):
             self._toggle_layer_modal()
         elif name == "togglePropertiesPanel":
             self._toggle_properties_panel()
+        elif name == "toggleSettingsModal":
+            self._open_draftmate_settings()
         elif name == "undo":
             self.editor.undo()
         elif name == "redo":
             self.editor.redo()
-        elif name in self._LOCAL_ACTIONS:
-            pass
         else:
             self.editor.run_command(name)
 

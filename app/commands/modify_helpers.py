@@ -126,7 +126,7 @@ class _TransformUndoCommand(UndoCommand):
                         setattr(live, attr, getattr(snap, attr))
                     except Exception:
                         pass
-        self._doc._notify()
+        self._doc.notify_changed()
 
 
 class _ReplaceEntitiesUndoCommand(UndoCommand):
@@ -147,7 +147,7 @@ class _ReplaceEntitiesUndoCommand(UndoCommand):
             self._doc.remove_entity(ent.id)
         for ent in self._added:
             self._doc.add_entity(ent)
-        self._doc._notify()
+        self._doc.notify_changed()
 
     def undo(self) -> None:
         for ent in self._added:
@@ -155,7 +155,7 @@ class _ReplaceEntitiesUndoCommand(UndoCommand):
         for idx, ent in zip(self._removed_indices, self._removed):
             pos = min(idx, len(self._doc.entities))
             self._doc.entities.insert(pos, ent)
-        self._doc._notify()
+        self._doc.notify_changed()
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +223,6 @@ def _commit_transform(
                     setattr(live, attr, getattr(snap, attr))
                 except Exception:
                     pass
-    doc._notify()
-
-    editor._undo_stack.push(_TransformUndoCommand(doc, before, after, description))
+    editor.push_undo_command(_TransformUndoCommand(doc, before, after, description))
     editor.selection.clear()
-    editor.document_changed.emit()
+    editor.notify_document()

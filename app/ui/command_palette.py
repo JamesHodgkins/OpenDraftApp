@@ -8,7 +8,7 @@ first character of the query).  Dismissed by Escape.
 from __future__ import annotations
 
 import re
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from PySide6.QtCore import Qt, Signal, QRectF, QTimer
 from PySide6.QtGui import (
@@ -46,6 +46,14 @@ def _command_display_name(key: str) -> str:
     # Split on camelCase / underscores
     parts = re.sub(r'([A-Z])', r' \1', label).replace('_', ' ').split()
     return ' '.join(p.capitalize() for p in parts) if parts else key
+
+
+def _label_for_command_entry(key: str, entry: Any) -> str:
+    """Resolve a user-visible label for a command registry entry."""
+    display_name = getattr(entry, "display_name", None)
+    if isinstance(display_name, str) and display_name.strip():
+        return display_name
+    return _command_display_name(key)
 
 
 class CommandPaletteWidget(QWidget):
@@ -86,10 +94,10 @@ class CommandPaletteWidget(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def populate(self, commands: dict) -> None:
-        """Load command registry dict ``{key: cls}``."""
+    def populate(self, commands: dict[str, Any]) -> None:
+        """Load command registry/spec dict keyed by command id."""
         self._all = sorted(
-            [(_k, _command_display_name(_k)) for _k in commands],
+            [(_k, _label_for_command_entry(_k, _v)) for _k, _v in commands.items()],
             key=lambda t: t[1].lower(),
         )
 

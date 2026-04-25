@@ -7,7 +7,7 @@ on interaction + rendering rather than menu wiring.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Iterable, Optional
 
 from PySide6.QtWidgets import QMenu, QWidget
 
@@ -27,6 +27,8 @@ class CanvasContextMenu(QMenu):
         has_selection: bool,
         repeat_label: str,
         can_repeat: bool,
+        command_option_labels: Optional[Iterable[str]],
+        on_command_option: Optional[Callable[[str], None]],
         on_cancel: Callable[[], None],
         on_undo: Callable[[], None],
         on_redo: Callable[[], None],
@@ -72,7 +74,16 @@ class CanvasContextMenu(QMenu):
             }
         """)
 
+        # When a command is running we still allow a small set of safe actions,
+        # e.g. "Cancel" and any command-provided (choice) options.
         if not is_idle:
+            labels = list(command_option_labels or [])
+            if labels and on_command_option is not None:
+                for label in labels:
+                    act = self.addAction(label)
+                    act.triggered.connect(lambda _checked=False, v=label: on_command_option(v))
+                self.addSeparator()
+
             act_cancel = self.addAction("Cancel")
             act_cancel.triggered.connect(on_cancel)
             return

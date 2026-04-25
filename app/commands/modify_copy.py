@@ -13,7 +13,7 @@ from app.commands.modify_helpers import (
 
 @command("copyCommand")
 class CopyCommand(CommandBase):
-    """Copy selected entities; supports multiple placements before Escape."""
+    """Copy selected entities by vector displacement; supports multiple placements."""
 
     def execute(self) -> None:
         entities = _collect_selected(self.editor)
@@ -22,27 +22,31 @@ class CopyCommand(CommandBase):
             return
 
         base = self.editor.get_point("Copy: pick base point")
+        self.editor.snap_from_point = base
+        try:
+            while True:
+                def _preview(mouse: Vec2) -> List[BaseEntity]:
+                    dx, dy = mouse.x - base.x, mouse.y - base.y
+                    return [_transform_entity(e, lambda v, _dx=dx, _dy=dy: _translate(v, _dx, _dy))
+                            for e in entities]
 
-        while True:
-            def _preview(mouse: Vec2) -> List[BaseEntity]:
-                dx, dy = mouse.x - base.x, mouse.y - base.y
-                return [_transform_entity(e, lambda v, _dx=dx, _dy=dy: _translate(v, _dx, _dy))
-                        for e in entities]
+                with self.editor.preview(_preview):
+                    vector_tip = self.editor.get_point(
+                        "Copy: specify displacement vector (Escape to finish)"
+                    )
 
-            self.editor.set_dynamic(_preview)
-            dest = self.editor.get_point("Copy: pick destination (Escape to finish)")
-            self.editor.clear_dynamic()
+                delta = vector_tip - base
+                dx, dy = delta.x, delta.y
+                doc = self.editor.document
+                added: List[BaseEntity] = []
+                for ent in entities:
+                    new_ent = _transform_entity(ent, lambda v, _dx=dx, _dy=dy: _translate(v, _dx, _dy))
+                    doc.add_entity(new_ent)
+                    self.editor.entity_added.emit(new_ent)
+                    added.append(new_ent)
 
-            dx, dy = dest.x - base.x, dest.y - base.y
-            doc = self.editor.document
-            added: List[BaseEntity] = []
-            for ent in entities:
-                new_ent = _transform_entity(ent, lambda v, _dx=dx, _dy=dy: _translate(v, _dx, _dy))
-                doc.add_entity(new_ent)
-                self.editor.entity_added.emit(new_ent)
-                added.append(new_ent)
-
-            self.editor._undo_stack.push(
-                _ReplaceEntitiesUndoCommand(doc, [], [], added, "Copy"))
-            doc._notify()
-            self.editor.document_changed.emit()
+                self.editor.push_undo_command(
+                    _ReplaceEntitiesUndoCommand(doc, [], [], added, "Copy"))
+                self.editor.notify_document()
+        finally:
+            self.editor.snap_from_point = None

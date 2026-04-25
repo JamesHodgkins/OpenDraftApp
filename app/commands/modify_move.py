@@ -17,7 +17,7 @@ from app.commands.modify_helpers import (
 
 @command("moveCommand")
 class MoveCommand(CommandBase):
-    """Translate selected entities from a base point to a destination."""
+    """Translate selected entities by a displacement vector from a base point."""
 
     def execute(self) -> None:
         entities = _collect_selected(self.editor)
@@ -26,17 +26,20 @@ class MoveCommand(CommandBase):
             return
 
         base = self.editor.get_point("Move: pick base point")
+        self.editor.snap_from_point = base
+        try:
+            def _preview(mouse: Vec2) -> List[BaseEntity]:
+                dx, dy = mouse.x - base.x, mouse.y - base.y
+                return [_transform_entity(e, lambda v, _dx=dx, _dy=dy: _translate(v, _dx, _dy))
+                        for e in entities]
 
-        def _preview(mouse: Vec2) -> List[BaseEntity]:
-            dx, dy = mouse.x - base.x, mouse.y - base.y
-            return [_transform_entity(e, lambda v, _dx=dx, _dy=dy: _translate(v, _dx, _dy))
-                    for e in entities]
+            with self.editor.preview(_preview):
+                vector_tip = self.editor.get_point("Move: specify displacement vector")
+        finally:
+            self.editor.snap_from_point = None
 
-        self.editor.set_dynamic(_preview)
-        dest = self.editor.get_point("Move: pick destination point")
-        self.editor.clear_dynamic()
-
-        dx, dy = dest.x - base.x, dest.y - base.y
+        delta = vector_tip - base
+        dx, dy = delta.x, delta.y
         doc = self.editor.document
 
         before = [copy.deepcopy(e) for e in entities]
@@ -60,8 +63,6 @@ class MoveCommand(CommandBase):
                     ent.points = [_translate(p, dx, dy) for p in ent.points]
 
         after = [copy.deepcopy(e) for e in entities]
-        self.editor._undo_stack.push(
-            _TransformUndoCommand(doc, before, after, "Move"))
+        self.editor.push_undo_command(_TransformUndoCommand(doc, before, after, "Move"))
         self.editor.selection.clear()
-        doc._notify()
-        self.editor.document_changed.emit()
+        self.editor.notify_document()

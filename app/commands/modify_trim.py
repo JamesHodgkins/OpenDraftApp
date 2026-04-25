@@ -60,7 +60,7 @@ class _TrimUndoCommand(UndoCommand):
         pos = min(self._original_index, len(self._doc.entities))
         self._doc.entities.insert(pos, self._original)
         self._doc._entity_by_id[self._original.id] = self._original
-        self._doc._notify()
+        self._doc.notify_changed()
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +654,7 @@ class TrimCommand(CommandBase):
                 self.editor.entity_added.emit(ent)
             self.editor.document_changed.emit()
 
-            self.editor._undo_stack.push(
+            self.editor.push_undo_command(
                 _TrimUndoCommand(doc, target, original_index, replacements))
 
             # If we trimmed a cutting edge, update the highlight list.

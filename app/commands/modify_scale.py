@@ -6,6 +6,7 @@ from typing import List
 
 from app.editor import command
 from app.editor.base_command import CommandBase
+from app.editor.editor import CommandOptionSelection
 from app.entities import BaseEntity, Vec2
 from app.commands.modify_helpers import (
     _collect_selected, _transform_entity, _scale_pt,
@@ -34,10 +35,27 @@ class ScaleCommand(CommandBase):
             def post_fn(e, orig): return _post_scale_radius(e, orig, factor)
             return [_transform_entity(ent, pt_fn, post_fn) for ent in entities]
 
-        self.editor.set_dynamic(_preview)
-        raw = self.editor.get_length("Scale: pick a point or enter scale factor", base=base)
-        self.editor.clear_dynamic()
-        factor = raw / 100.0 if raw > 1e-6 else raw
+        factor: float | None = None
+        while factor is None:
+            self.editor.set_command_options(["Enter factor"])
+            try:
+                with self.editor.preview(_preview):
+                    result = self.editor.get_point(
+                        "Scale: specify reference vector or choose option",
+                        allow_command_options=True,
+                    )
+            finally:
+                self.editor.clear_command_options()
+
+            if isinstance(result, CommandOptionSelection):
+                if result.label == "Enter factor":
+                    factor = self.editor.get_float("Scale: enter scale factor")
+                continue
+
+            raw = math.hypot(result.x - base.x, result.y - base.y)
+            factor = raw / 100.0 if raw > 1e-6 else raw
+
+        assert factor is not None
 
         if abs(factor) < 1e-9:
             self.editor.status_message.emit("Scale: factor too small, cancelled")
