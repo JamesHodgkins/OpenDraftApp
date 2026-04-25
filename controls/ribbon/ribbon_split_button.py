@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QIcon, QPainter
 from PySide6.QtCore import Qt, QSize
 
-from controls.icon_widget import Icon, load_pixmap
+from controls.icon_widget import load_pixmap
 from controls.ribbon.ribbon_constants import SIZE, Styles, COLORS
 
 __all__ = ["RibbonSplitButton"]
@@ -38,7 +38,12 @@ class _SmallSplitMainButton(QPushButton):
 
         option.icon = QIcon()
         option.text = ""
-        self.style().drawControl(QStyle.CE_PushButtonBevel, option, painter, self)
+        self.style().drawControl(
+            QStyle.ControlElement.CE_PushButtonBevel,
+            option,
+            painter,
+            self,
+        )
 
         icon_size = self.iconSize()
         icon_top = ((self.height() - icon_size.height()) // 2) + self._ICON_TOP_OFFSET

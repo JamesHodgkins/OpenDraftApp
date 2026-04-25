@@ -47,7 +47,7 @@ class _ToolOverflowPopup(QFrame):
         for tool in tools:
             tool.setParent(self)
             tool.show()
-            layout.addWidget(tool, alignment=Qt.AlignTop)
+            layout.addWidget(tool, alignment=Qt.AlignmentFlag.AlignTop)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         for tool in self._tools:
@@ -122,18 +122,20 @@ class RibbonPanelFrame(QFrame):
         )
         self._chevron.clicked.connect(self._show_overflow_popup)
         self._chevron.hide()
-        row_layout.addWidget(self._chevron, alignment=Qt.AlignTop)
+        row_layout.addWidget(self._chevron, alignment=Qt.AlignmentFlag.AlignTop)
 
-        layout.addWidget(content_row, alignment=Qt.AlignTop)
+        layout.addWidget(content_row, alignment=Qt.AlignmentFlag.AlignTop)
         layout.addStretch(1)
 
         title_label = QLabel(title)
         title_label.setFixedHeight(14)
-        title_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        title_label.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+        )
         title_label.setProperty("ribbonPanelTitle", True)
         title_label.setProperty("dark", dark)
         title_label.setStyleSheet(Styles.panel_title(dark))
-        layout.addWidget(title_label, alignment=Qt.AlignHCenter)
+        layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.setLayout(layout)
 
@@ -302,7 +304,7 @@ class RibbonPanelFrame(QFrame):
         while content_layout.count() > 0:
             content_layout.takeAt(0)
         for tool in self._tool_items:
-            content_layout.addWidget(tool, alignment=Qt.AlignTop)
+            content_layout.addWidget(tool, alignment=Qt.AlignmentFlag.AlignTop)
         if self._constrained:
             self._reflow_tools()
         else:

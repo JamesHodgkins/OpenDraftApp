@@ -21,7 +21,7 @@ from controls.ribbon.ribbon_models import (
     LayerSelectDefinition, PropStackDefinition,
 )
 from controls.ribbon.ribbon_split_button import RibbonSplitButton
-from controls.icon_widget import Icon, load_pixmap
+from controls.icon_widget import load_pixmap
 
 __all__ = [
     "ColorSwatchButton",
@@ -91,8 +91,11 @@ class ColorSwatchButton(QPushButton):
         text_x = cx + circle_d // 2 + 6
         painter.setPen(QColor(COLORS.CONTROL_TEXT))
         painter.setFont(self.font())
-        painter.drawText(QRect(text_x, 0, r.width() - text_x - 2, r.height()),
-                         Qt.AlignVCenter | Qt.AlignLeft, label)
+        painter.drawText(
+            QRect(text_x, 0, r.width() - text_x - 2, r.height()),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            label,
+        )
         painter.end()
 
 
@@ -118,8 +121,8 @@ class RibbonLargeButton(QToolButton):
         )
 
         if not self.icon().isNull():
-            mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
-            state = QIcon.On if self.isDown() else QIcon.Off
+            mode = QIcon.Mode.Normal if self.isEnabled() else QIcon.Mode.Disabled
+            state = QIcon.State.On if self.isDown() else QIcon.State.Off
             pixmap = self.icon().pixmap(self.iconSize(), mode, state)
             painter.drawPixmap(icon_rect, pixmap)
 
@@ -130,7 +133,11 @@ class RibbonLargeButton(QToolButton):
             max(0, content_rect.bottom() - (icon_rect.bottom() + self._icon_text_gap) + 1),
         )
         painter.setPen(self.palette().buttonText().color())
-        painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap, self.text())
+        text_flags = (
+            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            | int(Qt.TextFlag.TextWordWrap)
+        )
+        painter.drawText(text_rect, text_flags, self.text())
         painter.end()
 
 
@@ -252,11 +259,11 @@ class ButtonFactory:
                 for btn_def in chunk:
                     col_layout.addWidget(
                         self._create_small_button(btn_def),
-                        alignment=Qt.AlignLeft | Qt.AlignTop,
+                        alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
                     )
                 col_layout.addStretch()
                 col_widget.setLayout(col_layout)
-                stack_layout.addWidget(col_widget, alignment=Qt.AlignTop)
+                stack_layout.addWidget(col_widget, alignment=Qt.AlignmentFlag.AlignTop)
 
         stack_widget.setLayout(stack_layout)
         return stack_widget
@@ -279,7 +286,7 @@ class ButtonFactory:
 
         lbl = QLabel(tool.label or "Layer")
         lbl.setStyleSheet(_PROP_LABEL_STYLE)
-        lbl.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
         vbox.addWidget(lbl)
 
         combo = QComboBox()
@@ -318,7 +325,7 @@ class ButtonFactory:
             lbl = QLabel(row.label)
             lbl.setStyleSheet(_PROP_LABEL_STYLE)
             lbl.setFixedWidth(38)
-            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             row_h.addWidget(lbl)
 
             if row.type == "color-swatch":
@@ -372,15 +379,18 @@ class PanelFactory:
                 if small_buttons:
                     layout.addWidget(
                         self._create_small_button_column(small_buttons),
-                        alignment=Qt.AlignTop,
+                        alignment=Qt.AlignmentFlag.AlignTop,
                     )
                     small_buttons = []
-                layout.addWidget(self.button_factory.create_button(tool), alignment=Qt.AlignTop)
+                layout.addWidget(
+                    self.button_factory.create_button(tool),
+                    alignment=Qt.AlignmentFlag.AlignTop,
+                )
 
         if small_buttons:
             layout.addWidget(
                 self._create_small_button_column(small_buttons),
-                alignment=Qt.AlignTop,
+                alignment=Qt.AlignmentFlag.AlignTop,
             )
 
         content.setLayout(layout)
@@ -395,7 +405,10 @@ class PanelFactory:
             vbox.setSpacing(SIZE.STACK_SPACING)
             vbox.setContentsMargins(*MARGINS.NONE)
             for btn in buttons:
-                vbox.addWidget(btn, alignment=Qt.AlignLeft | Qt.AlignTop)
+                vbox.addWidget(
+                    btn,
+                    alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                )
             vbox.addStretch()
             col.setLayout(vbox)
             return col
@@ -411,9 +424,12 @@ class PanelFactory:
             vbox.setSpacing(SIZE.STACK_SPACING)
             vbox.setContentsMargins(*MARGINS.NONE)
             for btn in chunk:
-                vbox.addWidget(btn, alignment=Qt.AlignLeft | Qt.AlignTop)
+                vbox.addWidget(
+                    btn,
+                    alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                )
             vbox.addStretch()
             col.setLayout(vbox)
-            hbox.addWidget(col, alignment=Qt.AlignTop)
+            hbox.addWidget(col, alignment=Qt.AlignmentFlag.AlignTop)
         wrapper.setLayout(hbox)
         return wrapper

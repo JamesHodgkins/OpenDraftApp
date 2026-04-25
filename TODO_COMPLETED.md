@@ -197,3 +197,10 @@
 - [x] **Pyright enum compatibility** — replaced legacy `QIcon.Normal/Disabled` with `QIcon.Mode.Normal/Disabled` and `QIcon.On/Off` with `QIcon.State.On/Off` in `_SmallSplitMainButton.paintEvent()`
 - [x] **No behavioral change** — retained identical icon mode/state selection logic for enabled/disabled and pressed/unpressed rendering paths
 
+### Ribbon Pyright Enum & Import Cleanup (2026-04-25)
+
+- [x] **Unused import diagnostics fixed** — removed unused `Icon` imports from `controls/ribbon/ribbon_split_button.py` and `controls/ribbon/ribbon_factory.py`
+- [x] **`AlignTop` diagnostics fixed** — replaced legacy `Qt.AlignTop` and related `Qt.Align*` combinations with `Qt.AlignmentFlag.*` across `controls/ribbon/ribbon_factory.py` and `controls/ribbon/ribbon_panel_widget.py`
+- [x] **`QStyle` control-element typing fixed** — updated split-button bevel draw call to `QStyle.ControlElement.CE_PushButtonBevel` for PySide6 stub compatibility
+- [x] **Additional enum modernization** — updated `RibbonLargeButton` icon state/mode usage to `QIcon.State.*` and `QIcon.Mode.*`; replaced `Qt.TextWordWrap` with `Qt.TextFlag.TextWordWrap` in custom large-button text drawing
+

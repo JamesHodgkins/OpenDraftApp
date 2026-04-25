@@ -23,6 +23,7 @@ Tracking note (2026-04-25): Fixed CI `qtbot` fixture failure by installing Pytho
 Tracking note (2026-04-25): Fixed Pyright CI log visibility by allowing `pyright --outputjson` to continue (`|| true`) and adding robust JSON/missing-report handling so parsed type errors are printed before failing the workflow.
 Tracking note (2026-04-25): Updated `_SmallSplitMainButton.paintEvent()` in `controls/ribbon/ribbon_split_button.py` to use `Qt.AlignmentFlag` for text alignment (`AlignLeft | AlignVCenter`) in `painter.drawText(...)`, matching current PySide6 typing expectations.
 Tracking note (2026-04-25): Fixed Pyright errors in `controls/ribbon/ribbon_split_button.py` by replacing `QIcon.On/Off` and `QIcon.Normal/Disabled` with scoped enum members `QIcon.State.*` and `QIcon.Mode.*` in custom split-button painting.
+Tracking note (2026-04-25): Applied ribbon-wide Pyright enum cleanup by replacing legacy `Qt.Align*` usage with `Qt.AlignmentFlag.*`, switching split-button bevel drawing to `QStyle.ControlElement.CE_PushButtonBevel`, modernizing `RibbonLargeButton` icon mode/state enums, and removing unused `Icon` imports in ribbon controls.
 
 ---
 
