@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QIcon, QPainter
 from PySide6.QtCore import Qt, QSize
 
-from controls.icon_widget import Icon, load_pixmap
+from controls.icon_widget import load_pixmap
 from controls.ribbon.ribbon_constants import SIZE, Styles, COLORS
 
 __all__ = ["RibbonSplitButton"]
@@ -38,26 +38,32 @@ class _SmallSplitMainButton(QPushButton):
 
         option.icon = QIcon()
         option.text = ""
-        self.style().drawControl(QStyle.CE_PushButtonBevel, option, painter, self)
+        self.style().drawControl(
+            QStyle.ControlElement.CE_PushButtonBevel,
+            option,
+            painter,
+            self,
+        )
 
         icon_size = self.iconSize()
         icon_top = ((self.height() - icon_size.height()) // 2) + self._ICON_TOP_OFFSET
         icon_left = self._ICON_LEFT_OFFSET
         if not self.icon().isNull():
-            mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
-            state = QIcon.On if self.isDown() else QIcon.Off
+            mode = QIcon.Mode.Normal if self.isEnabled() else QIcon.Mode.Disabled
+            state = QIcon.State.On if self.isDown() else QIcon.State.Off
             pixmap = self.icon().pixmap(icon_size, mode, state)
             painter.drawPixmap(icon_left, icon_top, pixmap)
 
         text_left = icon_left + icon_size.width() + self._ICON_TEXT_GAP
         text_width = max(0, self.width() - text_left - self._TEXT_RIGHT_PADDING)
         painter.setPen(self.palette().buttonText().color())
+        alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         painter.drawText(
             text_left,
             0,
             text_width,
             self.height(),
-            Qt.AlignLeft | Qt.AlignVCenter,
+            alignment,
             self.text(),
         )
         painter.end()

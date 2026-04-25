@@ -472,8 +472,11 @@ class PropertiesPanel(QWidget):
         layout = self._content_layout
         while layout.count():
             item = layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item is None:
+                continue
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
 
     # ------------------------------------------------------------------
     # Common section (layer, color, line weight, line style)

@@ -79,7 +79,7 @@ class LineEntity(BaseEntity):
         from PySide6.QtCore import QPointF
         s1 = world_to_screen(QPointF(self.p1.x, self.p1.y))
         s2 = world_to_screen(QPointF(self.p2.x, self.p2.y))
-        painter.drawLine(s1.x(), s1.y(), s2.x(), s2.y())
+        painter.drawLine(s1, s2)
 
     def crosses_rect(self, rmin: Vec2, rmax: Vec2) -> bool:
         return _geo_seg_intersects_rect(self.p1, self.p2, rmin, rmax)

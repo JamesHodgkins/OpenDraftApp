@@ -80,7 +80,7 @@ class CommandContext:
         center: Vec2 | None = None,
         *,
         allow_command_options: bool = False,
-    ) -> float | "CommandOptionSelection":
+    ) -> float | CommandOptionSelection:
         return self._editor.get_angle(
             prompt,
             center,

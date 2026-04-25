@@ -157,3 +157,60 @@
 - [x] **Reduced event-handler complexity** — grip-specific branches in `CADCanvas.mousePressEvent`, `CADCanvas.mouseMoveEvent`, and `CADCanvas.handle_escape` now delegate to helper functions while keeping canvas as orchestration layer
 - [x] **Regression validation** — static diagnostics clear for `app/canvas.py` and `app/canvas_grip_flow.py`; full headless test suite passes (`272 passed`)
 
+### Grip Editing Linked Coincident Grips (2026-04-25)
+
+- [x] **Linked coincident grips** — when dragging a grip, any coincident grips on other *selected* entities are moved together during preview and commit, with a single grouped undo step
+
+### CI Workflow YAML Syntax Fix (2026-04-25)
+
+- [x] **Fixed invalid multiline `run` syntax** — replaced broken quoted multi-line `python -c` block in `.github/workflows/ci.yml` with a valid YAML block scalar (`run: |`)
+- [x] **Preserved Pyright error surfacing** — kept JSON post-processing behavior by writing `pyright --outputjson` to a file and parsing it in an inline heredoc Python script
+- [x] **Push/PR workflow compatibility restored** — workflow file now conforms to GitHub Actions YAML parsing rules, preventing pre-run "Invalid workflow file" failures
+
+### CI Node24 + Headless Stability Update (2026-04-25)
+
+- [x] **Node 24 deprecation mitigation** — added workflow-level `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` and upgraded GitHub actions to current major versions (`actions/checkout@v5`, `actions/setup-python@v6`)
+- [x] **Headless Qt test hardening** — switched pytest execution to `xvfb-run -a pytest` and set up a dedicated `XDG_RUNTIME_DIR` in CI to reduce Qt platform aborts (exit code `134`)
+- [x] **Forward compatibility improved** — workflow now proactively aligns with GitHub’s Node 20 deprecation timeline while preserving existing pytest + pyright checks
+
+### CI Exit 134 Follow-up Hardening (2026-04-25)
+
+- [x] **Qt backend stabilization** — changed CI test runtime to `QT_QPA_PLATFORM=minimal` with software rendering (`QT_OPENGL=software`, `LIBGL_ALWAYS_SOFTWARE=1`) to reduce native Qt aborts in headless Linux execution
+- [x] **Crash diagnostics enabled** — enabled `PYTHONFAULTHANDLER=1` and `PYTHONUNBUFFERED=1` for better crash traces and immediate log flushing in CI
+- [x] **Actionable pytest output** — updated pytest command to `pytest -ra -vv --maxfail=1` for clearer first-failure context when CI aborts recur
+
+### CI qtbot Fixture Resolution (2026-04-25)
+
+- [x] **Root cause identified** — CI installed ad-hoc packages (`PySide6 pyright pytest`) and skipped `requirements.txt`, so `pytest-qt` was not installed and `qtbot` fixture was unavailable
+- [x] **Dependency install corrected** — workflow install step now uses `python -m pip install -r requirements.txt pyright`, ensuring test plugin dependencies are consistent with the repository
+- [x] **Test collection restored** — pytest can now discover `qtbot` fixture from `pytest-qt` during CI test setup
+
+### CI Pyright Diagnostics Visibility Fix (2026-04-25)
+
+- [x] **Removed early shell-exit trap** — updated CI to run `pyright --outputjson > pyright-report.json || true` so the diagnostics parsing script still executes when Pyright returns non-zero
+- [x] **Added report guards** — Pyright post-processing now checks for missing `pyright-report.json` and emits a clear failure message when output is absent
+- [x] **Improved parse failure clarity** — JSON decode failures now print raw Pyright output before raising, making malformed output/debugging issues observable in workflow logs
+
+### Ribbon Split Button AlignmentFlag Cleanup (2026-04-25)
+
+- [x] **Alignment API modernization** — updated `_SmallSplitMainButton.paintEvent()` in `controls/ribbon/ribbon_split_button.py` to use `Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter` for the `QPainter.drawText(...)` alignment argument
+- [x] **Typing/tooling compatibility** — replaced legacy `Qt.AlignLeft | Qt.AlignVCenter` usage to align with current PySide6 enum-scoped typing recommendations
+
+### Ribbon Split Button QIcon Enum Fix (2026-04-25)
+
+- [x] **Pyright enum compatibility** — replaced legacy `QIcon.Normal/Disabled` with `QIcon.Mode.Normal/Disabled` and `QIcon.On/Off` with `QIcon.State.On/Off` in `_SmallSplitMainButton.paintEvent()`
+- [x] **No behavioral change** — retained identical icon mode/state selection logic for enabled/disabled and pressed/unpressed rendering paths
+
+### Ribbon Pyright Enum & Import Cleanup (2026-04-25)
+
+- [x] **Unused import diagnostics fixed** — removed unused `Icon` imports from `controls/ribbon/ribbon_split_button.py` and `controls/ribbon/ribbon_factory.py`
+- [x] **`AlignTop` diagnostics fixed** — replaced legacy `Qt.AlignTop` and related `Qt.Align*` combinations with `Qt.AlignmentFlag.*` across `controls/ribbon/ribbon_factory.py` and `controls/ribbon/ribbon_panel_widget.py`
+- [x] **`QStyle` control-element typing fixed** — updated split-button bevel draw call to `QStyle.ControlElement.CE_PushButtonBevel` for PySide6 stub compatibility
+- [x] **Additional enum modernization** — updated `RibbonLargeButton` icon state/mode usage to `QIcon.State.*` and `QIcon.Mode.*`; replaced `Qt.TextWordWrap` with `Qt.TextFlag.TextWordWrap` in custom large-button text drawing
+
+### Ribbon Panel Widget Layout Typing Fix (2026-04-25)
+
+- [x] **Optional layout narrowing** — updated `natural_width()`, `minimumSizeHint()`, and `_reflow_tools()` in `controls/ribbon/ribbon_panel_widget.py` to store `self.layout()` in a local variable and narrow before calling `contentsMargins()`
+- [x] **addWidget overload compatibility** — changed `_restore_tools()` to use positional `addWidget(tool, 0, Qt.AlignmentFlag.AlignTop)` so Pyright resolves the supported overload without keyword-argument mismatch
+- [x] **Behavior preserved** — kept runtime layout margin defaults and restored-tool top alignment semantics unchanged
+

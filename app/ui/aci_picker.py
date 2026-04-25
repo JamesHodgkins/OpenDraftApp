@@ -29,7 +29,7 @@ class _ACICell(QWidget):
 
     clicked = Signal(int)  # emits the ACI index
 
-    def __init__(self, aci_index: int, parent: QWidget = None) -> None:
+    def __init__(self, aci_index: int, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._index = aci_index
         r, g, b = ACI_COLORS[aci_index]
@@ -99,7 +99,11 @@ class ACIPickerWidget(QWidget):
 
     colorSelected = Signal(int)
 
-    def __init__(self, selected_index: Optional[int] = None, parent: QWidget = None) -> None:
+    def __init__(
+        self,
+        selected_index: Optional[int] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self._selected_index = selected_index
         self._cells: dict[int, _ACICell] = {}

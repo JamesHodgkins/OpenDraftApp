@@ -14,6 +14,49 @@ from app.entities import Vec2
 from app.entities.base import GripPoint
 
 
+def _is_coincident(a: Vec2, b: Vec2, tol: float) -> bool:
+    return a.distance_to(b) <= tol
+
+
+def collect_linked_grips(
+    document,
+    *,
+    selected_ids: set[str],
+    active_grip: GripPoint,
+    coincidence_tol: float = 1e-9,
+) -> list[GripPoint]:
+    """Return grips on *selected* entities that coincide with *active_grip*.
+
+    This is used for "move coincident grips together" behaviour: if two selected
+    entities expose grip points at the same world position, dragging one should
+    move all coincident grips as a linked group.
+    """
+    if document is None or not selected_ids:
+        return [active_grip]
+
+    anchor = active_grip.position
+    linked: list[GripPoint] = []
+    seen: set[tuple[str, int]] = set()
+
+    for ent in document:
+        if ent.id not in selected_ids:
+            continue
+        for gp in ent.grip_points():
+            if not _is_coincident(gp.position, anchor, coincidence_tol):
+                continue
+            key = (gp.entity_id, gp.index)
+            if key in seen:
+                continue
+            linked.append(gp)
+            seen.add(key)
+
+    # Always include the active grip, even if something odd happened.
+    if (active_grip.entity_id, active_grip.index) not in seen:
+        linked.insert(0, active_grip)
+
+    return linked
+
+
 def resolve_grip_final_position(
     world_point: Vec2,
     snap_result: Optional[SnapResult],
@@ -31,19 +74,30 @@ def activate_hot_grip(
     document,
     hot_grip: GripPoint,
     world_point: Vec2,
-) -> tuple[GripPoint, Any, Any, Vec2]:
+    *,
+    selected_ids: set[str],
+    coincidence_tol: float = 1e-9,
+) -> tuple[GripPoint, dict[str, Any], list[Any], Vec2, list[GripPoint]]:
     """Build initial active-grip state from a hot grip hit."""
-    grip_snapshot = None
-    before_snapshot = None
+    linked_grips = collect_linked_grips(
+        document,
+        selected_ids=selected_ids,
+        active_grip=hot_grip,
+        coincidence_tol=coincidence_tol,
+    )
+
+    snapshots: dict[str, Any] = {}
+    before: list[Any] = []
 
     if document is not None:
+        linked_ids = {g.entity_id for g in linked_grips}
         for ent in document:
-            if ent.id == hot_grip.entity_id:
-                grip_snapshot = copy.deepcopy(ent)
-                before_snapshot = copy.deepcopy(ent)
-                break
+            if ent.id not in linked_ids:
+                continue
+            snapshots[ent.id] = copy.deepcopy(ent)
+            before.append(copy.deepcopy(ent))
 
-    return hot_grip, grip_snapshot, before_snapshot, world_point
+    return hot_grip, snapshots, before, world_point, linked_grips
 
 
 def update_active_grip_drag(
@@ -51,11 +105,12 @@ def update_active_grip_drag(
     *,
     document,
     active_grip: GripPoint,
+    linked_grips: list[GripPoint],
     osnap_engine,
     osnap_master: bool,
     scale: float,
-    grip_entity_snapshot,
-) -> tuple[Optional[SnapResult], Vec2, Any]:
+    grip_entity_snapshots: dict[str, Any],
+) -> tuple[Optional[SnapResult], Vec2, dict[str, Any]]:
     """Update grip drag preview state for the current cursor position."""
     if document is not None and osnap_master:
         snap_entities = [
@@ -68,24 +123,31 @@ def update_active_grip_drag(
 
     display_grip = snap_result.point if snap_result is not None else raw
 
-    updated_snapshot = grip_entity_snapshot
-    if grip_entity_snapshot is not None:
-        # Rebuild from original entity each frame to avoid cumulative drift.
-        for ent in (document or []):
-            if ent.id == active_grip.entity_id:
-                updated_snapshot = copy.deepcopy(ent)
-                break
-        updated_snapshot.move_grip(active_grip.index, display_grip)
+    updated_snapshots: dict[str, Any] = dict(grip_entity_snapshots or {})
+    if document is not None and linked_grips:
+        # Rebuild from live entities each frame to avoid cumulative drift.
+        linked_by_id: dict[str, list[GripPoint]] = {}
+        for gp in linked_grips:
+            linked_by_id.setdefault(gp.entity_id, []).append(gp)
 
-    return snap_result, display_grip, updated_snapshot
+        for ent in document:
+            if ent.id not in linked_by_id:
+                continue
+            ecopy = copy.deepcopy(ent)
+            for gp in linked_by_id[ent.id]:
+                ecopy.move_grip(gp.index, display_grip)
+            updated_snapshots[ent.id] = ecopy
+
+    return snap_result, display_grip, updated_snapshots
 
 
 def commit_active_grip_edit(
     *,
     document,
     active_grip: GripPoint,
+    linked_grips: list[GripPoint],
     final_pos: Vec2,
-    before_snapshot,
+    before_snapshots: list[Any],
     editor,
 ) -> bool:
     """Commit active grip edit to document and push undo when possible."""
@@ -94,23 +156,31 @@ def commit_active_grip_edit(
 
     from app.commands.modify_helpers import _TransformUndoCommand
 
+    linked_by_id: dict[str, list[GripPoint]] = {}
+    for gp in (linked_grips or [active_grip]):
+        linked_by_id.setdefault(gp.entity_id, []).append(gp)
+
+    after_snapshots: list[Any] = []
+    any_applied = False
+
     for ent in document:
-        if ent.id != active_grip.entity_id:
+        if ent.id not in linked_by_id:
             continue
+        for gp in linked_by_id[ent.id]:
+            ent.move_grip(gp.index, final_pos)
+        after_snapshots.append(copy.deepcopy(ent))
+        any_applied = True
 
-        ent.move_grip(active_grip.index, final_pos)
-        after = copy.deepcopy(ent)
-
-        if before_snapshot is not None and editor is not None:
-            editor._undo_stack.push(
-                _TransformUndoCommand(document, [before_snapshot], [after], "Grip Edit")
-            )
-            editor.document_changed.emit()
+    if any_applied and before_snapshots and editor is not None:
+        editor._undo_stack.push(
+            _TransformUndoCommand(document, before_snapshots, after_snapshots, "Grip Edit")
+        )
+        editor.document_changed.emit()
         return True
 
     return False
 
 
-def cleared_active_grip_state() -> tuple[None, None, None, None]:
+def cleared_active_grip_state() -> tuple[None, dict, list, None, list]:
     """Return canonical cleared active-grip state tuple."""
-    return None, None, None, None
+    return None, {}, [], None, []

@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QToolButton, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QPoint, QTimer, QSize
-from PySide6.QtGui import QResizeEvent
 
 from controls.ribbon.ribbon_constants import Styles, MARGINS, COLORS, SIZE
 
@@ -29,9 +28,11 @@ class _ToolOverflowPopup(QFrame):
         dark: bool = False,
         parent: Optional[QWidget] = None,
     ):
-        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        super().__init__(
+            parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint
+        )
         self.setObjectName("RibbonToolOverflow")
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._tools = tools
         self._panel = panel
 
@@ -47,7 +48,7 @@ class _ToolOverflowPopup(QFrame):
         for tool in tools:
             tool.setParent(self)
             tool.show()
-            layout.addWidget(tool, alignment=Qt.AlignTop)
+            layout.addWidget(tool, alignment=Qt.AlignmentFlag.AlignTop)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         for tool in self._tools:
@@ -87,7 +88,7 @@ class RibbonPanelFrame(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("RibbonPanel")
-        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setProperty("dark", dark)
         self._content = content_widget
         self._dark = dark
@@ -97,7 +98,7 @@ class RibbonPanelFrame(QFrame):
         self._constrained = False
 
         # Fixed size policy — the tab-level layout must not compress us.
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(*MARGINS.SMALL)
@@ -113,7 +114,9 @@ class RibbonPanelFrame(QFrame):
         self._chevron = QToolButton()
         self._chevron.setText("\u25b8")  # ▸
         self._chevron.setFixedWidth(self._CHEVRON_WIDTH)
-        self._chevron.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._chevron.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
+        )
         self._chevron.setStyleSheet(
             f"QToolButton {{ border: none; font-size: 10px; "
             f"color: {COLORS.TAB_TEXT_INACTIVE_DARK}; }}"
@@ -122,18 +125,20 @@ class RibbonPanelFrame(QFrame):
         )
         self._chevron.clicked.connect(self._show_overflow_popup)
         self._chevron.hide()
-        row_layout.addWidget(self._chevron, alignment=Qt.AlignTop)
+        row_layout.addWidget(self._chevron, alignment=Qt.AlignmentFlag.AlignTop)
 
-        layout.addWidget(content_row, alignment=Qt.AlignTop)
+        layout.addWidget(content_row, alignment=Qt.AlignmentFlag.AlignTop)
         layout.addStretch(1)
 
         title_label = QLabel(title)
         title_label.setFixedHeight(14)
-        title_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        title_label.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+        )
         title_label.setProperty("ribbonPanelTitle", True)
         title_label.setProperty("dark", dark)
         title_label.setStyleSheet(Styles.panel_title(dark))
-        layout.addWidget(title_label, alignment=Qt.AlignHCenter)
+        layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.setLayout(layout)
 
@@ -146,10 +151,13 @@ class RibbonPanelFrame(QFrame):
             return self._tool_items
         cl = self._content.layout()
         self._tool_items = []
-        if cl:
+        if cl is not None:
             for i in range(cl.count()):
-                w = cl.itemAt(i).widget()
-                if w:
+                item = cl.itemAt(i)
+                if item is None:
+                    continue
+                w = item.widget()
+                if w is not None:
                     self._tool_items.append(w)
         return self._tool_items
 
@@ -162,8 +170,9 @@ class RibbonPanelFrame(QFrame):
         spacing = content_layout.spacing() if content_layout else 0
         cm = content_layout.contentsMargins() if content_layout else None
         content_lr = (cm.left() + cm.right()) if cm else 0
-        pm = self.layout().contentsMargins() if self.layout() else None
-        panel_lr = (pm.left() + pm.right()) if pm else 4
+        panel_layout = self.layout()
+        pm = panel_layout.contentsMargins() if panel_layout is not None else None
+        panel_lr = (pm.left() + pm.right()) if pm is not None else 4
         total = content_lr + panel_lr
         for i, tool in enumerate(tools):
             hint = tool.sizeHint()
@@ -183,8 +192,9 @@ class RibbonPanelFrame(QFrame):
             return base
         first_hint = tools[0].sizeHint()
         first_w = first_hint.width() if first_hint.isValid() else 40
-        pm = self.layout().contentsMargins() if self.layout() else None
-        extra = (pm.left() + pm.right()) if pm else 4
+        panel_layout = self.layout()
+        pm = panel_layout.contentsMargins() if panel_layout is not None else None
+        extra = (pm.left() + pm.right()) if pm is not None else 4
         return QSize(first_w + self._CHEVRON_WIDTH + extra, base.height())
 
     # ------------------------------------------------------------------
@@ -225,8 +235,9 @@ class RibbonPanelFrame(QFrame):
         spacing = content_layout.spacing() if content_layout else 0
         cm = content_layout.contentsMargins() if content_layout else None
         content_lr = (cm.left() + cm.right()) if cm else 0
-        pm = self.layout().contentsMargins() if self.layout() else None
-        panel_lr = (pm.left() + pm.right()) if pm else 0
+        panel_layout = self.layout()
+        pm = panel_layout.contentsMargins() if panel_layout is not None else None
+        panel_lr = (pm.left() + pm.right()) if pm is not None else 0
 
         available = self.width() - panel_lr - content_lr
 
@@ -302,7 +313,8 @@ class RibbonPanelFrame(QFrame):
         while content_layout.count() > 0:
             content_layout.takeAt(0)
         for tool in self._tool_items:
-            content_layout.addWidget(tool, alignment=Qt.AlignTop)
+            content_layout.addWidget(tool)
+            content_layout.setAlignment(tool, Qt.AlignmentFlag.AlignTop)
         if self._constrained:
             self._reflow_tools()
         else:

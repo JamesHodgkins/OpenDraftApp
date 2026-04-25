@@ -104,9 +104,9 @@ class PolylineEntity(BaseEntity):
         if len(pts) < 2:
             return
         for i in range(len(pts) - 1):
-            painter.drawLine(pts[i].x(), pts[i].y(), pts[i + 1].x(), pts[i + 1].y())
+            painter.drawLine(pts[i], pts[i + 1])
         if self.closed:
-            painter.drawLine(pts[-1].x(), pts[-1].y(), pts[0].x(), pts[0].y())
+            painter.drawLine(pts[-1], pts[0])
 
     def crosses_rect(self, rmin: Vec2, rmax: Vec2) -> bool:
         bb = self.bounding_box()

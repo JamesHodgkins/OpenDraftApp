@@ -16,6 +16,16 @@ Tracking note (2026-04-25): Normalized PySide6 enum usage and nullable typing in
 Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting cursor/selection/hit-testing interaction rules into `app/canvas_interaction.py`; validated with full `pytest` pass.
 Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting command-mode snap/draftmate/input gating flow into `app/canvas_command_flow.py`; validated with full `pytest` pass.
 Tracking note (2026-04-25): Continued CADCanvas decomposition by extracting grip-edit lifecycle logic into `app/canvas_grip_flow.py`; validated with full `pytest` pass.
+Tracking note (2026-04-25): Fixed GitHub Actions YAML syntax in `.github/workflows/ci.yml` by converting the Pyright post-processing step to a block `run: |` script with heredoc Python parsing.
+Tracking note (2026-04-25): Updated CI workflow to force Node 24 for JavaScript actions, bumped `actions/checkout` and `actions/setup-python` to current major versions, and switched pytest execution to `xvfb-run` with an explicit `XDG_RUNTIME_DIR` to reduce Qt headless aborts (exit code 134).
+Tracking note (2026-04-25): Further hardened CI Qt test execution for exit code 134 by using `QT_QPA_PLATFORM=minimal`, software OpenGL (`QT_OPENGL=software`, `LIBGL_ALWAYS_SOFTWARE=1`), Python fault-handler output, and verbose pytest diagnostics.
+Tracking note (2026-04-25): Fixed CI `qtbot` fixture failure by installing Python dependencies from `requirements.txt` (which includes `pytest-qt`) instead of ad-hoc package installation in `.github/workflows/ci.yml`.
+Tracking note (2026-04-25): Fixed Pyright CI log visibility by allowing `pyright --outputjson` to continue (`|| true`) and adding robust JSON/missing-report handling so parsed type errors are printed before failing the workflow.
+Tracking note (2026-04-25): Updated `_SmallSplitMainButton.paintEvent()` in `controls/ribbon/ribbon_split_button.py` to use `Qt.AlignmentFlag` for text alignment (`AlignLeft | AlignVCenter`) in `painter.drawText(...)`, matching current PySide6 typing expectations.
+Tracking note (2026-04-25): Fixed Pyright errors in `controls/ribbon/ribbon_split_button.py` by replacing `QIcon.On/Off` and `QIcon.Normal/Disabled` with scoped enum members `QIcon.State.*` and `QIcon.Mode.*` in custom split-button painting.
+Tracking note (2026-04-25): Applied ribbon-wide Pyright enum cleanup by replacing legacy `Qt.Align*` usage with `Qt.AlignmentFlag.*`, switching split-button bevel drawing to `QStyle.ControlElement.CE_PushButtonBevel`, modernizing `RibbonLargeButton` icon mode/state enums, and removing unused `Icon` imports in ribbon controls.
+Tracking note (2026-04-25): Fixed Pyright diagnostics in `controls/ribbon/ribbon_panel_widget.py` by switching to scoped Qt/PySide enums (`Qt.WindowType.*`, `Qt.WidgetAttribute.*`, `QFrame.Shape.*`, `QSizePolicy.Policy.*`), making layout item unwrapping explicit, and using `addWidget(tool)` + `setAlignment(...)` for stub-compatible alignment.
+Tracking note (2026-04-25): Added a “run CI locally” setup: `scripts/ci.ps1` (Windows) and `nox -s ci` (`noxfile.py`) to run pytest + pyright the same way as GitHub Actions, to avoid CI back-and-forth.
 
 ---
 
@@ -194,6 +204,7 @@ Standard 2D CAD operations that are entirely absent.
 - [ ] **Context menu extensions (right-click on canvas)** — add recent commands and richer entity-specific options (core context menu + command options are already implemented)
 - [ ] **Context menu on entity (right-click)** — Properties, Delete, Move, Copy, etc.
 - [ ] **Grip editing improvements** — show grip count, support multi-grip drag with relative offset
+- [x] **Grip editing: linked coincident grips** — when dragging a grip, move any coincident grips on other *selected* entities at the same time (single undo step)
 - [ ] **Cursor crosshair** — replace default cursor with a full-screen crosshair during drawing commands
 - [ ] **Transparent commands** — allow zoom/pan during another active command without cancelling it (already partially working; audit edge cases)
 

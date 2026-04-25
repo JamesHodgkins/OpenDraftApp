@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     # Resolved at type-check time only; avoids runtime Qt import in entities.
     from PySide6.QtGui import QPainter
     from PySide6.QtCore import QPointF
+    from app.entities.snap_types import SnapResult, SnapType
 
 
 # ---------------------------------------------------------------------------

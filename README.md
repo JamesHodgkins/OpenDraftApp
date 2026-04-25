@@ -84,6 +84,30 @@ python main.py
 pytest
 ```
 
+## Running the Same Checks as GitHub CI (Recommended)
+
+The GitHub Actions workflow runs two things:
+
+- `pytest -ra -vv --maxfail=1` (with headless Qt environment flags)
+- `pyright` type-checking
+
+### Windows (PowerShell)
+
+From the repo root:
+
+```powershell
+.\scripts\ci.ps1
+```
+
+### Any OS (Nox)
+
+If you have Python 3.11 available, you can run the same CI steps in isolated environments:
+
+```bash
+python -m pip install nox
+nox -s ci
+```
+
 ## Why Another CAD Package?
 
 While existing open-source CAD solutions such as LibreCAD and FreeCAD are capable tools, OpenDraft aims to offer a distinct approach:

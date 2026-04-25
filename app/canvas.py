@@ -199,11 +199,12 @@ class CADCanvas(QWidget):
         self._hot_grip: Optional[GripPoint] = None
         # The GripPoint currently being dragged (None when not dragging).
         self._active_grip: Optional[GripPoint] = None
-        # The entity being grip-edited (a shallow copy so we can mutate it
-        # live during the drag without corrupting the document until commit).
-        self._grip_entity_snapshot = None
-        # Deep copy of the entity's state before the grip drag started (for undo).
-        self._grip_before_snapshot = None
+        # Linked grips (on selected entities) that coincide with the active grip.
+        self._linked_grips: List[GripPoint] = []
+        # Per-entity snapshots mutated live during grip drag preview.
+        self._grip_entity_snapshots: dict[str, object] = {}
+        # Deep copies of entities before the grip drag started (for undo).
+        self._grip_before_snapshots: List[object] = []
         # Mouse position in world coordinates during a grip drag.
         self._grip_drag_world: Optional[Vec2] = None
 
@@ -312,16 +313,18 @@ class CADCanvas(QWidget):
                 commit_active_grip_edit(
                     document=self._document,
                     active_grip=self._active_grip,
+                    linked_grips=self._linked_grips,
                     final_pos=final_pos,
-                    before_snapshot=self._grip_before_snapshot,
+                    before_snapshots=self._grip_before_snapshots,
                     editor=self._editor,
                 )
                 # Reset grip state.
                 (
                     self._active_grip,
-                    self._grip_entity_snapshot,
-                    self._grip_before_snapshot,
+                    self._grip_entity_snapshots,
+                    self._grip_before_snapshots,
                     self._grip_drag_world,
+                    self._linked_grips,
                 ) = cleared_active_grip_state()
                 self._snap_result = None
                 self.setCursor(Qt.CursorShape.CrossCursor)
@@ -331,16 +334,23 @@ class CADCanvas(QWidget):
 
             # ---- Grip activation: first click on a hot grip starts moving it ----
             if self._idle and self._hot_grip is not None:
+                sel_ids = self._editor.selection.ids if self._editor is not None else set()
                 (
                     self._active_grip,
-                    self._grip_entity_snapshot,
-                    self._grip_before_snapshot,
+                    self._grip_entity_snapshots,
+                    self._grip_before_snapshots,
                     self._grip_drag_world,
+                    self._linked_grips,
                 ) = activate_hot_grip(
                     self._document,
                     self._hot_grip,
                     Vec2(world_pt.x(), world_pt.y()),
+                    selected_ids=set(sel_ids),
                 )
+                # While a grip is active we render live previews from snapshots;
+                # suppress stale hover overlay that would otherwise remain at
+                # the entity's pre-commit position.
+                self._hovered_entity_id = None
                 self.setFocus()
                 return
 
@@ -386,14 +396,15 @@ class CADCanvas(QWidget):
 
         # ---- Active grip move (click-click mode) --------------------------
         if self._active_grip is not None:
-            self._snap_result, display_grip, self._grip_entity_snapshot = update_active_grip_drag(
+            self._snap_result, display_grip, self._grip_entity_snapshots = update_active_grip_drag(
                 raw,
                 document=self._document,
                 active_grip=self._active_grip,
+                linked_grips=self._linked_grips,
                 osnap_engine=self._osnap,
                 osnap_master=self._osnap_master,
                 scale=self.scale,
-                grip_entity_snapshot=self._grip_entity_snapshot,
+                grip_entity_snapshots=self._grip_entity_snapshots,
             )
             self._grip_drag_world = display_grip
             self.update()
@@ -669,9 +680,10 @@ class CADCanvas(QWidget):
         if self._active_grip is not None:
             (
                 self._active_grip,
-                self._grip_entity_snapshot,
-                self._grip_before_snapshot,
+                self._grip_entity_snapshots,
+                self._grip_before_snapshots,
                 self._grip_drag_world,
+                self._linked_grips,
             ) = cleared_active_grip_state()
             self.update()
             return
@@ -844,8 +856,11 @@ class CADCanvas(QWidget):
         if self._entity_cache is not None:
             painter.drawPixmap(0, 0, self._entity_cache)
 
-        # ---- Draw hover overlay (always fresh) ----------------------------
-        if hover_id is not None and self._document is not None:
+        # ---- Draw hover overlay (idle only) -------------------------------
+        # During grip edits, entities are previewed via snapshots while the live
+        # document stays unchanged until commit; drawing hover overlay would
+        # therefore appear "left behind" at the pre-commit location.
+        if self._active_grip is None and hover_id is not None and self._document is not None:
             self._draw_hover_overlay(painter, hover_id, sel_ids)
 
         # ---- Draw grip squares for selected entities ----------------------
@@ -951,10 +966,10 @@ class CADCanvas(QWidget):
                     continue
 
                 draw_e = e
-                if (self._active_grip is not None
-                        and self._grip_entity_snapshot is not None
-                        and e.id == self._active_grip.entity_id):
-                    draw_e = self._grip_entity_snapshot
+                if self._active_grip is not None and self._grip_entity_snapshots:
+                    snap = self._grip_entity_snapshots.get(e.id)
+                    if snap is not None:
+                        draw_e = snap
 
                 pen = build_entity_base_pen(
                     e,
@@ -1034,7 +1049,7 @@ class CADCanvas(QWidget):
             grip_half_size=self._grip_half_size,
             hot_grip=self._hot_grip,
             active_grip=self._active_grip,
-            active_entity_snapshot=self._grip_entity_snapshot,
+            active_entity_snapshots=self._grip_entity_snapshots,
         )
 
     def _draw_selection_rect(self, painter: QPainter) -> None:

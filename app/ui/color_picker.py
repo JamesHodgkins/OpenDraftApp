@@ -30,7 +30,7 @@ from app.ui.aci_picker import ACIPickerWidget
 class _TrueColorTab(QWidget):
     """Embedded true-colour picker (standard Qt colour wheel)."""
 
-    def __init__(self, initial: QColor, parent: QWidget = None) -> None:
+    def __init__(self, initial: QColor, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -103,7 +103,7 @@ class ColorPickerDialog(QDialog):
     def __init__(
         self,
         initial: Optional[Color] = None,
-        parent: QWidget = None,
+        parent: Optional[QWidget] = None,
         title: str = "Choose Colour",
     ) -> None:
         super().__init__(parent)
