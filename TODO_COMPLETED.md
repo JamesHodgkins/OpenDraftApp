@@ -169,3 +169,9 @@
 - [x] **Headless Qt test hardening** — switched pytest execution to `xvfb-run -a pytest` and set up a dedicated `XDG_RUNTIME_DIR` in CI to reduce Qt platform aborts (exit code `134`)
 - [x] **Forward compatibility improved** — workflow now proactively aligns with GitHub’s Node 20 deprecation timeline while preserving existing pytest + pyright checks
 
+### CI Exit 134 Follow-up Hardening (2026-04-25)
+
+- [x] **Qt backend stabilization** — changed CI test runtime to `QT_QPA_PLATFORM=minimal` with software rendering (`QT_OPENGL=software`, `LIBGL_ALWAYS_SOFTWARE=1`) to reduce native Qt aborts in headless Linux execution
+- [x] **Crash diagnostics enabled** — enabled `PYTHONFAULTHANDLER=1` and `PYTHONUNBUFFERED=1` for better crash traces and immediate log flushing in CI
+- [x] **Actionable pytest output** — updated pytest command to `pytest -ra -vv --maxfail=1` for clearer first-failure context when CI aborts recur
+
