@@ -564,7 +564,14 @@ class LayerManagerDialog(QDialog):
         if row < 0:
             return
         name_item  = self._table.item(row, self.COL_NAME)
-        layer_name = name_item.data(Qt.UserRole)
+        if name_item is None:
+            return
+        layer_name_any = name_item.data(Qt.UserRole)
+        layer_name = (
+            layer_name_any
+            if isinstance(layer_name_any, str)
+            else name_item.text()
+        )
 
         if layer_name == "default":
             QMessageBox.warning(

@@ -31,7 +31,7 @@ __all__ = ["RibbonPanel"]
 class _PanelSeparator(QWidget):
     """A 1-px vertical rule drawn directly via QPainter — no stylesheet involved."""
 
-    def __init__(self, dark: bool = False, parent: QWidget = None):
+    def __init__(self, dark: bool = False, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setFixedWidth(1)
         # Tell Qt we paint every pixel ourselves — prevents parent palette/stylesheet bleed

@@ -15,7 +15,7 @@ from app.commands.modify_helpers import (
 )
 
 
-def _offset_line(ent: LineEntity, distance: float) -> List[LineEntity]:
+def _offset_line(ent: LineEntity, distance: float) -> List[BaseEntity]:
     """Return two offset copies of a line (one each side) when distance < 0, or one."""
     dx = ent.p2.x - ent.p1.x
     dy = ent.p2.y - ent.p1.y
@@ -35,7 +35,7 @@ def _offset_line(ent: LineEntity, distance: float) -> List[LineEntity]:
     return [_make(distance)]
 
 
-def _offset_circle(ent: CircleEntity, distance: float) -> List[CircleEntity]:
+def _offset_circle(ent: CircleEntity, distance: float) -> List[BaseEntity]:
     new_r = ent.radius + distance
     if new_r <= 0:
         return []
@@ -45,7 +45,7 @@ def _offset_circle(ent: CircleEntity, distance: float) -> List[CircleEntity]:
     return [e]
 
 
-def _offset_arc(ent: ArcEntity, distance: float) -> List[ArcEntity]:
+def _offset_arc(ent: ArcEntity, distance: float) -> List[BaseEntity]:
     new_r = ent.radius + distance
     if new_r <= 0:
         return []
@@ -55,7 +55,7 @@ def _offset_arc(ent: ArcEntity, distance: float) -> List[ArcEntity]:
     return [e]
 
 
-def _offset_polyline(ent: PolylineEntity, distance: float) -> List[PolylineEntity]:
+def _offset_polyline(ent: PolylineEntity, distance: float) -> List[BaseEntity]:
     pts = ent.points
     if len(pts) < 2:
         return []

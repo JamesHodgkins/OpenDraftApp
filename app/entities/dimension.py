@@ -132,24 +132,26 @@ class DimensionEntity(BaseEntity):
             y0 = meas_s.y() + uy * ext_gap_px
             x1 = foot_s.x() + ux * dim_over_px
             y1 = foot_s.y() + uy * dim_over_px
-            painter.drawLine(x0, y0, x1, y1)
+            painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
 
         ext_line(s_p1, s_foot1)
         ext_line(s_p2, s_foot2)
 
         # ── dimension line ───────────────────────────────────────────────
-        def dim_line_ends(fa: QPointF, fb: QPointF, inset: float):
+        def dim_line_ends(fa: QPointF, fb: QPointF, inset: float) -> tuple[QPointF, QPointF]:
             vx = fb.x() - fa.x()
             vy = fb.y() - fa.y()
             length = math.hypot(vx, vy) or 1.0
             ux, uy = vx / length, vy / length
             if self.mark_type == "arrow" and length > 2 * inset:
-                return (fa.x() + ux * inset, fa.y() + uy * inset,
-                        fb.x() - ux * inset, fb.y() - uy * inset)
-            return fa.x(), fa.y(), fb.x(), fb.y()
+                return (
+                    QPointF(fa.x() + ux * inset, fa.y() + uy * inset),
+                    QPointF(fb.x() - ux * inset, fb.y() - uy * inset),
+                )
+            return fa, fb
 
-        lx0, ly0, lx1, ly1 = dim_line_ends(s_foot1, s_foot2, arrow_px)
-        painter.drawLine(lx0, ly0, lx1, ly1)
+        line_a, line_b = dim_line_ends(s_foot1, s_foot2, arrow_px)
+        painter.drawLine(line_a, line_b)
 
         # ── arrowheads / marks ───────────────────────────────────────────
         old_brush = painter.brush()
@@ -181,10 +183,14 @@ class DimensionEntity(BaseEntity):
             vy = s_foot2.y() - s_foot1.y()
             ln = math.hypot(vx, vy) or 1.0
             tx, ty = vy / ln * tick_len, -vx / ln * tick_len
-            painter.drawLine(s_foot1.x() - tx, s_foot1.y() - ty,
-                             s_foot1.x() + tx, s_foot1.y() + ty)
-            painter.drawLine(s_foot2.x() - tx, s_foot2.y() - ty,
-                             s_foot2.x() + tx, s_foot2.y() + ty)
+            painter.drawLine(
+                QPointF(s_foot1.x() - tx, s_foot1.y() - ty),
+                QPointF(s_foot1.x() + tx, s_foot1.y() + ty),
+            )
+            painter.drawLine(
+                QPointF(s_foot2.x() - tx, s_foot2.y() - ty),
+                QPointF(s_foot2.x() + tx, s_foot2.y() + ty),
+            )
         # "none" → nothing
 
         painter.setBrush(old_brush)

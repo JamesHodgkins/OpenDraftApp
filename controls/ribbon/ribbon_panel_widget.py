@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QToolButton, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QPoint, QTimer, QSize
-from PySide6.QtGui import QResizeEvent
 
 from controls.ribbon.ribbon_constants import Styles, MARGINS, COLORS, SIZE
 
@@ -29,9 +28,11 @@ class _ToolOverflowPopup(QFrame):
         dark: bool = False,
         parent: Optional[QWidget] = None,
     ):
-        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        super().__init__(
+            parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint
+        )
         self.setObjectName("RibbonToolOverflow")
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._tools = tools
         self._panel = panel
 
@@ -87,7 +88,7 @@ class RibbonPanelFrame(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("RibbonPanel")
-        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setProperty("dark", dark)
         self._content = content_widget
         self._dark = dark
@@ -97,7 +98,7 @@ class RibbonPanelFrame(QFrame):
         self._constrained = False
 
         # Fixed size policy — the tab-level layout must not compress us.
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(*MARGINS.SMALL)
@@ -113,7 +114,9 @@ class RibbonPanelFrame(QFrame):
         self._chevron = QToolButton()
         self._chevron.setText("\u25b8")  # ▸
         self._chevron.setFixedWidth(self._CHEVRON_WIDTH)
-        self._chevron.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._chevron.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
+        )
         self._chevron.setStyleSheet(
             f"QToolButton {{ border: none; font-size: 10px; "
             f"color: {COLORS.TAB_TEXT_INACTIVE_DARK}; }}"
@@ -148,10 +151,13 @@ class RibbonPanelFrame(QFrame):
             return self._tool_items
         cl = self._content.layout()
         self._tool_items = []
-        if cl:
+        if cl is not None:
             for i in range(cl.count()):
-                w = cl.itemAt(i).widget()
-                if w:
+                item = cl.itemAt(i)
+                if item is None:
+                    continue
+                w = item.widget()
+                if w is not None:
                     self._tool_items.append(w)
         return self._tool_items
 
@@ -307,7 +313,8 @@ class RibbonPanelFrame(QFrame):
         while content_layout.count() > 0:
             content_layout.takeAt(0)
         for tool in self._tool_items:
-            content_layout.addWidget(tool, 0, Qt.AlignmentFlag.AlignTop)
+            content_layout.addWidget(tool)
+            content_layout.setAlignment(tool, Qt.AlignmentFlag.AlignTop)
         if self._constrained:
             self._reflow_tools()
         else:

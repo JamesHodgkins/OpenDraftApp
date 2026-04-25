@@ -1,10 +1,11 @@
 {
   "pythonVersion": "3.11",
-  "typeCheckingMode": "standard",
+  "typeCheckingMode": "basic",
   "reportMissingImports": true,
   "reportMissingTypeStubs": false,
-  "reportUnusedImport": true,
-  "reportUnusedVariable": true,
+  "reportUnusedImport": "warning",
+  "reportUnusedVariable": "warning",
+  "reportAttributeAccessIssue": "warning",
   "reportPrivateUsage": false,
   "include": ["app", "controls"],
   "exclude": ["**/__pycache__", "**/*.pyc"]

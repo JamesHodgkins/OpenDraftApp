@@ -39,7 +39,7 @@ from dataclasses import dataclass
 import logging
 import queue
 import threading
-from typing import Any, Callable, List, Literal, Optional
+from typing import Any, Callable, List, Literal, Optional, Sequence, overload
 
 _log = logging.getLogger(__name__)
 
@@ -165,7 +165,7 @@ class _EditorPreviewScope:
     def __init__(
         self,
         editor: "Editor",
-        fn: Callable[[Vec2], List[BaseEntity]],
+        fn: Callable[[Vec2], Sequence[BaseEntity]],
     ) -> None:
         self._editor = editor
         self._fn = fn
@@ -227,7 +227,7 @@ class Editor(QObject):
         self._cancelled = threading.Event()
         self._active_command: Optional[CommandBase] = None
         self._input_mode: str = "none"
-        self._dynamic_callback: Optional[Callable[[Vec2], List[BaseEntity]]] = None
+        self._dynamic_callback: Optional[Callable[[Vec2], Sequence[BaseEntity]]] = None
         self._highlight_entities: List[BaseEntity] = []
         self._choice_options: list[str] = []   # keys active during "choice" mode
         self._command_option_labels: list[str] = []  # labels exposed to context menu
@@ -461,6 +461,22 @@ class Editor(QObject):
     # ------------------------------------------------------- blocking input API
     # Called *from the command thread only*.
 
+    @overload
+    def get_point(
+        self,
+        prompt: str = "Select a point",
+        *,
+        allow_command_options: Literal[False] = False,
+    ) -> Vec2: ...
+
+    @overload
+    def get_point(
+        self,
+        prompt: str = "Select a point",
+        *,
+        allow_command_options: Literal[True],
+    ) -> Vec2 | CommandOptionSelection: ...
+
     def get_point(
         self,
         prompt: str = "Select a point",
@@ -488,8 +504,6 @@ class Editor(QObject):
         if allow_command_options:
             accepted.add("command_option")
         value = self._wait_for_input(accepted)
-        if isinstance(value, CommandOptionSelection):
-            return value
         return value
 
     def get_integer(self, prompt: str = "Enter an integer") -> int:
@@ -525,6 +539,24 @@ class Editor(QObject):
         self.status_message.emit(prompt)
         self._set_input_mode("length")
         return self._wait_for_input({"length"})
+
+    @overload
+    def get_angle(
+        self,
+        prompt: str = "Enter angle (degrees)",
+        center: "Optional[Vec2]" = None,
+        *,
+        allow_command_options: Literal[False] = False,
+    ) -> float: ...
+
+    @overload
+    def get_angle(
+        self,
+        prompt: str = "Enter angle (degrees)",
+        center: "Optional[Vec2]" = None,
+        *,
+        allow_command_options: Literal[True],
+    ) -> float | CommandOptionSelection: ...
 
     def get_angle(
         self,
@@ -615,7 +647,7 @@ class Editor(QObject):
 
     def set_dynamic(
         self,
-        fn: Callable[[Vec2], List[BaseEntity]],
+        fn: Callable[[Vec2], Sequence[BaseEntity]],
     ) -> None:
         """Register a callback that returns temporary preview entities.
 
@@ -633,7 +665,7 @@ class Editor(QObject):
 
     def preview(
         self,
-        fn: Callable[[Vec2], List[BaseEntity]],
+        fn: Callable[[Vec2], Sequence[BaseEntity]],
     ) -> _EditorPreviewScope:
         """Return a context manager that scopes a dynamic preview callback."""
         return _EditorPreviewScope(self, fn)
@@ -661,7 +693,7 @@ class Editor(QObject):
         if fn is None:
             return []
         try:
-            return fn(mouse) or []
+            return list(fn(mouse) or [])
         except Exception:
             return []
 

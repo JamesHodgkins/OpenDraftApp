@@ -4,12 +4,17 @@ from __future__ import annotations
 import math
 import uuid
 from dataclasses import dataclass, field
-from typing import AbstractSet, Any, Callable, ClassVar, Dict, List, Optional
+from typing import AbstractSet, Any, Callable, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from app.entities.base import (
     BaseEntity, BBox, Vec2,
     _geo_dist, _geo_angle_on_arc, _geo_seg_intersects_rect,
 )
+
+if TYPE_CHECKING:
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPainter
+    from app.entities.snap_types import SnapResult, SnapType
 
 
 def _arc_span(start: float, end: float, ccw: bool) -> float:
@@ -132,7 +137,12 @@ class ArcEntity(BaseEntity):
             SnapType.PERPENDICULAR, self.id,
         )]
 
-    def draw(self, painter: "QPainter", world_to_screen: Callable[["QPointF"], "QPointF"], scale: float) -> None:
+    def draw(
+        self,
+        painter: "QPainter",
+        world_to_screen: Callable[["QPointF"], "QPointF"],
+        scale: float,
+    ) -> None:
         from PySide6.QtCore import QPointF, QRectF
         sc = world_to_screen(QPointF(self.center.x, self.center.y))
         r_px = self.radius * scale

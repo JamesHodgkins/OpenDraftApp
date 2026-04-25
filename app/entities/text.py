@@ -58,7 +58,7 @@ class TextEntity(BaseEntity):
     def draw(self, painter, world_to_screen, scale: float) -> None:
         from PySide6.QtCore import QPointF
         sp = world_to_screen(QPointF(self.position.x, self.position.y))
-        painter.drawText(sp.x(), sp.y(), self.text)
+        painter.drawText(sp, self.text)
 
     # ------------------------------------------------------------------
     # Grip editing
