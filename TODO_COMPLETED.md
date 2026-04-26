@@ -33,6 +33,7 @@
 - [x] **Canvas context menu** — added right-click context menu on the canvas (Undo/Redo/Delete/Modify→Rotate) with right-click-to-select behaviour and command-safe selection handling
 - [x] **Command options in context menu** — when a command is running in "choice" mode, right-click shows a "Command options" submenu that injects choices back into the active command; Rotate now supports base/destination vector input via these options
 - [x] **Top command terminal** — added `TopTerminalWidget` (800px wide, top-center) as the single consolidated input + output surface with expandable output scrollback; removed the floating command palette and cursor-following dynamic input overlay
+- [x] **Command aliases** — added short aliases for core commands (`l`, `c`, `cp`, `m`, `mv`) and extended the top terminal’s suggestions to match on `CommandSpec.aliases`
 
 ### Command Input Pipeline Hardening (2026-04-24)
 

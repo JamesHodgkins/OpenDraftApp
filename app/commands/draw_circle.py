@@ -6,7 +6,7 @@ from app.editor.base_command import CommandBase
 from app.entities import CircleEntity, LineEntity, Vec2
 
 
-@command("circleCommand")
+@command("circleCommand", aliases=("c",))
 class DrawCircleCommand(CommandBase):
     """Draw a circle by picking a centre and a circumference point."""
 

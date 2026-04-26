@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from app.editor.editor import CommandOptionSelection, Editor
+from app.editor.editor import CommandOption, CommandOptionSelection, Editor
 from app.editor.undo import UndoCommand
 from app.document import DocumentStore
 from app.entities import Vec2, LineEntity
@@ -78,6 +78,43 @@ def test_get_command_option_returns_selected_label() -> None:
 
     assert not t.is_alive()
     assert result == ["Set destination vector"]
+
+
+def test_provide_command_option_accepts_keyed_shortcuts() -> None:
+    doc = DocumentStore()
+    ed = Editor(document=doc)
+
+    result: list[Vec2 | CommandOptionSelection] = []
+
+    def _worker() -> None:
+        # Mimic real command flow: point input mode but command options allowed.
+        result.append(
+            ed.get_point(
+                "Rotate: specify rotation vector or choose option",
+                allow_command_options=True,
+            )
+        )
+
+    # Commands may register keyed options for terminal usage.
+    ed.set_command_options_keyed(
+        [
+            CommandOption(key="b", label="Set base vector"),
+            CommandOption(key="d", label="Set destination vector"),
+        ]
+    )
+
+    t = threading.Thread(target=_worker, daemon=True)
+    ed._thread = t
+    t.start()
+
+    assert _wait_until(lambda: ed.is_running and ed.input_mode == "point")
+    assert ed.provide_command_option("b")
+    t.join(timeout=1.0)
+
+    assert not t.is_alive()
+    assert len(result) == 1
+    assert isinstance(result[0], CommandOptionSelection)
+    assert result[0].label == "Set base vector"
 
 
 def test_get_angle_can_return_command_option_selection() -> None:

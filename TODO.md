@@ -185,7 +185,7 @@ Standard 2D CAD operations that are entirely absent.
 ### Command Experience
 
 - [x] **Command line / prompt bar** — implemented as a top-of-viewport terminal (800px wide) consolidating command input and output scrollback; replaces the old command palette and dynamic input overlay
-- [ ] **Command aliases** — short aliases (`L` → Line, `C` → Circle, `M` → Move, etc.)
+- [x] **Command aliases** — short aliases (`l` → Line, `c` → Circle, `cp` → Copy, `m`/`mv` → Move) and terminal suggestions match on aliases
 - [ ] **Repeat last command** — pressing `Enter` or `Space` on an empty canvas repeats the previous command
 - [ ] **Command history** — scrollable log of recently executed commands and prompts
 

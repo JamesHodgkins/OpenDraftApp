@@ -15,7 +15,7 @@ from app.commands.modify_helpers import (
 )
 
 
-@command("moveCommand")
+@command("moveCommand", aliases=("m", "mv"))
 class MoveCommand(CommandBase):
     """Translate selected entities by a displacement vector from a base point."""
 

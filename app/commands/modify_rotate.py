@@ -6,7 +6,7 @@ from typing import List
 
 from app.editor import command
 from app.editor.base_command import CommandBase
-from app.editor.editor import CommandOptionSelection
+from app.editor.editor import CommandOption, CommandOptionSelection
 from app.entities import BaseEntity, Vec2
 from app.commands.modify_helpers import (
     _collect_selected, _transform_entity,
@@ -66,15 +66,19 @@ class RotateCommand(CommandBase):
                 else "Enter angle"
             )
             rotation_prompt = (
-                "Rotate: specify rotation vector (relative to base vector) or choose option"
+                "Rotate: specify rotation vector (relative to base vector) or choose option "
+                "[a] angle [b] base [d] dest"
                 if has_base_reference
-                else "Rotate: specify rotation vector or choose option"
+                else "Rotate: specify rotation vector or choose option "
+                     "[a] angle [b] base [d] dest"
             )
-            self.editor.set_command_options([
-                enter_angle_label,
-                "Set base vector",
-                "Set destination vector",
-            ])
+            self.editor.set_command_options_keyed(
+                [
+                    CommandOption(key="a", label=enter_angle_label),
+                    CommandOption(key="b", label="Set base vector"),
+                    CommandOption(key="d", label="Set destination vector"),
+                ]
+            )
             try:
                 with self.editor.preview(_preview):
                     result = self.editor.get_point(

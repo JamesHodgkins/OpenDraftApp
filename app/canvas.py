@@ -99,6 +99,8 @@ class CADCanvas(QWidget):
     pointSelected = Signal(float, float)
     # emits when the user presses Escape
     cancelRequested = Signal()
+    # emitted when the user presses Escape (handled by MainWindow)
+    escapePressed = Signal()
     # emitted when a drawing-mode toggle changes on the canvas (F8/F10 etc.)
     # so the status bar can stay in sync.
     orthoChanged = Signal(bool)
@@ -698,7 +700,10 @@ class CADCanvas(QWidget):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Escape:
-            self.handle_escape()
+            try:
+                self.escapePressed.emit()
+            except Exception:
+                self.handle_escape()
             return
 
         # --- F10: toggle Draftmate (Object Snap Tracking + Polar Tracking) -

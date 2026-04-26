@@ -159,8 +159,14 @@ class MainWindow(QMainWindow):
         del_shortcut.activated.connect(_handle_delete)
 
         def _handle_escape():
+            # If the user is currently typing into the terminal, Esc should
+            # clear that input first (CAD-style command line UX).
+            if hasattr(terminal, "has_pending_input") and terminal.has_pending_input():
+                terminal.clear_input()
+                return
             canvas.handle_escape()
         esc_shortcut.activated.connect(_handle_escape)
+        canvas.escapePressed.connect(_handle_escape)
 
         # Terminal command catalog — populate once all commands are registered.
         self._refresh_command_pickers()

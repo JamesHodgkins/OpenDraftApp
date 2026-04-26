@@ -32,6 +32,7 @@ from app.entities import Vec2
 class _CommandEntry:
     command_id: str
     label: str
+    aliases: tuple[str, ...] = ()
 
 
 def _command_display_name(key: str) -> str:
@@ -180,12 +181,55 @@ class TopTerminalWidget(QFrame):
     # Public API
     # ------------------------------------------------------------------
 
+    def has_pending_input(self) -> bool:
+        """Return True when the terminal input contains user-typed text."""
+        return bool(self._input.text().strip())
+
+    def clear_input(self) -> None:
+        """Clear the current command/value input and associated suggestions."""
+        self._input.clear()
+        self._clear_match_buttons()
+        self._panel.hide()
+        self._expand_btn.setChecked(False)
+
     def set_commands(self, commands: dict[str, Any]) -> None:
-        self._all_commands = sorted(
-            [_CommandEntry(k, _label_for_command_entry(k, v)) for k, v in commands.items()],
-            key=lambda e: e.label.lower(),
-        )
+        entries: list[_CommandEntry] = []
+        for k, v in commands.items():
+            aliases = getattr(v, "aliases", ())
+            if not isinstance(aliases, tuple):
+                try:
+                    aliases = tuple(aliases)
+                except TypeError:
+                    aliases = ()
+            entries.append(
+                _CommandEntry(
+                    command_id=k,
+                    label=_label_for_command_entry(k, v),
+                    aliases=aliases,
+                )
+            )
+        self._all_commands = sorted(entries, key=lambda e: e.label.lower())
         self._apply_filter()
+
+    def _filtered_command_options(self, text: str) -> list[tuple[str, str]]:
+        """Return [(key,label)] options filtered by *text* (lowercased)."""
+        editor = self._editor
+        if editor is None or not editor.is_running:
+            return []
+        typed = (text or "").strip().lower()
+        options = getattr(editor, "command_option_entries", [])
+        out: list[tuple[str, str]] = []
+        for opt in options:
+            key = (getattr(opt, "key", "") or "").strip()
+            label = (getattr(opt, "label", "") or "").strip()
+            if not label:
+                continue
+            if not typed:
+                out.append((key, label))
+                continue
+            if (key and typed in key.lower()) or typed in label.lower():
+                out.append((key, label))
+        return out
 
     def focus_with_seed(self, seed: str = "") -> None:
         # Seed typed character(s) from the canvas while keeping default UX
@@ -213,6 +257,9 @@ class TopTerminalWidget(QFrame):
 
     def handle_key_event(self, event: QKeyEvent) -> bool:
         # Allow canvas to forward keys here without stealing focus.
+        if event.key() == Qt.Key.Key_Escape:
+            self._clear_terminal()
+            return True
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._on_enter()
             return True
@@ -241,6 +288,10 @@ class TopTerminalWidget(QFrame):
     # Internals
     # ------------------------------------------------------------------
 
+    def _clear_terminal(self) -> None:
+        """Clear the terminal's current UI state (input + suggestions + panel)."""
+        self.clear_input()
+
     def _set_expanded(self, on: bool) -> None:
         if on:
             self._reposition_panel()
@@ -262,11 +313,43 @@ class TopTerminalWidget(QFrame):
         if not text:
             self._filtered_commands = list(self._all_commands)
         else:
-            self._filtered_commands = [
-                e for e in self._all_commands
-                if text in e.label.lower() or text in e.command_id.lower()
-            ]
-        self._refresh_match_buttons_for_idle()
+            def _score(e: _CommandEntry) -> int | None:
+                label = e.label.lower()
+                cmd_id = e.command_id.lower()
+                aliases = tuple(a.lower() for a in e.aliases)
+
+                # Prefer exact alias hits first so shorthand like "l" or "mv"
+                # reliably surfaces the intended command.
+                if text in aliases:
+                    return 0
+                # Then prefer prefix matches (most "command line" UX expects this).
+                if label.startswith(text):
+                    return 1
+                if cmd_id.startswith(text):
+                    return 2
+                if any(a.startswith(text) for a in aliases):
+                    return 3
+                # Fall back to contains matches.
+                if text in label:
+                    return 4
+                if text in cmd_id:
+                    return 5
+                if any(text in a for a in aliases):
+                    return 6
+                return None
+
+            scored: list[tuple[int, _CommandEntry]] = []
+            for e in self._all_commands:
+                s = _score(e)
+                if s is None:
+                    continue
+                scored.append((s, e))
+
+            self._filtered_commands = [e for _s, e in sorted(scored, key=lambda t: (t[0], t[1].label.lower()))]
+        if self._editor is not None and self._editor.is_running:
+            self._refresh_match_buttons_for_command()
+        else:
+            self._refresh_match_buttons_for_idle()
 
     def _refresh_match_buttons_for_idle(self) -> None:
         # Only show match buttons while idle; when a command is running the input
@@ -294,6 +377,7 @@ class TopTerminalWidget(QFrame):
             btn.setText(entry.label)
             btn.setToolTip(entry.command_id)
             btn.setProperty("command_id", entry.command_id)
+            btn.setProperty("option_value", None)
 
         # Keep the selected command if it still exists, otherwise default to first.
         if not matches:
@@ -358,15 +442,48 @@ class TopTerminalWidget(QFrame):
 
     @Slot()
     def _on_match_button_clicked(self) -> None:
-        if self._editor is None or self._editor.is_running:
+        if self._editor is None:
             return
         btn = self.sender()
+        option_value = btn.property("option_value") if btn is not None else None
+        if self._editor.is_running:
+            if isinstance(option_value, str) and option_value.strip():
+                self._editor.provide_command_option(option_value.strip())
+                self._input.clear()
+                self._clear_match_buttons()
+            return
+
         cmd_id = btn.property("command_id") if btn is not None else None
         if isinstance(cmd_id, str) and cmd_id.strip():
             self._suppress_next_empty_enter_input = True
             self._run_command(cmd_id.strip())
             self._input.clear()
             self._clear_match_buttons()
+
+    def _refresh_match_buttons_for_command(self) -> None:
+        """Show active-command options as match buttons while a command runs."""
+        if self._editor is None or not self._editor.is_running:
+            self._clear_match_buttons()
+            return
+
+        typed = self._input.text().strip()
+        options = self._filtered_command_options(typed)
+        if not options:
+            self._clear_match_buttons()
+            return
+
+        matches = options[:4]
+        self._visible_match_command_ids = []
+        self._sync_match_button_count(len(matches))
+        for btn, (key, label) in zip(self._match_buttons, matches, strict=False):
+            shown = f"[{key}] {label}" if key else label
+            btn.setText(shown)
+            btn.setToolTip(shown)
+            btn.setProperty("command_id", None)
+            # Prefer sending the key; if absent fall back to label.
+            btn.setProperty("option_value", key or label)
+
+        self._set_selected_match_idx(0)
 
     def _history_up(self) -> None:
         if not self._history:
@@ -409,6 +526,15 @@ class TopTerminalWidget(QFrame):
 
         # Command-running mode: provide input to the editor.
         if self._editor.is_running and getattr(self._editor, "_input_mode", "none") != "none":
+            if text and getattr(self._editor, "command_option_labels", None):
+                try:
+                    accepted = self._editor.provide_command_option(text)
+                except Exception:
+                    accepted = False
+                if accepted:
+                    self._input.clear()
+                    self._clear_match_buttons()
+                    return
             self._submit_to_editor(text)
             self._input.clear()
             return
@@ -436,6 +562,9 @@ class TopTerminalWidget(QFrame):
                 key = event.key()
             except Exception:
                 key = None
+            if key == Qt.Key.Key_Escape:
+                self._clear_terminal()
+                return True
             if key == Qt.Key.Key_Left:
                 return self._select_match_delta(-1)
             if key == Qt.Key.Key_Right:

@@ -4,7 +4,7 @@ from app.editor.base_command import CommandBase
 from app.entities import LineEntity
 
 
-@command("lineCommand")
+@command("lineCommand", aliases=("l",))
 class DrawLineCommand(CommandBase):
     """Draw a line by picking a start point and an end point."""
 

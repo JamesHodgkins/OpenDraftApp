@@ -11,7 +11,7 @@ from app.commands.modify_helpers import (
 )
 
 
-@command("copyCommand")
+@command("copyCommand", aliases=("cp",))
 class CopyCommand(CommandBase):
     """Copy selected entities by vector displacement; supports multiple placements."""
 

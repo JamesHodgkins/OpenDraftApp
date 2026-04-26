@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from app.editor.base_command import CommandBase
-from app.editor.command_registry import command, get_command, get_command_spec
+from app.editor.command_registry import autodiscover, command, get_command, get_command_spec
 from app.sdk.commands import CommandContext, command as sdk_command
 
 
@@ -67,3 +67,16 @@ def test_alias_collision_fails_fast() -> None:
         class _PolicyAliasOther(CommandBase):
             def execute(self) -> None:
                 return None
+
+
+def test_core_command_aliases_resolve() -> None:
+    autodiscover("app.commands")
+
+    # Draw
+    assert get_command("l") is get_command("lineCommand")
+    assert get_command("c") is get_command("circleCommand")
+
+    # Modify
+    assert get_command("cp") is get_command("copyCommand")
+    assert get_command("m") is get_command("moveCommand")
+    assert get_command("mv") is get_command("moveCommand")

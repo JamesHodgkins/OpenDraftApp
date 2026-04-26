@@ -97,6 +97,14 @@ class CommandOptionSelection:
     label: str
 
 
+@dataclass(frozen=True, slots=True)
+class CommandOption:
+    """A keyed command option that can be triggered from the terminal."""
+
+    key: str
+    label: str
+
+
 class EditorTransaction:
     """Public transaction helper for batching undo and redraw notifications."""
 
@@ -231,6 +239,7 @@ class Editor(QObject):
         self._highlight_entities: List[BaseEntity] = []
         self._choice_options: list[str] = []   # keys active during "choice" mode
         self._command_option_labels: list[str] = []  # labels exposed to context menu
+        self._command_option_keys: dict[str, str] = {}  # key(lower) -> label
         # Set by commands before calling get_point() so the OSNAP engine can
         # compute perpendicular snaps relative to the previously selected point.
         self.snap_from_point: Optional[Vec2] = None
@@ -289,13 +298,46 @@ class Editor(QObject):
         """Labels shown under right-click 'Command options' while a command runs."""
         return list(self._command_option_labels) if self.is_running else []
 
+    @property
+    def command_option_entries(self) -> list[CommandOption]:
+        """Keyed options for the active command (terminal-friendly)."""
+        if not self.is_running:
+            return []
+        # Preserve registration order from labels; include keys when present.
+        entries: list[CommandOption] = []
+        # Build reverse lookup label -> key (pick first if duplicates).
+        label_to_key: dict[str, str] = {}
+        for k, lbl in self._command_option_keys.items():
+            label_to_key.setdefault(lbl, k)
+        for lbl in self._command_option_labels:
+            k = label_to_key.get(lbl, "")
+            entries.append(CommandOption(key=k, label=lbl))
+        return entries
+
     def set_command_options(self, options: list[str]) -> None:
         """Expose command-specific right-click options for the active command."""
         self._command_option_labels = list(options)
+        self._command_option_keys = {}
+
+    def set_command_options_keyed(self, options: list[CommandOption]) -> None:
+        """Expose command options with explicit terminal keys."""
+        labels: list[str] = []
+        keys: dict[str, str] = {}
+        for opt in options:
+            key = (opt.key or "").strip()
+            label = (opt.label or "").strip()
+            if not label:
+                continue
+            labels.append(label)
+            if key:
+                keys[key.lower()] = label
+        self._command_option_labels = labels
+        self._command_option_keys = keys
 
     def clear_command_options(self) -> None:
         """Remove any command-specific right-click options."""
         self._command_option_labels = []
+        self._command_option_keys = {}
 
     @property
     def is_running(self) -> bool:
@@ -445,18 +487,30 @@ class Editor(QObject):
                 self._put_input_event("choice", opt)
                 return
 
-    def provide_command_option(self, value: str) -> None:
+    def provide_command_option(self, value: str) -> bool:
         """Deliver a command option selected from the canvas context menu.
 
         This is independent of ``input_mode`` so commands can expose options
         without entering the editor's "choice" input mode.
         """
         if not self.is_running:
-            return
+            return False
+        token = (value or "").strip()
+        if not token:
+            return False
+
+        # Keyed match (preferred for terminal usage).
+        keyed = self._command_option_keys.get(token.lower())
+        if keyed:
+            self._put_input_event("command_option", keyed)
+            return True
+
+        # Label match (legacy + context menu).
         for opt in self._command_option_labels:
-            if opt.lower() == value.lower():
+            if opt.lower() == token.lower():
                 self._put_input_event("command_option", opt)
-                return
+                return True
+        return False
 
     # ------------------------------------------------------- blocking input API
     # Called *from the command thread only*.
