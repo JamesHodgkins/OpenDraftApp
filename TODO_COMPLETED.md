@@ -32,6 +32,7 @@
 - [x] **Ribbon quick colour popup** — ribbon colour swatch now opens a compact common-colours panel (incl. ByLayer) with a "More…" affordance for the full colour picker
 - [x] **Canvas context menu** — added right-click context menu on the canvas (Undo/Redo/Delete/Modify→Rotate) with right-click-to-select behaviour and command-safe selection handling
 - [x] **Command options in context menu** — when a command is running in "choice" mode, right-click shows a "Command options" submenu that injects choices back into the active command; Rotate now supports base/destination vector input via these options
+- [x] **Top command terminal** — added `TopTerminalWidget` (800px wide, top-center) as the single consolidated input + output surface with expandable output scrollback; removed the floating command palette and cursor-following dynamic input overlay
 
 ### Command Input Pipeline Hardening (2026-04-24)
 
@@ -108,6 +109,7 @@
 - [x] **Move command vector displacement input** — second Move pick now uses the base point as `editor.snap_from_point`, so Ortho and dynamic dX/dY input are anchored to the base-point vector
 - [x] **Copy command vector displacement input** — repeated Copy placements now keep the base point as `editor.snap_from_point`, preserving Ortho and typed vector behavior across each placement
 - [x] **Regression tests for vector-origin behavior** — added editor tests covering Move/Copy base-point vector-origin setup while awaiting destination/displacement input
+- [x] **Editor `get_vector` helpers** — added `Editor.get_vector(p1_message, p2_message)` and `Editor.get_vector_from(base, p2_message)` and refactored Move/Copy/Rotate to use the shared vector-picking flow (centralizes `snap_from_point` scoping and removes duplicated two-`get_point()` blocks)
 
 ### Canvas Vector Rubberband Feedback (2026-04-24)
 

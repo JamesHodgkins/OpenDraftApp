@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QFrame,
     QDockWidget,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QObject, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QIcon
 
 from controls.ribbon import RibbonPanel
@@ -26,6 +26,7 @@ from app.ui.layer_manager import LayerManagerDialog
 from app.ui.draftmate_settings import DraftmateSettingsDialog
 from app.ui.status_bar import StatusBarWidget
 from app.ui.properties_panel import PropertiesPanel
+from app.ui.top_terminal import TopTerminalWidget
 from app.config.ribbon_config import (
     RIBBON_CONFIG,
     command_specs_from_ribbon,
@@ -96,9 +97,45 @@ class MainWindow(QMainWindow):
 
         self.setMenuWidget(ribbon)
 
-        # ---- Canvas is the sole central widget — docks snap beside it -----
+        # ---- Canvas is the central drawing widget — docks snap beside it -----
         canvas = CADCanvas(document=doc, editor=self.editor)
         self._canvas = canvas
+
+        # ---- Top terminal (single consolidated input + output) -------------
+        # Implemented as an overlay anchored to the canvas so it does not
+        # consume layout height (i.e. it sits on top of the viewport).
+        terminal = TopTerminalWidget(editor=self.editor, parent=canvas)
+        terminal.setFixedWidth(800)
+        terminal.raise_()
+        terminal.show()
+        self._terminal = terminal
+
+        class _TerminalOverlayAnchor(QObject):
+            def __init__(self, *, canvas: QWidget, terminal: QWidget) -> None:
+                super().__init__(canvas)
+                self._canvas = canvas
+                self._terminal = terminal
+
+            def _reposition(self) -> None:
+                x = max(0, (self._canvas.width() - self._terminal.width()) // 2)
+                y = 8
+                self._terminal.move(x, y)
+                self._terminal.raise_()
+                # Keep dropdown panel aligned under the input row.
+                if hasattr(self._terminal, "_reposition_panel"):
+                    try:
+                        self._terminal._reposition_panel()  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+
+            def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
+                if obj is self._canvas and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+                    self._reposition()
+                return super().eventFilter(obj, event)
+
+        self._terminal_anchor = _TerminalOverlayAnchor(canvas=canvas, terminal=terminal)
+        canvas.installEventFilter(self._terminal_anchor)
+        self._terminal_anchor._reposition()
 
         # Global Escape shortcut: always handle Escape even when focus is
         # inside ribbon controls so users can press Esc to clear selection
@@ -122,17 +159,16 @@ class MainWindow(QMainWindow):
         del_shortcut.activated.connect(_handle_delete)
 
         def _handle_escape():
-            if canvas._command_palette.isVisible():
-                canvas._command_palette.close_palette()
-            else:
-                canvas.handle_escape()
+            canvas.handle_escape()
         esc_shortcut.activated.connect(_handle_escape)
 
-        # Command palette — populate once all commands are registered, then
-        # open it whenever the canvas fires paletteRequested (Space key).
+        # Terminal command catalog — populate once all commands are registered.
         self._refresh_command_pickers()
-        canvas.paletteRequested.connect(canvas._command_palette.open)  # seed str passed through
-        canvas._command_palette.command_selected.connect(self.editor.run_command)
+        terminal.command_requested.connect(self.editor.run_command)
+        # Canvas keypress (idle) → seed terminal input without extra clicks.
+        canvas.terminalRequested.connect(terminal.focus_with_seed)
+        # Canvas keypress forwarding → terminal input buffer (no focus required).
+        canvas.terminalKeyEvent.connect(terminal.handle_key_event)
 
         # Canvas left-click → provide world point to the active command
         canvas.pointSelected.connect(
@@ -194,10 +230,15 @@ class MainWindow(QMainWindow):
 
         # Editor status message → left side of status bar
         self.editor.status_message.connect(self._status_widget.cmd_label.setText)
+        # Mirror prompts/errors into the terminal scrollback too.
+        self.editor.status_message.connect(terminal.append_scrollback)
+        self.editor.command_started.connect(lambda name: terminal.append_scrollback(f"[start] {name}"))
+        self.editor.command_finished.connect(lambda: terminal.append_scrollback("[done]"))
 
         # update status with canvas mouse movement
         try:
             canvas.mouseMoved.connect(self._on_canvas_mouse_moved)
+            canvas.mouseMoved.connect(lambda x, y: terminal.update_cursor_world(x, y))
         except Exception:
             pass
 
@@ -282,7 +323,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_command_pickers(self) -> None:
         """Repopulate command pickers from the latest catalog snapshot."""
-        self._canvas._command_palette.populate(command_catalog())
+        self._terminal.set_commands(command_catalog())
 
     def refresh_command_catalog(self, *, reload_plugins: bool = True) -> None:
         """Refresh plugin commands and repopulate picker UIs.

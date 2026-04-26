@@ -13,7 +13,6 @@ from app.editor.osnap_engine import SnapResult
 from app.entities import Vec2
 
 _POINT_INPUT_MODES = ("point", "angle", "length")
-_DYNAMIC_INPUT_MODES = ("point", "integer", "float", "string", "choice", "angle", "length")
 
 
 def is_snap_active(
@@ -80,9 +79,7 @@ def update_snap_and_draftmate(
     return snap_active, snap_result, draftmate_result, from_point
 
 
-def should_update_dynamic_input(editor, snap_active: bool) -> bool:
-    """Return True when the dynamic input widget should be fed mouse updates."""
-    return snap_active or (
-        editor is not None
-        and getattr(editor, "_input_mode", "none") in _DYNAMIC_INPUT_MODES
-    )
+#
+# Note: The cursor-following dynamic input widget was removed in favor of the
+# top-of-viewport terminal, so the canvas no longer needs dynamic-input gating.
+#

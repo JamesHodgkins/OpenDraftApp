@@ -26,6 +26,9 @@ Tracking note (2026-04-25): Fixed Pyright errors in `controls/ribbon/ribbon_spli
 Tracking note (2026-04-25): Applied ribbon-wide Pyright enum cleanup by replacing legacy `Qt.Align*` usage with `Qt.AlignmentFlag.*`, switching split-button bevel drawing to `QStyle.ControlElement.CE_PushButtonBevel`, modernizing `RibbonLargeButton` icon mode/state enums, and removing unused `Icon` imports in ribbon controls.
 Tracking note (2026-04-25): Fixed Pyright diagnostics in `controls/ribbon/ribbon_panel_widget.py` by switching to scoped Qt/PySide enums (`Qt.WindowType.*`, `Qt.WidgetAttribute.*`, `QFrame.Shape.*`, `QSizePolicy.Policy.*`), making layout item unwrapping explicit, and using `addWidget(tool)` + `setAlignment(...)` for stub-compatible alignment.
 Tracking note (2026-04-25): Added a “run CI locally” setup: `scripts/ci.ps1` (Windows) and `nox -s ci` (`noxfile.py`) to run pytest + pyright the same way as GitHub Actions, to avoid CI back-and-forth.
+Tracking note (2026-04-25): Added `Editor.get_vector()` / `Editor.get_vector_from()` helpers and refactored Move/Copy/Rotate vector-picking flows to use them (removes duplicated two-`get_point()` logic while preserving snap-from-base behavior).
+Tracking note (2026-04-26): Simplified top-of-viewport terminal (`TopTerminalWidget`) panel to output-only (removed History/Output tabs) and added a dedicated suggestions list that appears while typing.
+Tracking note (2026-04-26): Replaced the dropdown suggestions list with inline match buttons to the right of the terminal input (click to run).
 
 ---
 
@@ -181,7 +184,7 @@ Standard 2D CAD operations that are entirely absent.
 
 ### Command Experience
 
-- [ ] **Command line / prompt bar** — a text field at the bottom where users can type command names (e.g., `LINE`, `CIRCLE`) and sub-options, mirroring AutoCAD muscle memory
+- [x] **Command line / prompt bar** — implemented as a top-of-viewport terminal (800px wide) consolidating command input and output scrollback; replaces the old command palette and dynamic input overlay
 - [ ] **Command aliases** — short aliases (`L` → Line, `C` → Circle, `M` → Move, etc.)
 - [ ] **Repeat last command** — pressing `Enter` or `Space` on an empty canvas repeats the previous command
 - [ ] **Command history** — scrollable log of recently executed commands and prompts

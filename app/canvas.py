@@ -58,8 +58,6 @@ from app.editor.hit_testing import (
     entity_inside_rect,
     entity_crosses_rect,
 )
-from app.ui.dynamic_input_widget import DynamicInputWidget
-from app.ui.command_palette import CommandPaletteWidget
 from app.ui.canvas_context_menu import CanvasContextMenu
 from app.canvas_viewport import ViewportTransform
 from app.canvas_grid import GridRenderer
@@ -82,10 +80,7 @@ from app.canvas_interaction import (
     resolve_display_point,
     selection_drag_exceeds_threshold,
 )
-from app.canvas_command_flow import (
-    should_update_dynamic_input,
-    update_snap_and_draftmate,
-)
+from app.canvas_command_flow import update_snap_and_draftmate
 from app.canvas_grip_flow import (
     activate_hot_grip,
     cleared_active_grip_state,
@@ -108,9 +103,10 @@ class CADCanvas(QWidget):
     # so the status bar can stay in sync.
     orthoChanged = Signal(bool)
     draftmateChanged = Signal(bool)
-    # emitted when the user wants to open the command palette; carries the
-    # seed character (empty string when opened with no pre-typed text)
-    paletteRequested = Signal(str)
+    # emitted when the user starts typing while idle; carries the seed text
+    terminalRequested = Signal(str)
+    # emitted for keypress forwarding to the top terminal (payload is QKeyEvent)
+    terminalKeyEvent = Signal(object)
 
     @Slot()
     def refresh(self) -> None:
@@ -227,25 +223,12 @@ class CADCanvas(QWidget):
         self._cache_dpr: float = 1.0
         self._cache_sel_ids: frozenset = frozenset()
 
-        # ---- Dynamic input widget --------------------------------------------
-        # Custom-painted input fields following the cursor during point/value input
-        self._dynamic_input = DynamicInputWidget(parent=self)
-        self._dynamic_input.hide()
-        self._dynamic_input.input_submitted.connect(self._on_dynamic_input_submitted)
-        self._dynamic_input.input_cancelled.connect(self._on_dynamic_input_cancelled)
-
-        # ---- Command palette -------------------------------------------------
-        self._command_palette = CommandPaletteWidget(parent=self)
-        self._command_palette.dismissed.connect(self._command_palette.hide)
-
         # ---- Draftmate (Object Snap Tracking + Polar Tracking) -----------
         self._draftmate = DraftmateEngine()
         # Last frame's Draftmate result (None when disabled or no data).
         self._draftmate_result: Optional[DraftmateResult] = None
 
-        # Connect to editor signals to update dynamic input state
-        if self._editor is not None:
-            self._editor.input_mode_changed.connect(self._on_editor_input_mode_changed)
+        # The top terminal owns typed input; canvas remains mouse-first.
 
     # ----------------------
     # Viewport proxy properties
@@ -467,12 +450,6 @@ class CADCanvas(QWidget):
         if self._editor is not None:
             self._preview_entities = self._editor.get_dynamic(display)
 
-        # ---- Dynamic input widget update ------------------------------------
-        # Update dynamic input position and cursor coordinates whenever mouse moves
-        if should_update_dynamic_input(self._editor, snap_active):
-            self._dynamic_input.update_cursor_position(display)
-            self._dynamic_input.update_screen_position(event.pos() if hasattr(event, "pos") else posf.toPoint())
-
         # ---- Hover hit-test (idle mode only) --------------------------------
         # Skip hover/grip-hover while a grip is actively being moved.
         if self._active_grip is not None:
@@ -639,14 +616,10 @@ class CADCanvas(QWidget):
         """Intercept Tab/Shift-Tab before Qt's focus-chain handles them.
 
         Qt processes Tab at the QWidget.event() level, before keyPressEvent
-        is called.  When the dynamic input widget is visible we must consume
-        Tab/Backtab here so they never reach the focus machinery.
+        is called.  Historically we consumed Tab/Backtab for the cursor-following
+        dynamic input widget; typed input is now handled by the top terminal so
+        we let Qt handle Tab normally.
         """
-        if event.type() == event.Type.KeyPress:
-            key = event.key()
-            if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab) and self._dynamic_input.isVisible():
-                self._dynamic_input.keyPressEvent(event)
-                return True  # consumed
         return super().event(event)
 
     # ----------------------------------------------------------------
@@ -703,15 +676,9 @@ class CADCanvas(QWidget):
             self.cancelRequested.emit()
         else:
             # Command is active: cancel the command but leave selection intact
-            self._dynamic_input.clear()
             self.cancelRequested.emit()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        # Palette gets priority — Escape closes it rather than cancelling a command
-        if self._command_palette.isVisible():
-            self._command_palette.keyPressEvent(event)
-            return
-
         if event.key() == Qt.Key.Key_Escape:
             self.handle_escape()
             return
@@ -735,17 +702,31 @@ class CADCanvas(QWidget):
                 self.update()
             return
 
-        if self._dynamic_input.isVisible():
-            # Forward all non-Escape keys to the dynamic input widget while it
-            # is active so the user can type values without clicking.
-            self._dynamic_input.keyPressEvent(event)
+        # Forward typed input keys to the consolidated top terminal.
+        #
+        # This keeps the viewport mouse-first (no required focus change) while
+        # still letting users type values/commands at any time.
+        if (
+            event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Backspace, Qt.Key.Key_Up, Qt.Key.Key_Down)
+            or (event.text() and event.text().isprintable())
+        ):
+            try:
+                self.terminalKeyEvent.emit(event)
+            except Exception:
+                pass
+            # If idle and the user started typing, also request a seed focus so
+            # the terminal shows suggestions immediately.
+            if self._idle:
+                text = event.text()
+                if text and (text.isalpha() or text.isdigit()):
+                    self.terminalRequested.emit(text)
             return
 
-        # Any alphanumeric key while idle → open palette with that char pre-typed
+        # Any alphanumeric key while idle → seed the top terminal without extra clicks
         if self._idle:
             text = event.text()
             if text and (text.isalpha() or text.isdigit()):
-                self.paletteRequested.emit(text)
+                self.terminalRequested.emit(text)
                 return
 
         super().keyPressEvent(event)
@@ -1127,71 +1108,3 @@ class CADCanvas(QWidget):
     def _draw_grid(self, painter: QPainter) -> None:
         """Delegate grid rendering to GridRenderer."""
         self._grid.draw(painter, self.width(), self.height())
-
-    # ----------------------------------------------------------------
-    # Dynamic input handling
-    # ----------------------------------------------------------------
-
-    @Slot(str)
-    def _on_editor_input_mode_changed(self, mode: str) -> None:
-        """Handle editor input mode changes to show/hide dynamic input widget."""
-        if mode == "none":
-            self._cursor_world = None
-            self._dynamic_input.clear()
-        elif mode in ("point", "integer", "float", "string", "choice", "angle", "length"):
-            editor = self._editor
-            if editor is None:
-                self._dynamic_input.clear()
-                return
-            # Skip dynamic input when the active command has suppressed it
-            # (e.g. Trim — the user is picking segments, not entering coords).
-            if getattr(editor, "suppress_dynamic_input", False):
-                self._dynamic_input.clear()
-                return
-            base_point = None
-            if mode == "point":
-                base_point = editor.snap_from_point
-            choice_options = editor._choice_options if mode == "choice" else None
-            angle_center = editor._angle_center if mode == "angle" else None
-            length_base = editor._length_base if mode == "length" else None
-            self._dynamic_input.set_input_mode(mode, Vec2(0, 0), base_point, choice_options, angle_center, length_base)
-            # Show the widget on the screen
-            self._dynamic_input.show()
-            self._dynamic_input.raise_()
-            # Ensure the canvas has keyboard focus so keyPressEvent fires
-            # and forwards typed characters to the dynamic input widget.
-            self.setFocus()
-
-    @Slot(object)
-    def _on_dynamic_input_submitted(self, value: object) -> None:
-        """Forward accepted dynamic input to the editor."""
-        editor = self._editor
-        if editor is None:
-            return
-
-        mode = editor._input_mode
-        if mode == "point":
-            if isinstance(value, Vec2):
-                editor.provide_point(value)
-        elif mode == "integer":
-            if isinstance(value, (int, float, str)):
-                editor.provide_integer(int(value))
-        elif mode == "float":
-            if isinstance(value, (int, float, str)):
-                editor.provide_float(float(value))
-        elif mode == "angle":
-            if isinstance(value, (int, float, str)):
-                editor.provide_angle(float(value))
-        elif mode == "length":
-            if isinstance(value, (int, float, str)):
-                editor.provide_length(float(value))
-        elif mode == "string":
-            editor.provide_string(str(value))
-        elif mode == "choice":
-            editor.provide_choice(str(value))
-
-    @Slot()
-    def _on_dynamic_input_cancelled(self) -> None:
-        """Forward cancellation to editor."""
-        if self._editor is not None:
-            self.cancelRequested.emit()
