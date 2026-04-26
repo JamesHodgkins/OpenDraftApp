@@ -229,6 +229,24 @@ class CADCanvas(QWidget):
         self._draftmate_result: Optional[DraftmateResult] = None
 
         # The top terminal owns typed input; canvas remains mouse-first.
+        #
+        # Still listen for input-mode changes so we can clear transient cursor
+        # state used for rubberband rendering when a command finishes.
+        if self._editor is not None:
+            try:
+                self._editor.input_mode_changed.connect(self._on_editor_input_mode_changed)
+            except Exception:
+                pass
+
+    def _on_editor_input_mode_changed(self, mode: str) -> None:
+        """React to editor input-mode changes.
+
+        The canvas keeps a transient `_cursor_world` used for the fallback
+        base→cursor rubberband. When a command exits input mode ("none"),
+        clear it so stale guides don't render on the next paint.
+        """
+        if mode == "none":
+            self._cursor_world = None
 
     # ----------------------
     # Viewport proxy properties
