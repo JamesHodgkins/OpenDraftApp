@@ -39,6 +39,9 @@ Tracking note (2026-04-27): Added save-time embedded thumbnails in `.odx` contai
 Tracking note (2026-04-27): Added Linux pre-installer thumbnailer scaffolding (`scripts/linux_odx_thumbnailer.py` + install/uninstall helpers) so `.odx` embedded previews can be surfaced in Linux file managers.
 Tracking note (2026-04-27): Hardened Linux thumbnailer install/uninstall helpers with explicit Linux platform guards so running them on Windows/macOS exits cleanly without creating misleading `~/.local` artifacts.
 Tracking note (2026-04-27): Fixed `.odx` save regression in thumbnail export by switching `QImage.save(QBuffer, ...)` format argument from bytes to string (`"PNG"`) and added canvas regression coverage.
+Tracking note (2026-04-27): Completed Priority 7 command/shortcut UX pass with terminal empty-Enter repeat-last-command, shell-style Up/Down input history recall (with draft restoration), F1/F2/F3 shortcuts, richer right-click canvas/entity context menu (recent commands + Properties/Copy), and ribbon hover tooltip previews.
+Tracking note (2026-04-27): Fixed startup crash in ribbon tooltip propagation by replacing tuple-based `findChildren((QToolButton, QPushButton))` call with separate PySide-compatible `findChildren(QToolButton)` / `findChildren(QPushButton)` passes.
+Tracking note (2026-04-27): Fixed terminal history/suggestion mismatch where recalled `core.line` could highlight the Dimension command; command filtering now prioritizes exact command-id matches and includes regression coverage.
 
 ---
 
@@ -197,26 +200,26 @@ Standard 2D CAD operations that are entirely absent.
 
 - [x] **Command line / prompt bar** — implemented as a top-of-viewport terminal (800px wide) consolidating command input and output scrollback; replaces the old command palette and dynamic input overlay
 - [x] **Command aliases** — short aliases (`l` → Line, `c` → Circle, `cp` → Copy, `m`/`mv` → Move) and terminal suggestions match on aliases
-- [ ] **Repeat last command** — pressing `Enter` or `Space` on an empty canvas repeats the previous command
-- [ ] **Command history** — scrollable log of recently executed commands and prompts
+- [x] **Repeat last command** — pressing `Enter` or `Space` on an empty canvas repeats the previous command
+- [x] **Command history** — scrollable log of recently executed commands and prompts
 
 ### Keyboard Shortcuts
 
-- [ ] **F1** — Help
-- [ ] **F2** — Toggle command history window
-- [ ] **F3** — Toggle OSNAP on/off (currently F8 is Ortho, F10 is Draftmate)
-- [ ] **Ctrl+Z / Ctrl+Y** — Undo/Redo (check current binding)
+- [x] **F1** — Help
+- [x] **F2** — Toggle command history window
+- [x] **F3** — Toggle OSNAP on/off (currently F8 is Ortho, F10 is Draftmate)
+- [x] **Ctrl+Z / Ctrl+Y** — Undo/Redo (check current binding)
 - [x] **Ctrl+S / Ctrl+Shift+S** — Save / Save As
 - [x] **Ctrl+N / Ctrl+O** — New / Open
-- [ ] **Delete key** — delete selected entities
-- [ ] **Escape** — cancel in-progress command or clear selection (already implemented; verify both cases)
+- [x] **Delete key** — delete selected entities
+- [x] **Escape** — cancel in-progress command or clear selection (already implemented; verify both cases)
 
 ### Usability
 
-- [ ] **Tooltip previews** — show a small icon or description when hovering over ribbon buttons
+- [x] **Tooltip previews** — show a small icon or description when hovering over ribbon buttons
 - [x] **Ribbon quick colour popup** — clicking the ribbon colour swatch should show a compact palette (common colours + ByLayer) with an option to open the full colour picker
-- [ ] **Context menu extensions (right-click on canvas)** — add recent commands and richer entity-specific options (core context menu + command options are already implemented)
-- [ ] **Context menu on entity (right-click)** — Properties, Delete, Move, Copy, etc.
+- [x] **Context menu extensions (right-click on canvas)** — add recent commands and richer entity-specific options (core context menu + command options are already implemented)
+- [x] **Context menu on entity (right-click)** — Properties, Delete, Move, Copy, etc.
 - [ ] **Grip editing improvements** — show grip count, support multi-grip drag with relative offset
 - [x] **Grip editing: linked coincident grips** — when dragging a grip, move any coincident grips on other *selected* entities at the same time (single undo step)
 - [ ] **Cursor crosshair** — replace default cursor with a full-screen crosshair during drawing commands
@@ -270,43 +273,6 @@ Issues identified in `AUDIT.md` (2026-04-18). Grouped by priority matching the a
 - [ ] **`DimensionEntity.nearest_snap()`** — currently returns `None` with a stub comment; implement proper nearest-point projection across the three dimension points
 - [ ] **Command tests — draw commands** — add `test_commands.py` covering at minimum: `DrawLineCommand`, `DrawCircleCommand`, `DrawArcCommand`, `DrawRectCommand`; simulate point input via the editor queue and assert resulting document state
 - [ ] **Command tests — modify commands** — cover `MoveCommand`, `CopyCommand`, `RotateCommand`, `ScaleCommand`, `MirrorCommand`, `TrimCommand`, `ExtendCommand`, `DeleteCommand`; verify undo/redo round-trip for each
-
-### AA-P1 — Architecture
-
-- [x] **Extract `app/geometry.py`** — consolidated arc/intersection helpers from `modify_trim.py` into `app/geometry.py`; `modify_extend.py` now imports from `app.geometry` instead of the brittle `from app.commands.modify_trim import ...` cross-import; base `_geo_*` helpers re-exported from `app.geometry` for a single import site
-- [x] **Refactor `CADCanvas`** — extracted `ViewportTransform` → `app/canvas_viewport.py` (pan/zoom, screen↔world, origin anchor), `GridRenderer` → `app/canvas_grid.py` (adaptive multi-level grid), rendering/pen helpers → `app/canvas_painting.py` (OSNAP marker, Draftmate guides, grips, selection rectangle, vector rubberband, base/overlay pen composition), interaction-rule helpers → `app/canvas_interaction.py` (point resolution, drag thresholding, selection matching, grip/entity hit detection), command-flow helpers → `app/canvas_command_flow.py` (snap/draftmate/input gating), and grip lifecycle helpers → `app/canvas_grip_flow.py` (activate, preview drag, commit/reset); canvas delegates via proxy properties and thin wrapper methods
-- [x] **CI pipeline** — added `.github/workflows/ci.yml` running `pytest` (headless via `QT_QPA_PLATFORM=offscreen`) and `pyright` type-check on every push and PR
-
-### AA-P1b — Command API / Plugin Architecture
-
-- [x] **Create a stable command SDK layer** — added `app/sdk/commands` with public `CommandContext`, `CommandSpec`, and registration decorators (`@command`, `@register`) that route through the core registry
-- [x] **Adopt metadata-rich command specs** — registry now supports metadata-rich `@command(...)` fields and merges ribbon-derived `CommandSpec` metadata (id/display name/description/category/aliases/icon/source/min API version) into core command specs
-- [x] **Enforce command namespacing and collision policy** — command IDs are now canonicalized to namespaced form (`core.*` for legacy core IDs) and registry registration fails fast on command-id/alias collisions
-- [x] **Add plugin discovery via Python entry points** — startup now loads built-ins via `app.commands` autodiscovery and external plugins via `autodiscover_entry_points("opendraft.commands")`
-- [x] **Implement action resolution + startup validation** — added generic action-source validators and startup ribbon-action validation logging against local handlers plus registered commands
-- [x] **Expose high-level command helpers** — added public `EditorTransaction`, `Editor.preview()` / `Editor.highlighted()`, `Editor.push_undo_command()` / `Editor.notify_document()`, and SDK `CommandContext` wrappers; migrated modify commands off direct `editor._undo_stack` usage
-- [x] **Support command catalog refresh** — added command-catalog snapshot/version APIs plus non-core unregister + plugin reload refresh flow; `MainWindow.refresh_command_catalog()` now repopulates command pickers from the refreshed catalog
-- [x] **Add command-architecture contract tests** — added `tests/test_command_architecture_contract.py` covering cancellation lifecycle reset, start-after-cancel behavior, helper undo/redo guarantees, and alive-thread start guard; validated alongside existing collision/plugin/action suites
-
-### AA-P2 — Technical Debt
-
-- [x] **`Vec2` arithmetic operators** — add `__add__`, `__sub__`, `__mul__` (scalar), `__truediv__` (scalar), and a `distance_to(other)` convenience method; eliminates inline `dx/dy` boilerplate repeated throughout commands and entities
-- [x] **Unify modify-command transform logic** — extend `_transform_entity()` in `modify_helpers.py` to accept an optional post-transform hook for arc-angle and radius mutations; update `RotateCommand`, `ScaleCommand`, and `MirrorCommand` to use the shared helper instead of reimplementing entity-type dispatch locally
-- [x] **`EditorSettings` dataclass** — centralise all hardcoded tolerances and thresholds (pick tolerance 7 px, grip pick 7 px, OSNAP aperture 15 px, trim/extend tolerance 10–20 px) into a single settings object passed through the constructor chain; expose relevant values to the preferences UI
-- [x] **`DynamicInputWidget` strategy pattern** — replace the 7-mode monolith (527 lines) with one `InputMode` strategy subclass per mode (`PointMode`, `IntegerMode`, `FloatMode`, `StringMode`, `ChoiceMode`, `AngleMode`, `LengthMode`); the widget delegates validation, placeholder computation, and rendering to the active strategy
-- [x] **Serialisation migration layer** — `DocumentStore.from_dict()` reads the `version` field but takes no action on it; add a `_migrate(d, version)` step so old JSON files with missing or renamed fields are upgraded to the current schema rather than silently producing broken entities
-
-### AA-P3 — Maintainability
-
-- [x] **`RibbonPanel.setup_document()` refactor** — extracted all domain logic into `app/ribbon_bridge.py` (`RibbonDocumentBridge`); ribbon now emits `colorChangeRequested`, `lineStyleChanged`, `lineWeightChanged`, `layerChanged` signals; public methods (`set_swatch_color`, `populate_layers`, etc.) replace direct document access; `RibbonPanel` in `ribbon_panel_widget.py` renamed to `RibbonPanelFrame` to resolve name collision; overflow chevron added via `_OverflowTabContent` for adaptive panel layout
-- [x] **`LayerManagerDialog._append_row()` refactor** — reviewed: six genuinely different cell types; `_on_style_change` / `_on_weight_change` are already named methods, not anonymous lambdas; all mutations already route through `Editor.set_layer_property`. A `LayerRowBuilder` extract would increase indirection without reducing coupling. No change warranted.
-- [x] **Pyright / mypy configuration** — added `pyrightconfig.json` in standard mode; fixed `snap_candidates()`, `nearest_snap()`, `perp_snaps()`, and `draw()` annotations in `ArcEntity` (bare `List`, `Optional[object]`, untyped params)
-- [x] **Structured logging** — replaced `warnings.warn()` in `command_registry.py` and `editor.py` with `logging.getLogger(__name__)`; added `app/logger.py` with rotating file handler wired from `MainWindow`
-- [x] **Entity ID index in `DocumentStore`** — added `_entity_by_id: Dict[str, BaseEntity]` maintained via `__post_init__`; `add_entity`, `remove_entity`, `get_entity`, and `clear` all updated for O(1) lookups
-- [x] **Fix `ArcEntity.crosses_rect()` import** — removed `__import__('app.entities.base', ...)` hack; `BBox` was already imported at module level
-- [x] **Deduplicate Escape handling** — extracted `CADCanvas.handle_escape()` as the single authoritative handler; `MainWindow` Escape shortcut now delegates directly to it
-- [x] **Deduplicate Ortho/Draftmate mutual exclusion** — extracted `CADCanvas._set_ortho(on)` / `_set_draftmate(on)` methods; F8/F10 keys and status-bar buttons all call through these; mutual exclusion enforced in one place
-- [x] **Ribbon audit — Major issues (§2.1–§2.8)** — consolidated `ButtonSize`/`IconSize` enums into a single `Sizing` NamedTuple; centralised 27+ hardcoded colour values into `COLORS`; stripped ~120 dead QSS rules; added `__all__` exports to all 7 ribbon modules; created 5 missing icon SVGs; wrote 30 ribbon tests covering models, factories, split buttons, and the top-level `RibbonPanel` widget
 
 ---
 

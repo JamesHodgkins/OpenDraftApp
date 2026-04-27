@@ -25,15 +25,20 @@ class CanvasContextMenu(QMenu):
         undo_text: str,
         redo_text: str,
         has_selection: bool,
+        has_entity_context: bool,
         repeat_label: str,
         can_repeat: bool,
+        recent_commands: Optional[Iterable[str]],
+        on_recent_command: Optional[Callable[[str], None]],
         command_option_labels: Optional[Iterable[str]],
         on_command_option: Optional[Callable[[str], None]],
         on_cancel: Callable[[], None],
         on_undo: Callable[[], None],
         on_redo: Callable[[], None],
+        on_properties: Callable[[], None],
         on_delete: Callable[[], None],
         on_repeat: Callable[[], None],
+        on_copy: Callable[[], None],
         on_move: Callable[[], None],
         on_rotate: Callable[[], None],
         on_scale: Callable[[], None],
@@ -92,6 +97,13 @@ class CanvasContextMenu(QMenu):
         act_repeat.setEnabled(bool(can_repeat))
         act_repeat.triggered.connect(on_repeat)
 
+        recent = [cmd for cmd in (recent_commands or []) if cmd]
+        if recent and on_recent_command is not None:
+            recent_menu = self.addMenu("Recent Commands")
+            for cmd in recent:
+                act = recent_menu.addAction(cmd)
+                act.triggered.connect(lambda _checked=False, name=cmd: on_recent_command(name))
+
         self.addSeparator()
 
         act_undo = self.addAction(undo_text or "Undo")
@@ -104,9 +116,17 @@ class CanvasContextMenu(QMenu):
 
         self.addSeparator()
 
+        act_props = self.addAction("Properties")
+        act_props.setEnabled(bool(has_entity_context))
+        act_props.triggered.connect(on_properties)
+
         act_delete = self.addAction("Delete")
         act_delete.setEnabled(bool(has_selection))
         act_delete.triggered.connect(on_delete)
+
+        act_copy = self.addAction("Copy")
+        act_copy.setEnabled(bool(has_selection))
+        act_copy.triggered.connect(on_copy)
 
         # Fixed modify commands
         act_move = self.addAction("Move")

@@ -1,5 +1,17 @@
 # OpenDraft — Development TODO Completed Items
 
+### Priority 7 UX & Workflow Completion (2026-04-27)
+
+- [x] **Repeat last command via empty Enter** — when no command is active and terminal input is empty, pressing Enter now repeats the most recent command
+- [x] **PowerShell-style command recall** — terminal Up/Down now walks command input history and restores the in-progress draft when returning past the newest entry
+- [x] **Command history panel shortcut** — added `F2` to toggle the top terminal's expandable history/scrollback panel
+- [x] **OSNAP shortcut parity** — added global `F3` shortcut to toggle master OSNAP state and keep status-bar state in sync
+- [x] **Help shortcut** — added `F1` shortcut that opens a keyboard-shortcuts help dialog
+- [x] **Richer canvas/entity context menus** — added `Recent Commands` submenu plus entity-focused actions (`Properties`, `Copy`, `Move`, `Rotate`, `Scale`, `Delete`)
+- [x] **Ribbon tooltip previews** — ribbon buttons now expose hover tooltips using tool label/status metadata
+- [x] **Ribbon tooltip startup hotfix** — replaced tuple-based `findChildren((QToolButton, QPushButton))` with separate PySide-compatible `findChildren(QToolButton)` / `findChildren(QPushButton)` scans to prevent startup `TypeError`
+- [x] **Terminal history exact-match selection fix** — when recalling command IDs from history (for example `core.line`), terminal suggestions now prioritize exact command-id/alias matches so the intended command remains highlighted
+
 ### ODX Thumbnail Save Regression Fix (2026-04-27)
 
 - [x] **PySide6 `QImage.save` format fix** — updated `CADCanvas.export_thumbnail_png()` to call `image.save(buffer, "PNG")`; passing `b"PNG"` raised `ValueError` at runtime on current PySide6 builds

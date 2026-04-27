@@ -256,6 +256,9 @@ class Editor(QObject):
         # Last started command action-name, used by UI affordances such as
         # "Repeat: <command>" in the canvas context menu.
         self._last_command_name: Optional[str] = None
+        # Recent command IDs (oldest -> newest) for contextual repeat/history UI.
+        self._recent_commands: list[str] = []
+        self._recent_command_limit: int = 20
 
         # Selection set — tracks currently selected entity IDs.
         self.selection = SelectionSet(parent=self)
@@ -349,6 +352,24 @@ class Editor(QObject):
         """Action-name of the most recently started command (or ``None``)."""
         return self._last_command_name
 
+    @property
+    def recent_commands(self) -> list[str]:
+        """Recent command action-names, newest-first."""
+        return list(reversed(self._recent_commands))
+
+    def _record_recent_command(self, name: str) -> None:
+        token = (name or "").strip()
+        if not token:
+            return
+
+        # Keep uniqueness while preserving recency.
+        if token in self._recent_commands:
+            self._recent_commands = [cmd for cmd in self._recent_commands if cmd != token]
+        self._recent_commands.append(token)
+
+        if len(self._recent_commands) > self._recent_command_limit:
+            self._recent_commands = self._recent_commands[-self._recent_command_limit :]
+
     # --------------------------------------------------------------- command API
 
     def run_command(self, name: str) -> None:
@@ -384,6 +405,9 @@ class Editor(QObject):
             if cls is None:
                 self.status_message.emit(f"Unknown command: {name}")
                 return
+
+            self._last_command_name = name
+            self._record_recent_command(name)
 
             self._cancelled.clear()
             self._drain_queue()
@@ -1016,7 +1040,6 @@ class Editor(QObject):
 
     def _run_in_thread(self, cmd: CommandBase, name: str) -> None:
         """Target function for the command worker thread."""
-        self._last_command_name = name
         self.command_started.emit(name)
         try:
             cmd.execute()

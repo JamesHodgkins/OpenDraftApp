@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenDraft 2D CAD App")
-        _icon = Path(__file__).parent.parent / "assets" / "icons" / "odx_icon.svg"
+        _icon = Path(__file__).parent.parent / "assets" / "svg" / "badge_logo_dark.svg"
         self.setWindowIcon(QIcon(str(_icon)))
 
         # ---- Core subsystems (created before widgets so canvas can receive
@@ -177,6 +177,14 @@ class MainWindow(QMainWindow):
         save_shortcut.activated.connect(self._save_document_to_file)
         save_as_shortcut = QShortcut(QKeySequence.StandardKey.SaveAs, self)
         save_as_shortcut.activated.connect(self._save_document_as)
+
+        # Priority-7 UX shortcuts.
+        help_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
+        help_shortcut.activated.connect(self._show_shortcuts_help)
+        history_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F2), self)
+        history_shortcut.activated.connect(self._toggle_command_history_panel)
+        osnap_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F3), self)
+        osnap_shortcut.activated.connect(self._toggle_master_osnap)
 
         # Delete key — delete selected entities when no command is running.
         # Call delete_selection() directly (not via run_command) because
@@ -612,8 +620,13 @@ class MainWindow(QMainWindow):
         if self._props_dock.isVisible():
             self._props_dock.hide()
         else:
-            self._props_dock.show()
-            self._props_panel.refresh()
+            self.open_properties_panel()
+
+    def open_properties_panel(self) -> None:
+        """Show and refresh the Properties dock panel."""
+        self._props_dock.show()
+        self._props_panel.refresh()
+        self._props_dock.raise_()
 
     def _toggle_layer_modal(self) -> None:
         """Open (or bring to front) the Layer Manager dialog.
@@ -642,6 +655,35 @@ class MainWindow(QMainWindow):
         # Sync the status label after the dialog closes.
         self._status_widget.set_draftmate(
             self._canvas._draftmate.settings.enabled
+        )
+
+    def _toggle_command_history_panel(self) -> None:
+        """Toggle the top-terminal scrollback/history panel (F2)."""
+        if hasattr(self._terminal, "toggle_history_panel"):
+            self._terminal.toggle_history_panel()
+
+    def _toggle_master_osnap(self) -> None:
+        """Toggle master OSNAP state (F3)."""
+        new_state = not self._canvas._osnap_master
+        self._canvas._osnap_master = new_state
+        self._status_widget.set_master_snap(new_state)
+        self._canvas.update()
+
+    def _show_shortcuts_help(self) -> None:
+        """Show a compact keyboard shortcuts help dialog (F1)."""
+        QMessageBox.information(
+            self,
+            "OpenDraft Help",
+            "Keyboard shortcuts:\n"
+            "F1  Help\n"
+            "F2  Toggle command history panel\n"
+            "F3  Toggle OSNAP\n"
+            "F8  Toggle Ortho\n"
+            "F10 Toggle Draftmate\n"
+            "Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S  File operations\n"
+            "Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z  Undo/Redo\n"
+            "Delete  Delete selected entities\n"
+            "Escape  Cancel command / clear selection",
         )
 
     # -----------------------------------------------------------------------

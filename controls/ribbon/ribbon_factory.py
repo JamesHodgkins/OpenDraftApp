@@ -152,6 +152,25 @@ class ButtonFactory:
     def _default_action_handler(action: str) -> None:
         print(f"Action: {action}")
 
+    @staticmethod
+    def _tooltip_for_tool(tool: ToolDefinition) -> str:
+        status = (tool.status or "").strip()
+        if status and status.lower() != "placeholder":
+            return f"{tool.label}\n{status}"
+        if status.lower() == "placeholder":
+            return f"{tool.label}\nComing soon"
+        return tool.label
+
+    @staticmethod
+    def _apply_tooltip(widget: QWidget, tooltip: str) -> None:
+        if not tooltip:
+            return
+        widget.setToolTip(tooltip)
+        for child in widget.findChildren(QToolButton):
+            child.setToolTip(tooltip)
+        for child in widget.findChildren(QPushButton):
+            child.setToolTip(tooltip)
+
     def _get_action_callback(self, action: str) -> Callable:
         return lambda: self.action_handler(action)
 
@@ -191,6 +210,7 @@ class ButtonFactory:
         btn.setText(tool.label)
         btn.setFixedSize(SIZE.LARGE_BUTTON_WIDTH, SIZE.LARGE_BUTTON_HEIGHT)
         btn.setStyleSheet(Styles.large_button(self.dark))
+        btn.setToolTip(self._tooltip_for_tool(tool))
         if tool.action:
             btn.clicked.connect(self._get_action_callback(tool.action))
         return btn
@@ -205,6 +225,7 @@ class ButtonFactory:
                 btn.setIconSize(QSize(SIZE.SMALL_ICON_SIZE, SIZE.SMALL_ICON_SIZE))
         btn.setFixedSize(SIZE.SMALL_BUTTON_WIDTH, SIZE.SMALL_BUTTON_HEIGHT)
         btn.setStyleSheet(Styles.small_button(self.dark))
+        btn.setToolTip(self._tooltip_for_tool(tool))
         if tool.action:
             btn.clicked.connect(self._get_action_callback(tool.action))
         return btn
@@ -229,13 +250,15 @@ class ButtonFactory:
             for item in tool.items
         ]
         main_action_name = tool.mainAction or tool.action or tool.label
-        return RibbonSplitButton(
+        split = RibbonSplitButton(
             main_icon=main_icon,
             main_label=tool.label,
             items=menu_items,
             main_action=self._get_action_callback(main_action_name),
             small=not large,
         )
+        self._apply_tooltip(split, self._tooltip_for_tool(tool))
+        return split
 
     _MAX_STACK_ROWS = 3
 

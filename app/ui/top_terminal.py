@@ -82,6 +82,7 @@ class TopTerminalWidget(QFrame):
 
         self._history: list[str] = []
         self._history_idx: int = -1
+        self._history_draft: str | None = None
         self._output: list[str] = []
 
         # --- Input row (this widget) ----------------------------------------
@@ -188,9 +189,15 @@ class TopTerminalWidget(QFrame):
     def clear_input(self) -> None:
         """Clear the current command/value input and associated suggestions."""
         self._input.clear()
+        self._history_idx = -1
+        self._history_draft = None
         self._clear_match_buttons()
         self._panel.hide()
         self._expand_btn.setChecked(False)
+
+    def toggle_history_panel(self) -> None:
+        """Toggle visibility of the expandable command/output history panel."""
+        self._expand_btn.setChecked(not self._expand_btn.isChecked())
 
     def set_commands(self, commands: dict[str, Any]) -> None:
         entries: list[_CommandEntry] = []
@@ -306,7 +313,24 @@ class TopTerminalWidget(QFrame):
         self._output_list.clear()
 
     def _on_text_edited(self, _text: str) -> None:
+        # Any user edit exits history-navigation mode and drops draft state.
+        if self._history_idx >= 0:
+            self._history_idx = -1
+            self._history_draft = None
         self._apply_filter()
+
+    def _add_history_entry(self, text: str) -> None:
+        token = (text or "").strip()
+        if not token:
+            return
+        # Avoid stacking immediate duplicates while still preserving order.
+        if self._history and self._history[-1] == token:
+            self._history_idx = -1
+            self._history_draft = None
+            return
+        self._history.append(token)
+        self._history_idx = -1
+        self._history_draft = None
 
     def _apply_filter(self) -> None:
         text = self._input.text().strip().lower()
@@ -318,24 +342,29 @@ class TopTerminalWidget(QFrame):
                 cmd_id = e.command_id.lower()
                 aliases = tuple(a.lower() for a in e.aliases)
 
+                # Exact id recall from history should always win.
+                if cmd_id == text:
+                    return 0
                 # Prefer exact alias hits first so shorthand like "l" or "mv"
                 # reliably surfaces the intended command.
                 if text in aliases:
-                    return 0
+                    return 1
+                if label == text:
+                    return 2
                 # Then prefer prefix matches (most "command line" UX expects this).
                 if label.startswith(text):
-                    return 1
-                if cmd_id.startswith(text):
-                    return 2
-                if any(a.startswith(text) for a in aliases):
                     return 3
+                if cmd_id.startswith(text):
+                    return 4
+                if any(a.startswith(text) for a in aliases):
+                    return 5
                 # Fall back to contains matches.
                 if text in label:
-                    return 4
-                if text in cmd_id:
-                    return 5
-                if any(text in a for a in aliases):
                     return 6
+                if text in cmd_id:
+                    return 7
+                if any(text in a for a in aliases):
+                    return 8
                 return None
 
             scored: list[tuple[int, _CommandEntry]] = []
@@ -382,13 +411,25 @@ class TopTerminalWidget(QFrame):
         # Keep the selected command if it still exists, otherwise default to first.
         if not matches:
             self._set_selected_match_idx(-1)
-        elif prev_selected_cmd in self._visible_match_command_ids:
-            self._set_selected_match_idx(self._visible_match_command_ids.index(prev_selected_cmd))
-        elif prev_ids != self._visible_match_command_ids:
-            self._set_selected_match_idx(0)
         else:
-            # List didn't change, keep current index (clamped).
-            self._set_selected_match_idx(self._selected_match_idx)
+            typed_norm = typed.lower()
+            exact_idx = -1
+            for idx, entry in enumerate(matches):
+                if typed_norm == entry.command_id.lower():
+                    exact_idx = idx
+                    break
+                if typed_norm in tuple(a.lower() for a in entry.aliases):
+                    exact_idx = idx
+                    break
+            if exact_idx >= 0:
+                self._set_selected_match_idx(exact_idx)
+            elif prev_selected_cmd in self._visible_match_command_ids:
+                self._set_selected_match_idx(self._visible_match_command_ids.index(prev_selected_cmd))
+            elif prev_ids != self._visible_match_command_ids:
+                self._set_selected_match_idx(0)
+            else:
+                # List didn't change, keep current index (clamped).
+                self._set_selected_match_idx(self._selected_match_idx)
 
     def _clear_match_buttons(self) -> None:
         self._visible_match_command_ids = []
@@ -489,18 +530,30 @@ class TopTerminalWidget(QFrame):
         if not self._history:
             return
         if self._history_idx < 0:
+            self._history_draft = self._input.text()
             self._history_idx = len(self._history) - 1
         else:
             self._history_idx = max(0, self._history_idx - 1)
         self._input.setText(self._history[self._history_idx])
+        self._input.setCursorPosition(len(self._input.text()))
+        self._apply_filter()
 
     def _history_down(self) -> None:
         if not self._history:
             return
         if self._history_idx < 0:
             return
+        if self._history_idx >= len(self._history) - 1:
+            self._history_idx = -1
+            self._input.setText(self._history_draft or "")
+            self._history_draft = None
+            self._input.setCursorPosition(len(self._input.text()))
+            self._apply_filter()
+            return
         self._history_idx = min(len(self._history) - 1, self._history_idx + 1)
         self._input.setText(self._history[self._history_idx])
+        self._input.setCursorPosition(len(self._input.text()))
+        self._apply_filter()
 
     @Slot()
     def _on_enter(self) -> None:
@@ -510,8 +563,7 @@ class TopTerminalWidget(QFrame):
         text = raw.strip()
 
         if text:
-            self._history.append(text)
-            self._history_idx = -1
+            self._add_history_entry(text)
 
         # If the previous Enter started a command, ignore the next "empty Enter"
         # that would otherwise be interpreted as an input submission.
@@ -541,6 +593,13 @@ class TopTerminalWidget(QFrame):
 
         # Idle mode: run best match from suggestions.
         if not text:
+            if not self._editor.is_running:
+                last_cmd = getattr(self._editor, "last_command_name", None)
+                if isinstance(last_cmd, str) and last_cmd.strip():
+                    self._suppress_next_empty_enter_input = True
+                    self._add_history_entry(last_cmd)
+                    self._run_command(last_cmd)
+            self._clear_match_buttons()
             self._panel.hide()
             return
         if self._visible_match_command_ids and self._selected_match_idx >= 0:
@@ -564,6 +623,12 @@ class TopTerminalWidget(QFrame):
                 key = None
             if key == Qt.Key.Key_Escape:
                 self._clear_terminal()
+                return True
+            if key == Qt.Key.Key_Up:
+                self._history_up()
+                return True
+            if key == Qt.Key.Key_Down:
+                self._history_down()
                 return True
             if key == Qt.Key.Key_Left:
                 return self._select_match_delta(-1)

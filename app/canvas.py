@@ -554,10 +554,10 @@ class CADCanvas(QWidget):
             return
         editor = self._editor
         is_idle = self._idle
+        clicked_id: Optional[str] = None
 
         # ---- Update selection based on right-click hit test (idle only) ----
         if is_idle:
-            clicked_id: Optional[str] = None
             if self._document is not None:
                 try:
                     click_world_qpt = self.screen_to_world(QPointF(event.pos()))
@@ -584,6 +584,8 @@ class CADCanvas(QWidget):
         has_sel = bool(editor.selection)
         last_cmd = editor.last_command_name
         can_repeat = bool(last_cmd) and is_idle
+        recent_commands = [cmd for cmd in editor.recent_commands if cmd != last_cmd][:8]
+        has_entity_context = bool(clicked_id) or has_sel
         cmd_option_labels = editor.command_option_labels if editor.is_running else []
 
         def _do_delete() -> None:
@@ -592,6 +594,21 @@ class CADCanvas(QWidget):
                 editor.document_changed.emit()
                 self._hovered_entity_id = None
                 self.update()
+
+        def _do_properties() -> None:
+            if not has_entity_context:
+                return
+            win = self.window()
+            if hasattr(win, "open_properties_panel"):
+                try:
+                    win.open_properties_panel()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+        def _run_modify_command(command_name: str) -> None:
+            if editor.is_running or not editor.selection:
+                return
+            editor.run_command(command_name)
 
         def _do_repeat() -> None:
             if not can_repeat:
@@ -603,6 +620,13 @@ class CADCanvas(QWidget):
             if last_cmd:
                 editor.run_command(last_cmd)
 
+        def _do_recent_command(cmd_name: str) -> None:
+            if not is_idle:
+                return
+            token = (cmd_name or "").strip()
+            if token:
+                editor.run_command(token)
+
         menu = CanvasContextMenu(
             parent=self,
             is_idle=is_idle,
@@ -611,18 +635,23 @@ class CADCanvas(QWidget):
             undo_text="Undo",
             redo_text="Redo",
             has_selection=has_sel,
+            has_entity_context=has_entity_context,
             repeat_label=f"Repeat: {last_cmd}" if last_cmd else "Repeat",
             can_repeat=can_repeat,
+            recent_commands=recent_commands,
+            on_recent_command=_do_recent_command,
             command_option_labels=cmd_option_labels,
             on_command_option=editor.provide_command_option if cmd_option_labels else None,
             on_cancel=editor.cancel,
             on_undo=editor.undo,
             on_redo=editor.redo,
+            on_properties=_do_properties,
             on_delete=_do_delete,
             on_repeat=_do_repeat,
-            on_move=lambda: editor.run_command("moveCommand"),
-            on_rotate=lambda: editor.run_command("rotateCommand"),
-            on_scale=lambda: editor.run_command("scaleCommand"),
+            on_copy=lambda: _run_modify_command("copyCommand"),
+            on_move=lambda: _run_modify_command("moveCommand"),
+            on_rotate=lambda: _run_modify_command("rotateCommand"),
+            on_scale=lambda: _run_modify_command("scaleCommand"),
         )
         menu.exec(event.globalPos())
 

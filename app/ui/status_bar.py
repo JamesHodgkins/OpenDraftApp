@@ -157,7 +157,7 @@ class StatusBarWidget(QWidget):
         root.addWidget(self._snap_section_label)
 
         # Master snap toggle
-        self.btn_mas = _ToggleLabel("MAS", on=True, tooltip="Master OSNAP on/off")
+        self.btn_mas = _ToggleLabel("MAS", on=True, tooltip="Master OSNAP on/off (F3)")
         root.addWidget(self.btn_mas)
 
         # Individual snap-type toggles
