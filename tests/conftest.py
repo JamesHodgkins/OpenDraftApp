@@ -58,7 +58,7 @@ def circle_offset():
 @pytest.fixture
 def rect_unit():
     """2×3 rectangle, p1=(1,1) p2=(3,4)."""
-    return RectangleEntity(p1=Vec2(1, 1), p2=Vec2(3, 4))
+    return RectangleEntity.from_corners(Vec2(1, 1), Vec2(3, 4))
 
 
 @pytest.fixture

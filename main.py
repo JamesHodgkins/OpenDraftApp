@@ -17,7 +17,7 @@ from app.main_window import MainWindow
 # Absolute path to the stylesheet — resolved relative to *this* file so the
 # app works regardless of the current working directory at launch time.
 _QSS_PATH = Path(__file__).parent / "assets" / "themes" / "ribbon.qss"
-_ICON_PATH = Path(__file__).parent / "assets" / "svg" / "badge_logo.svg"
+_ICON_PATH = Path(__file__).parent / "assets" / "icons" / "odx_icon.svg"
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

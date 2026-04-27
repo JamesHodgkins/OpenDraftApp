@@ -1,0 +1,223 @@
+{
+  "version": "1.0",
+  "entities": [
+    {
+      "id": "ent-line-001",
+      "type": "line",
+      "layer": "construction",
+      "lineStyle": "dash",
+      "p1": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "p2": {
+        "x": 120.0,
+        "y": 30.0
+      }
+    },
+    {
+      "id": "ent-circle-001",
+      "type": "circle",
+      "layer": "default",
+      "center": {
+        "x": 40.0,
+        "y": 40.0
+      },
+      "radius": 15.0
+    },
+    {
+      "id": "ent-arc-001",
+      "type": "arc",
+      "layer": "default",
+      "center": {
+        "x": 80.0,
+        "y": 40.0
+      },
+      "radius": 18.0,
+      "startAngle": 0.0,
+      "endAngle": 1.5707963267948966,
+      "ccw": true
+    },
+    {
+      "id": "ent-rect-001",
+      "type": "rect",
+      "layer": "default",
+      "center": {
+        "x": 40.0,
+        "y": 90.0
+      },
+      "width": 50.0,
+      "height": 25.0,
+      "rotation": 0.3490658503988659
+    },
+    {
+      "id": "ent-polyline-001",
+      "type": "polyline",
+      "layer": "default",
+      "points": [
+        {
+          "x": 100.0,
+          "y": 80.0
+        },
+        {
+          "x": 120.0,
+          "y": 90.0
+        },
+        {
+          "x": 130.0,
+          "y": 75.0
+        }
+      ],
+      "closed": false
+    },
+    {
+      "id": "ent-spline-001",
+      "type": "spline",
+      "layer": "construction",
+      "color": "#66ccff",
+      "points": [
+        {
+          "x": 10.0,
+          "y": 120.0
+        },
+        {
+          "x": 30.0,
+          "y": 135.0
+        },
+        {
+          "x": 55.0,
+          "y": 115.0
+        },
+        {
+          "x": 80.0,
+          "y": 140.0
+        }
+      ]
+    },
+    {
+      "id": "ent-ellipse-001",
+      "type": "ellipse",
+      "layer": "default",
+      "center": {
+        "x": 100.0,
+        "y": 130.0
+      },
+      "radiusX": 22.0,
+      "radiusY": 10.0,
+      "rotation": 0.5235987755982988,
+      "startParam": 0.0,
+      "endParam": 6.283185307179586
+    },
+    {
+      "id": "ent-point-001",
+      "type": "point",
+      "layer": "default",
+      "position": {
+        "x": 70.0,
+        "y": 70.0
+      }
+    },
+    {
+      "id": "ent-text-001",
+      "type": "text",
+      "layer": "annotations",
+      "text": "OpenDraft v1 sample",
+      "position": {
+        "x": 5.0,
+        "y": 155.0
+      },
+      "height": 3.5,
+      "align": "left",
+      "verticalAlign": "bottom",
+      "justify": "left",
+      "fontFamily": "Arial",
+      "fontStyle": "Regular",
+      "letterSpacing": 0.0,
+      "rotation": 0.0
+    },
+    {
+      "id": "ent-dim-001",
+      "type": "dimension",
+      "layer": "annotations",
+      "p1": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "p2": {
+        "x": 120.0,
+        "y": 0.0
+      },
+      "p3": {
+        "x": 60.0,
+        "y": 20.0
+      },
+      "dimType": "linear",
+      "textHeight": 2.5,
+      "markType": "arrow",
+      "arrowSize": 2.5,
+      "textPosition": "above",
+      "textOffset": 0.0,
+      "extOffset": 1.0,
+      "dimOffset": 1.0
+    },
+    {
+      "id": "ent-hatch-001",
+      "type": "hatch",
+      "layer": "default",
+      "pattern": "ANSI31",
+      "patternScale": 1.0,
+      "patternAngle": 0.7853981633974483,
+      "boundary": {
+        "id": "ent-hatch-boundary-001",
+        "type": "polyline",
+        "layer": "default",
+        "points": [
+          {
+            "x": 140.0,
+            "y": 20.0
+          },
+          {
+            "x": 170.0,
+            "y": 20.0
+          },
+          {
+            "x": 170.0,
+            "y": 50.0
+          },
+          {
+            "x": 140.0,
+            "y": 50.0
+          }
+        ],
+        "closed": true
+      }
+    }
+  ],
+  "layers": [
+    {
+      "name": "default",
+      "color": "#ffffff",
+      "visible": true,
+      "lineStyle": "solid",
+      "thickness": 1.0
+    },
+    {
+      "name": "construction",
+      "color": "#666666",
+      "visible": true,
+      "lineStyle": "dash",
+      "thickness": 0.8
+    },
+    {
+      "name": "annotations",
+      "color": "#ffd700",
+      "visible": true,
+      "lineStyle": "solid",
+      "thickness": 0.5
+    }
+  ],
+  "activeLayer": "default",
+  "currentActiveColor": null,
+  "currentActiveLineStyle": "solid",
+  "currentActiveThickness": 1.0
+}

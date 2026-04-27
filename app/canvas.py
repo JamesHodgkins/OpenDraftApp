@@ -7,8 +7,8 @@ scale rather than snapping between states.
 """
 
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QPen, QColor, QPixmap
-from PySide6.QtCore import Qt, QPoint, QPointF, Signal, Slot
+from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QImage
+from PySide6.QtCore import Qt, QPoint, QPointF, Signal, Slot, QByteArray, QBuffer, QIODevice
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ _LINE_STYLE_MAP = {
 
 def _line_style_to_qt(style: str) -> Qt.PenStyle:
     return _LINE_STYLE_MAP.get(style.lower(), Qt.PenStyle.SolidLine)
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from app.document import DocumentStore
 from app.entities import Vec2
@@ -438,7 +438,7 @@ class CADCanvas(QWidget):
 
         # ---- OSNAP --------------------------------------------------------
         # Command-mode flow: derive snap + Draftmate state from editor input mode.
-        snap_active, self._snap_result, self._draftmate_result, from_point = update_snap_and_draftmate(
+        _snap_active, self._snap_result, self._draftmate_result, from_point = update_snap_and_draftmate(
             active_grip=self._active_grip,
             editor=self._editor,
             document=self._document,
@@ -1131,3 +1131,100 @@ class CADCanvas(QWidget):
     def _draw_grid(self, painter: QPainter) -> None:
         """Delegate grid rendering to GridRenderer."""
         self._grid.draw(painter, self.width(), self.height())
+
+    # ------------------------------------------------------------------
+    # Thumbnail export
+    # ------------------------------------------------------------------
+
+    def export_thumbnail_png(self, width: int = 256, height: int = 256) -> Optional[bytes]:
+        """Render a fitted document thumbnail and return PNG bytes.
+
+        The thumbnail is rendered from currently visible entities only and does
+        not include transient overlays (selection, grips, dynamic previews).
+        Returns ``None`` when there is no document.
+        """
+        if self._document is None:
+            return None
+
+        thumb_w = max(64, int(width))
+        thumb_h = max(64, int(height))
+        padding = 12.0
+
+        image = QImage(thumb_w, thumb_h, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(QColor("#1E1E1E"))
+
+        visible_entities = []
+        min_x = float("inf")
+        min_y = float("inf")
+        max_x = float("-inf")
+        max_y = float("-inf")
+
+        for entity in self._document:
+            layer = self._document.get_layer(entity.layer)
+            if layer is not None and not layer.visible:
+                continue
+            visible_entities.append(entity)
+            bbox = entity.bounding_box()
+            if bbox is None:
+                continue
+            min_x = min(min_x, bbox.min_x)
+            min_y = min(min_y, bbox.min_y)
+            max_x = max(max_x, bbox.max_x)
+            max_y = max(max_y, bbox.max_y)
+
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        if visible_entities:
+            if min_x == float("inf"):
+                # Fallback for entities without explicit bounds.
+                min_x, min_y, max_x, max_y = -1.0, -1.0, 1.0, 1.0
+
+            span_x = max(max_x - min_x, 1e-6)
+            span_y = max(max_y - min_y, 1e-6)
+            fit_w = max(1.0, float(thumb_w) - 2.0 * padding)
+            fit_h = max(1.0, float(thumb_h) - 2.0 * padding)
+            scale = min(fit_w / span_x, fit_h / span_y)
+
+            content_w = span_x * scale
+            content_h = span_y * scale
+            origin_x = (float(thumb_w) - content_w) / 2.0
+            origin_y = (float(thumb_h) - content_h) / 2.0
+
+            def _thumb_world_to_screen(pt: QPointF) -> QPointF:
+                return QPointF(
+                    origin_x + (pt.x() - min_x) * scale,
+                    origin_y + (max_y - pt.y()) * scale,
+                )
+
+            for entity in visible_entities:
+                pen = build_entity_base_pen(
+                    entity,
+                    self._document,
+                    resolve_color=_resolve_color_str,
+                    line_style_to_qt=_line_style_to_qt,
+                )
+                # Ensure thin lines remain visible at thumbnail size.
+                pen.setWidthF(max(1.0, pen.widthF()))
+                painter.setPen(pen)
+                try:
+                    entity.draw(painter, _thumb_world_to_screen, scale)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+
+        painter.end()
+
+        byte_array = QByteArray()
+        buffer = QBuffer(byte_array)
+        if not buffer.open(QIODevice.OpenModeFlag.WriteOnly):
+            return None
+        try:
+            # Runtime expects a string format name here, while current stubs
+            # type this parameter as bytes-like.
+            format_name = cast(bytes, "PNG")
+            if not image.save(buffer, format_name):
+                return None
+        finally:
+            buffer.close()
+        return bytes(byte_array.data())

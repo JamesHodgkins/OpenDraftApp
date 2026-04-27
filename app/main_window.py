@@ -12,9 +12,11 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QFrame,
     QDockWidget,
+    QFileDialog,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, QObject, QEvent
-from PySide6.QtGui import QShortcut, QKeySequence, QIcon
+from PySide6.QtGui import QShortcut, QKeySequence, QIcon, QCloseEvent
 
 from controls.ribbon import RibbonPanel
 from app.canvas import CADCanvas
@@ -55,6 +57,10 @@ autodiscover_entry_points("opendraft.commands")
 apply_command_specs(command_specs_from_ribbon())
 
 _LOCAL_ACTION_NAMES = {
+    "newDocument",
+    "openDocumentFromFile",
+    "saveDocumentToFile",
+    "saveDocumentAs",
     "toggleLayerModal",
     "togglePropertiesPanel",
     "toggleSettingsModal",
@@ -76,10 +82,22 @@ if _UNRESOLVED_RIBBON_ACTIONS:
 class MainWindow(QMainWindow):
     """Top-level application window."""
 
+    _OPEN_FILE_FILTER = (
+        "OpenDraft Files (*.odx *.json);;"
+        "OpenDraft Native (*.odx);;"
+        "JSON Files (*.json);;"
+        "All Files (*)"
+    )
+    _SAVE_FILE_FILTER = (
+        "OpenDraft Native (*.odx);;"
+        "JSON Files (*.json);;"
+        "All Files (*)"
+    )
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenDraft 2D CAD App")
-        _icon = Path(__file__).parent.parent / "assets" / "svg" / "badge_logo_dark.svg"
+        _icon = Path(__file__).parent.parent / "assets" / "icons" / "odx_icon.svg"
         self.setWindowIcon(QIcon(str(_icon)))
 
         # ---- Core subsystems (created before widgets so canvas can receive
@@ -87,6 +105,8 @@ class MainWindow(QMainWindow):
         doc = DocumentStore()
         self._doc = doc
         self.editor = Editor(document=doc, parent=self)
+        self._document_path: Optional[Path] = None
+        self._last_saved_generation: int = doc.generation
 
         # ---- Ribbon toolbar (fixed at top, not affected by dock widgets) ----
         ribbon = RibbonPanel(
@@ -148,6 +168,16 @@ class MainWindow(QMainWindow):
         redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
         redo_shortcut.activated.connect(self.editor.redo)
 
+        # Document workflow shortcuts.
+        new_shortcut = QShortcut(QKeySequence.StandardKey.New, self)
+        new_shortcut.activated.connect(self._new_document)
+        open_shortcut = QShortcut(QKeySequence.StandardKey.Open, self)
+        open_shortcut.activated.connect(self._open_document_from_file)
+        save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
+        save_shortcut.activated.connect(self._save_document_to_file)
+        save_as_shortcut = QShortcut(QKeySequence.StandardKey.SaveAs, self)
+        save_as_shortcut.activated.connect(self._save_document_as)
+
         # Delete key — delete selected entities when no command is running.
         # Call delete_selection() directly (not via run_command) because
         # delete is an immediate UI action, not a threaded command workflow.
@@ -194,6 +224,9 @@ class MainWindow(QMainWindow):
         # thread even though document_changed is emitted from the worker thread.
         self.editor.document_changed.connect(
             canvas.refresh, Qt.ConnectionType.QueuedConnection
+        )
+        self.editor.document_changed.connect(
+            self._update_window_title, Qt.ConnectionType.QueuedConnection
         )
         # Redraw when selection changes (already on GUI thread).
         self.editor.selection.changed.connect(canvas.refresh)
@@ -270,9 +303,19 @@ class MainWindow(QMainWindow):
         canvas.orthoChanged.connect(self._status_widget.set_ortho)
         canvas.draftmateChanged.connect(self._status_widget.set_draftmate)
 
+        self._update_window_title()
+
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         self._canvas.setFocus()
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if self.editor.is_running:
+            self.editor.cancel()
+        if self._confirm_unsaved_changes("closing OpenDraft"):
+            event.accept()
+            return
+        event.ignore()
 
     # -----------------------------------------------------------------------
     # Status-bar wiring
@@ -355,7 +398,15 @@ class MainWindow(QMainWindow):
         Actions in :attr:`_LOCAL_ACTIONS` are handled here; everything else
         is forwarded to the editor's command runner.
         """
-        if name == "toggleLayerModal":
+        if name == "newDocument":
+            self._new_document()
+        elif name == "openDocumentFromFile":
+            self._open_document_from_file()
+        elif name == "saveDocumentToFile":
+            self._save_document_to_file()
+        elif name == "saveDocumentAs":
+            self._save_document_as()
+        elif name == "toggleLayerModal":
             self._toggle_layer_modal()
         elif name == "togglePropertiesPanel":
             self._toggle_properties_panel()
@@ -367,6 +418,194 @@ class MainWindow(QMainWindow):
             self.editor.redo()
         else:
             self.editor.run_command(name)
+
+    def _is_document_dirty(self) -> bool:
+        return self._doc.generation != self._last_saved_generation
+
+    def _mark_document_saved(self) -> None:
+        self._last_saved_generation = self._doc.generation
+
+    def _current_file_display_name(self) -> str:
+        if self._document_path is not None:
+            return self._document_path.name
+        return "Untitled.odx"
+
+    def _default_file_dialog_dir(self) -> str:
+        if self._document_path is not None:
+            return str(self._document_path.parent)
+        return str(Path.home())
+
+    def _update_window_title(self) -> None:
+        dirty = "*" if self._is_document_dirty() else ""
+        self.setWindowTitle(
+            f"OpenDraft 2D CAD App - {self._current_file_display_name()}{dirty}"
+        )
+
+    def _normalize_save_path(self, raw_path: str, selected_filter: str) -> Path:
+        path = Path(raw_path)
+        if path.suffix:
+            return path
+        if "JSON" in selected_filter.upper():
+            return path.with_suffix(".json")
+        return path.with_suffix(".odx")
+
+    def _ensure_no_active_command(self) -> bool:
+        if not self.editor.is_running:
+            return True
+        QMessageBox.warning(
+            self,
+            "Command Running",
+            "Finish or cancel the active command before starting a file operation.",
+        )
+        self.editor.status_message.emit(
+            "Finish or cancel the active command before file operations."
+        )
+        return False
+
+    def _confirm_unsaved_changes(self, action_label: str) -> bool:
+        if not self._is_document_dirty():
+            return True
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Unsaved Changes")
+        box.setText("The current drawing has unsaved changes.")
+        box.setInformativeText(f"Save changes before {action_label}?")
+        save_button = box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+        discard_button = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_button = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(save_button)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked is save_button:
+            return self._save_document_to_file()
+        if clicked is discard_button:
+            return True
+        if clicked is cancel_button:
+            return False
+        return False
+
+    def _new_document(self) -> bool:
+        if not self._ensure_no_active_command():
+            return False
+        if not self._confirm_unsaved_changes("creating a new drawing"):
+            return False
+
+        self._doc.reset_to_default()
+        self.editor.selection.clear()
+        self.editor.undo_stack.clear()
+        self.editor.clear_dynamic()
+        self.editor.clear_highlight()
+
+        self._document_path = None
+        self._mark_document_saved()
+        self._bridge.refresh_layers()
+        self._props_panel.refresh()
+        self.editor.status_message.emit("Created new drawing.")
+        self.editor.document_changed.emit()
+        self._update_window_title()
+        return True
+
+    def _save_document_to_file(self) -> bool:
+        if not self._ensure_no_active_command():
+            return False
+        if self._document_path is None:
+            return self._save_document_as()
+        return self._save_document_to_path(self._document_path)
+
+    def _save_document_as(self) -> bool:
+        if not self._ensure_no_active_command():
+            return False
+
+        initial_path = Path(self._default_file_dialog_dir()) / self._current_file_display_name()
+        selected_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Drawing As",
+            str(initial_path),
+            self._SAVE_FILE_FILTER,
+        )
+        if not selected_path:
+            return False
+
+        return self._save_document_to_path(
+            self._normalize_save_path(selected_path, selected_filter)
+        )
+
+    def _save_document_to_path(self, path: Path) -> bool:
+        try:
+            thumbnail_png = self._canvas.export_thumbnail_png()
+            self._doc.save(path, thumbnail_png=thumbnail_png)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Save Failed",
+                f"Could not save drawing to:\n{path}\n\n{exc}",
+            )
+            self.editor.status_message.emit(f"Save failed: {exc}")
+            return False
+
+        self._document_path = path
+        self._mark_document_saved()
+        self._update_window_title()
+        self.editor.status_message.emit(f"Saved: {path.name}")
+        return True
+
+    def _open_document_from_file(self) -> bool:
+        if not self._ensure_no_active_command():
+            return False
+        if not self._confirm_unsaved_changes("opening another drawing"):
+            return False
+
+        selected_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Drawing",
+            self._default_file_dialog_dir(),
+            self._OPEN_FILE_FILTER,
+        )
+        if not selected_path:
+            return False
+
+        return self._load_document_from_path(Path(selected_path))
+
+    def _load_document_from_path(self, path: Path) -> bool:
+        try:
+            loaded = DocumentStore.load(path)
+        except Exception as exc:
+            message = self._format_load_error(exc)
+            QMessageBox.critical(
+                self,
+                "Open Failed",
+                f"Could not open drawing:\n{path}\n\n{message}",
+            )
+            self.editor.status_message.emit(f"Open failed: {message}")
+            return False
+
+        self._doc.replace_with(loaded)
+        self.editor.selection.clear()
+        self.editor.undo_stack.clear()
+        self.editor.clear_dynamic()
+        self.editor.clear_highlight()
+
+        self._document_path = path
+        self._mark_document_saved()
+        self._bridge.refresh_layers()
+        self._props_panel.refresh()
+        self.editor.status_message.emit(f"Opened: {path.name}")
+        self.editor.document_changed.emit()
+        self._update_window_title()
+        return True
+
+    def _format_load_error(self, exc: Exception) -> str:
+        if isinstance(exc, ValueError):
+            code = str(exc)
+            if code == "invalid_zip":
+                return "The file is not a valid ZIP-based OpenDraft .odx container."
+            if code == "missing_document_json":
+                return "The .odx file is missing required document.json payload."
+            if code == "invalid_document_json":
+                return "The document.json payload is invalid UTF-8 JSON."
+        return str(exc) or exc.__class__.__name__
 
     def _toggle_properties_panel(self) -> None:
         """Show or hide the Properties dock panel."""

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import uuid
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
@@ -30,6 +31,9 @@ from PySide6.QtCore import QObject, Signal as _Signal
 import warnings
 
 from app.entities import BaseEntity, entity_from_dict
+
+_ODX_DOCUMENT_ENTRY = "document.json"
+_ODX_THUMBNAIL_ENTRY = "assets/thumbnail.png"
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +136,11 @@ class DocumentStore:
         # Rebuild the id index from the initial entities list (set by from_dict).
         self._entity_by_id = {e.id: e for e in self.entities}
 
+    @property
+    def generation(self) -> int:
+        """Monotonic generation counter bumped on every document mutation."""
+        return self._generation
+
     # ------------------------------------------------------------------
     # Change notification
     # ------------------------------------------------------------------
@@ -199,6 +208,34 @@ class DocumentStore:
         """Remove all entities from the document."""
         self.entities.clear()
         self._entity_by_id.clear()
+        self._notify()
+
+    def replace_with(self, other: "DocumentStore") -> None:
+        """Replace this document's contents in place and notify listeners."""
+        self.version = other.version
+        self.entities = list(other.entities)
+        self.layers = list(other.layers) if other.layers else [Layer()]
+        self.active_layer = other.active_layer
+        self.active_color = other.active_color
+        self.active_line_style = other.active_line_style
+        self.active_thickness = other.active_thickness
+
+        self._entity_by_id = {e.id: e for e in self.entities}
+        if not any(layer.name == self.active_layer for layer in self.layers):
+            self.active_layer = self.layers[0].name
+
+        self._notify()
+
+    def reset_to_default(self) -> None:
+        """Reset to a new blank drawing and notify listeners."""
+        self.version = "1.0"
+        self.entities = []
+        self.layers = [Layer()]
+        self.active_layer = "default"
+        self.active_color = None
+        self.active_line_style = None
+        self.active_thickness = None
+        self._entity_by_id = {}
         self._notify()
 
     # ------------------------------------------------------------------
@@ -293,12 +330,67 @@ class DocumentStore:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(self.to_dict(), fh, indent=indent)
 
+    def save_odx(self, path: str | Path, *, thumbnail_png: Optional[bytes] = None) -> None:
+        """Write the document to *path* as a compact ODX ZIP container."""
+        payload = json.dumps(
+            self.to_dict(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(_ODX_DOCUMENT_ENTRY, payload)
+            if thumbnail_png:
+                zf.writestr(_ODX_THUMBNAIL_ENTRY, thumbnail_png)
+
+    def save(self, path: str | Path, *, thumbnail_png: Optional[bytes] = None) -> None:
+        """Save to JSON for ``.json`` paths, otherwise save as ODX ZIP."""
+        suffix = Path(path).suffix.lower()
+        if suffix == ".json":
+            self.save_json(path)
+            return
+        self.save_odx(path, thumbnail_png=thumbnail_png)
+
     @classmethod
     def load_json(cls, path: str | Path) -> "DocumentStore":
         """Load and return a :class:`DocumentStore` from a JSON file."""
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         return cls.from_dict(data)
+
+    @classmethod
+    def load_odx(cls, path: str | Path) -> "DocumentStore":
+        """Load and return a :class:`DocumentStore` from an ODX ZIP file."""
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                if _ODX_DOCUMENT_ENTRY not in zf.namelist():
+                    raise ValueError("missing_document_json")
+                try:
+                    payload = zf.read(_ODX_DOCUMENT_ENTRY)
+                    data = json.loads(payload.decode("utf-8"))
+                except (KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ValueError("invalid_document_json") from exc
+        except zipfile.BadZipFile as exc:
+            raise ValueError("invalid_zip") from exc
+        return cls.from_dict(data)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "DocumentStore":
+        """Load JSON for ``.json`` paths, otherwise load ODX ZIP."""
+        suffix = Path(path).suffix.lower()
+        if suffix == ".json":
+            return cls.load_json(path)
+        return cls.load_odx(path)
+
+    @classmethod
+    def load_thumbnail_png(cls, path: str | Path) -> Optional[bytes]:
+        """Load embedded thumbnail PNG bytes from an ODX file, if present."""
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                if _ODX_THUMBNAIL_ENTRY not in zf.namelist():
+                    return None
+                return zf.read(_ODX_THUMBNAIL_ENTRY)
+        except (zipfile.BadZipFile, KeyError):
+            return None
 
     # ------------------------------------------------------------------
     # Convenience

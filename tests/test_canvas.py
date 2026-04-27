@@ -266,3 +266,13 @@ def test_input_mode_none_clears_cursor_world_state(canvas):
     canvas._cursor_world = Vec2(3, 4)
     canvas._on_editor_input_mode_changed("none")
     assert canvas._cursor_world is None
+
+
+def test_export_thumbnail_png_returns_png_signature(canvas):
+    doc = canvas._document
+    doc.add_entity(LineEntity(p1=Vec2(0, 0), p2=Vec2(25, 15)))
+
+    png = canvas.export_thumbnail_png(width=128, height=96)
+
+    assert png is not None
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")

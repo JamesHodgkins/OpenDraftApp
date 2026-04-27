@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "entities": [
+    {
+      "id": "ent-line-001",
+      "type": "line",
+      "layer": "default",
+      "p1": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "p2": {
+        "x": 100.0,
+        "y": 0.0
+      }
+    }
+  ],
+  "layers": [
+    {
+      "name": "default",
+      "color": "#ffffff",
+      "visible": true,
+      "lineStyle": "solid",
+      "thickness": 1.0
+    }
+  ],
+  "activeLayer": "default",
+  "currentActiveColor": null,
+  "currentActiveLineStyle": null,
+  "currentActiveThickness": null
+}

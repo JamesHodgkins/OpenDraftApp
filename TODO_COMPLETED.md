@@ -1,5 +1,53 @@
 # OpenDraft — Development TODO Completed Items
 
+### ODX Thumbnail Save Regression Fix (2026-04-27)
+
+- [x] **PySide6 `QImage.save` format fix** — updated `CADCanvas.export_thumbnail_png()` to call `image.save(buffer, "PNG")`; passing `b"PNG"` raised `ValueError` at runtime on current PySide6 builds
+- [x] **Canvas thumbnail regression coverage** — added `tests/test_canvas.py` coverage to assert exported thumbnail bytes are valid PNG data
+
+### Linux Thumbnailer Scaffolding (2026-04-27)
+
+- [x] **Extractor script** — added `scripts/linux_odx_thumbnailer.py` to extract `assets/thumbnail.png` from `.odx` files for freedesktop thumbnailer calls
+- [x] **Per-user install/uninstall helpers** — added `scripts/install_linux_thumbnailer.py` and `scripts/uninstall_linux_thumbnailer.py` to register/remove MIME + thumbnailer files under `~/.local/share`
+- [x] **Developer docs + tests** — documented no-installer Linux thumbnail setup in `README.md` and added extraction coverage in `tests/test_linux_odx_thumbnailer.py`
+- [x] **Platform guard hardening** — installer helpers now bail out on non-Linux platforms to avoid fake success output on Windows/macOS
+
+### Embedded ODX Thumbnails (2026-04-27)
+
+- [x] **Save-time thumbnail embedding** — `MainWindow` now captures a canvas thumbnail on save and `DocumentStore.save_odx()` stores it as `assets/thumbnail.png` inside the `.odx` ZIP container
+- [x] **Thumbnail API support** — added `DocumentStore.load_thumbnail_png()` helper for reading embedded preview bytes from `.odx` files
+- [x] **Format docs + tests updated** — documented optional `assets/thumbnail.png` in native format docs and added container thumbnail coverage in `tests/test_document.py`
+
+### Native Extension Rename (2026-04-27)
+
+- [x] **Native extension switched to `.odx`** — updated file dialogs/default names, native save/load API naming (`save_odx()`/`load_odx()`), tests, and format docs to use `.odx` instead of `.odf`
+
+### App Icon Update (2026-04-27)
+
+- [x] **Dedicated ODX icon activated** — updated Qt startup icon paths in `main.py` and `app/main_window.py` to use `assets/icons/odx_icon.svg`
+
+### File Save/Open Workflow (2026-04-27)
+
+- [x] **Ribbon file actions wired locally** — `newDocument`, `openDocumentFromFile`, and `saveDocumentToFile` are now handled by `MainWindow` instead of being forwarded to the command registry
+- [x] **End-to-end New/Open/Save/Save As flow** — added file dialogs for `.odx`/`.json` with extension normalization and persisted active document path tracking
+- [x] **Unsaved-change protection** — added Save/Discard/Cancel prompts for New/Open and a close-event confirmation gate when the document is dirty
+- [x] **Dirty-state title + shortcuts** — added generation-based dirty tracking (window title `*`) and keyboard shortcuts: `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+Shift+S`
+- [x] **Document swap/reset primitives** — added `DocumentStore.generation`, `replace_with(...)`, and `reset_to_default(...)` with regression coverage in `tests/test_document.py`
+
+### Compressed Native Container (2026-04-26)
+
+- [x] **ZIP-container native format direction** — updated the v1 file spec to define `.odx` as a ZIP package with required `document.json` payload and optional reserved `meta.json` / `assets/` entries
+- [x] **Compatibility policy and error model** — documented `.odx` native + raw `.json` debug compatibility and container-specific errors (`invalid_zip`, `missing_document_json`, `invalid_document_json`)
+- [x] **DocumentStore ODX I/O support** — added `save_odx()` / `load_odx()` and extension-dispatching `save()` / `load()` helpers in `app/document.py`
+- [x] **ODX coverage tests** — added serialization and error-path tests in `tests/test_document.py` including payload presence, invalid ZIP handling, invalid JSON handling, extension dispatch, and size comparison vs pretty JSON
+- [x] **Container examples guidance** — added `Docs/file-format/examples/odx-package-layout.md` and updated spec references
+
+### Native File Specification (2026-04-26)
+
+- [x] **OpenDraft 2D file spec v1 (documentation)** — added normative specification at `Docs/file-format/opendraft-2d-v1.md` defining canonical document/entity contracts, versioning, unknown-field policy, and validation behavior
+- [x] **JSON Schema companion artifact** — added `Docs/file-format/opendraft-2d-v1.schema.json` covering all currently supported entity types and top-level document/layer contracts
+- [x] **Reference example files** — added `Docs/file-format/examples/minimal-line.json` and `Docs/file-format/examples/comprehensive-sample.json` for minimal and full-shape payload guidance
+
 ### Modify Commands (ribbon buttons wired, no command class)
 
 - [x] **Delete** — remove selected entities from the document; responds to `Delete` key and ribbon button
@@ -34,6 +82,10 @@
 - [x] **Command options in context menu** — when a command is running in "choice" mode, right-click shows a "Command options" submenu that injects choices back into the active command; Rotate now supports base/destination vector input via these options
 - [x] **Top command terminal** — added `TopTerminalWidget` (800px wide, top-center) as the single consolidated input + output surface with expandable output scrollback; removed the floating command palette and cursor-following dynamic input overlay
 - [x] **Command aliases** — added short aliases for core commands (`l`, `c`, `cp`, `m`, `mv`) and extended the top terminal’s suggestions to match on `CommandSpec.aliases`
+
+### Entities / Geometry
+
+- [x] **Rotated rectangles (no polyline conversion)** — `RectangleEntity` now stores `center/width/height/rotation` and implements draw/bbox/hit-test/crossing selection in the rotated frame; Rotate/Scale modify commands update rectangle orientation and size correctly.
 
 ### Command Input Pipeline Hardening (2026-04-24)
 

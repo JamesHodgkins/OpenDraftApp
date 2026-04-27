@@ -48,8 +48,7 @@ def _transform_entity(ent: BaseEntity, fn, post_fn=None) -> BaseEntity:
     elif isinstance(e, ArcEntity):
         e.center = fn(e.center)
     elif isinstance(e, RectangleEntity):
-        e.p1 = fn(e.p1)
-        e.p2 = fn(e.p2)
+        e.center = fn(e.center)
     elif isinstance(e, PolylineEntity):
         e.points = [fn(p) for p in e.points]
     else:
@@ -167,6 +166,8 @@ def _post_rotate_arc(e: BaseEntity, orig: BaseEntity, angle: float) -> None:
     if isinstance(e, ArcEntity):
         e.start_angle = _rotate_angle(orig.start_angle, angle)
         e.end_angle = _rotate_angle(orig.end_angle, angle)
+    if isinstance(e, RectangleEntity):
+        e.rotation = orig.rotation + angle
     # Ellipse orientation is stored as a world-frame rotation of its local axes.
     # Rotating the entity in world space therefore adds to this rotation.
     from app.entities.ellipse import EllipseEntity
@@ -182,6 +183,9 @@ def _post_scale_radius(e: BaseEntity, orig: BaseEntity, factor: float) -> None:
     """Post-transform hook: scale ``radius`` on circles and arcs."""
     if hasattr(orig, "radius"):
         e.radius = orig.radius * abs(factor)
+    if isinstance(e, RectangleEntity):
+        e.width = orig.width * abs(factor)
+        e.height = orig.height * abs(factor)
 
 
 # ---------------------------------------------------------------------------

@@ -84,6 +84,27 @@ python main.py
 pytest
 ```
 
+## Linux ODX Thumbnails (No Installer Yet)
+
+OpenDraft now embeds a preview image at `assets/thumbnail.png` inside each `.odx` file.
+To let Linux file managers use that preview as the file thumbnail before a full
+installer exists, run the helper script:
+
+```bash
+python scripts/install_linux_thumbnailer.py
+```
+
+This installs per-user files under `~/.local/share`:
+
+- MIME registration: `~/.local/share/mime/packages/opendraft-odx.xml`
+- Thumbnailer descriptor: `~/.local/share/thumbnailers/opendraft-odx.thumbnailer`
+
+To remove these development-time integrations:
+
+```bash
+python scripts/uninstall_linux_thumbnailer.py
+```
+
 ## Running the Same Checks as GitHub CI (Recommended)
 
 The GitHub Actions workflow runs two things:

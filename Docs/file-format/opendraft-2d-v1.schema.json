@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendraft.dev/schemas/opendraft-2d-v1.schema.json",
+  "title": "OpenDraft 2D Native File Format v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "entities", "layers", "activeLayer"],
+  "properties": {
+    "version": { "type": "string", "const": "1.0" },
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entity" }
+    },
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/layer" }
+    },
+    "activeLayer": { "type": "string" },
+    "currentActiveColor": { "type": ["string", "null"] },
+    "currentActiveLineStyle": { "type": ["string", "null"] },
+    "currentActiveThickness": { "type": ["number", "null"] }
+  },
+  "$defs": {
+    "vec2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "color", "visible", "lineStyle", "thickness"],
+      "properties": {
+        "name": { "type": "string" },
+        "color": { "type": "string" },
+        "visible": { "type": "boolean" },
+        "lineStyle": { "type": "string" },
+        "thickness": { "type": "number" }
+      }
+    },
+    "entityCommon": {
+      "type": "object",
+      "required": ["id", "type", "layer"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "layer": { "type": "string" },
+        "color": { "type": "string" },
+        "lineWeight": { "type": "number" },
+        "lineStyle": { "type": "string" }
+      }
+    },
+    "lineEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["p1", "p2"],
+          "properties": {
+            "type": { "const": "line" },
+            "p1": { "$ref": "#/$defs/vec2" },
+            "p2": { "$ref": "#/$defs/vec2" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "circleEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["center", "radius"],
+          "properties": {
+            "type": { "const": "circle" },
+            "center": { "$ref": "#/$defs/vec2" },
+            "radius": { "type": "number" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "arcEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["center", "radius", "startAngle", "endAngle"],
+          "properties": {
+            "type": { "const": "arc" },
+            "center": { "$ref": "#/$defs/vec2" },
+            "radius": { "type": "number" },
+            "startAngle": { "type": "number" },
+            "endAngle": { "type": "number" },
+            "ccw": { "type": "boolean" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "rectEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["center", "width", "height", "rotation"],
+          "properties": {
+            "type": { "const": "rect" },
+            "center": { "$ref": "#/$defs/vec2" },
+            "width": { "type": "number" },
+            "height": { "type": "number" },
+            "rotation": { "type": "number" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "polylineEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["points"],
+          "properties": {
+            "type": { "const": "polyline" },
+            "points": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/vec2" }
+            },
+            "closed": { "type": "boolean" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "splineEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["points"],
+          "properties": {
+            "type": { "const": "spline" },
+            "points": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/vec2" }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ellipseEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["center", "radiusX", "radiusY", "rotation", "startParam", "endParam"],
+          "properties": {
+            "type": { "const": "ellipse" },
+            "center": { "$ref": "#/$defs/vec2" },
+            "radiusX": { "type": "number" },
+            "radiusY": { "type": "number" },
+            "rotation": { "type": "number" },
+            "startParam": { "type": "number" },
+            "endParam": { "type": "number" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "pointEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["position"],
+          "properties": {
+            "type": { "const": "point" },
+            "position": { "$ref": "#/$defs/vec2" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "textEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": [
+            "text",
+            "position",
+            "height",
+            "align",
+            "verticalAlign",
+            "justify",
+            "fontFamily",
+            "fontStyle",
+            "letterSpacing",
+            "rotation"
+          ],
+          "properties": {
+            "type": { "const": "text" },
+            "text": { "type": "string" },
+            "position": { "$ref": "#/$defs/vec2" },
+            "height": { "type": "number" },
+            "align": { "type": "string", "enum": ["left", "center", "right"] },
+            "verticalAlign": {
+              "type": "string",
+              "enum": ["top", "middle", "bottom", "baseline"]
+            },
+            "justify": { "type": "string", "enum": ["left", "center", "right"] },
+            "fontFamily": { "type": "string" },
+            "fontStyle": { "type": "string" },
+            "letterSpacing": { "type": "number" },
+            "rotation": { "type": "number" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "dimensionEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": [
+            "p1",
+            "p2",
+            "p3",
+            "dimType",
+            "textHeight",
+            "markType",
+            "arrowSize",
+            "textPosition",
+            "textOffset",
+            "extOffset",
+            "dimOffset"
+          ],
+          "properties": {
+            "type": { "const": "dimension" },
+            "p1": { "$ref": "#/$defs/vec2" },
+            "p2": { "$ref": "#/$defs/vec2" },
+            "p3": { "$ref": "#/$defs/vec2" },
+            "dimType": { "type": "string", "enum": ["linear", "aligned"] },
+            "textHeight": { "type": "number" },
+            "markType": { "type": "string", "enum": ["arrow", "mark", "none"] },
+            "arrowSize": { "type": "number" },
+            "textPosition": { "type": "string", "enum": ["above", "inline", "below"] },
+            "textOffset": { "type": "number" },
+            "extOffset": { "type": "number" },
+            "dimOffset": { "type": "number" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "hatchBoundaryEntity": {
+      "oneOf": [
+        { "$ref": "#/$defs/lineEntity" },
+        { "$ref": "#/$defs/circleEntity" },
+        { "$ref": "#/$defs/arcEntity" },
+        { "$ref": "#/$defs/rectEntity" },
+        { "$ref": "#/$defs/polylineEntity" },
+        { "$ref": "#/$defs/splineEntity" },
+        { "$ref": "#/$defs/ellipseEntity" },
+        { "$ref": "#/$defs/pointEntity" },
+        { "$ref": "#/$defs/textEntity" },
+        { "$ref": "#/$defs/dimensionEntity" }
+      ]
+    },
+    "hatchEntity": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/entityCommon" },
+        {
+          "required": ["pattern", "patternScale", "patternAngle", "boundary"],
+          "properties": {
+            "type": { "const": "hatch" },
+            "pattern": { "type": "string" },
+            "patternScale": { "type": "number" },
+            "patternAngle": { "type": "number" },
+            "boundary": {
+              "anyOf": [
+                { "type": "null" },
+                { "$ref": "#/$defs/hatchBoundaryEntity" }
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "entity": {
+      "oneOf": [
+        { "$ref": "#/$defs/lineEntity" },
+        { "$ref": "#/$defs/circleEntity" },
+        { "$ref": "#/$defs/arcEntity" },
+        { "$ref": "#/$defs/rectEntity" },
+        { "$ref": "#/$defs/polylineEntity" },
+        { "$ref": "#/$defs/splineEntity" },
+        { "$ref": "#/$defs/ellipseEntity" },
+        { "$ref": "#/$defs/pointEntity" },
+        { "$ref": "#/$defs/textEntity" },
+        { "$ref": "#/$defs/dimensionEntity" },
+        { "$ref": "#/$defs/hatchEntity" }
+      ]
+    }
+  }
+}

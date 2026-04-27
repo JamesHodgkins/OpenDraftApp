@@ -29,6 +29,16 @@ Tracking note (2026-04-25): Added a “run CI locally” setup: `scripts/ci.ps1`
 Tracking note (2026-04-25): Added `Editor.get_vector()` / `Editor.get_vector_from()` helpers and refactored Move/Copy/Rotate vector-picking flows to use them (removes duplicated two-`get_point()` logic while preserving snap-from-base behavior).
 Tracking note (2026-04-26): Simplified top-of-viewport terminal (`TopTerminalWidget`) panel to output-only (removed History/Output tabs) and added a dedicated suggestions list that appears while typing.
 Tracking note (2026-04-26): Replaced the dropdown suggestions list with inline match buttons to the right of the terminal input (click to run).
+Tracking note (2026-04-26): Fixed broken rectangle rotation by promoting `RectangleEntity` to a true rotated-rectangle model (center/width/height/rotation) and wiring Rotate/Scale transforms + drawing/hit-testing to respect rotation.
+Tracking note (2026-04-26): Added OpenDraft native 2D file specification v1 deliverables under `Docs/file-format/` (normative spec markdown, JSON Schema, and minimal/comprehensive example files).
+Tracking note (2026-04-26): Revised native format direction to ZIP-container `.odx` with required `document.json` payload, plus `DocumentStore` ODX save/load support and container error handling (`invalid_zip`, `missing_document_json`, `invalid_document_json`).
+Tracking note (2026-04-27): Implemented file workflow in `MainWindow` (New/Open/Save/Save As, unsaved-change prompts, close confirmation, dirty-title tracking, and Ctrl+N/Ctrl+O/Ctrl+S/Ctrl+Shift+S shortcuts) backed by in-place `DocumentStore` replace/reset helpers.
+Tracking note (2026-04-27): Switched active Qt app/window icon assets to `assets/icons/odx_icon.svg` so the running app uses the dedicated ODX glyph.
+Tracking note (2026-04-27): Renamed native OpenDraft extension from `.odf` to `.odx` to avoid conflict with existing OpenDocument associations; updated file dialogs, defaults, specs, and tests.
+Tracking note (2026-04-27): Added save-time embedded thumbnails in `.odx` containers (`assets/thumbnail.png`) using canvas-rendered PNG previews to support future shell/file-manager thumbnail integration.
+Tracking note (2026-04-27): Added Linux pre-installer thumbnailer scaffolding (`scripts/linux_odx_thumbnailer.py` + install/uninstall helpers) so `.odx` embedded previews can be surfaced in Linux file managers.
+Tracking note (2026-04-27): Hardened Linux thumbnailer install/uninstall helpers with explicit Linux platform guards so running them on Windows/macOS exits cleanly without creating misleading `~/.local` artifacts.
+Tracking note (2026-04-27): Fixed `.odx` save regression in thumbnail export by switching `QImage.save(QBuffer, ...)` format argument from bytes to string (`"PNG"`) and added canvas regression coverage.
 
 ---
 
@@ -172,6 +182,7 @@ Standard 2D CAD operations that are entirely absent.
 
 ## Priority 6 — File Formats & Interoperability
 
+- [x] **Basic native file workflow** — wire ribbon + shortcut New/Open/Save/Save As to `.odx`/`.json` dialogs with unsaved-change prompts and dirty-state title updates
 - [ ] **DXF import** — read AutoCAD DXF files (via `ezdxf`) and populate the document store; at minimum support R12 entities (LINE, CIRCLE, ARC, TEXT, LWPOLYLINE, INSERT)
 - [ ] **DXF export** — write the current document to DXF; enables round-tripping with AutoCAD/LibreCAD/FreeCAD
 - [ ] **SVG import** — read basic SVG shapes into the document
@@ -195,8 +206,8 @@ Standard 2D CAD operations that are entirely absent.
 - [ ] **F2** — Toggle command history window
 - [ ] **F3** — Toggle OSNAP on/off (currently F8 is Ortho, F10 is Draftmate)
 - [ ] **Ctrl+Z / Ctrl+Y** — Undo/Redo (check current binding)
-- [ ] **Ctrl+S / Ctrl+Shift+S** — Save / Save As
-- [ ] **Ctrl+N / Ctrl+O** — New / Open
+- [x] **Ctrl+S / Ctrl+Shift+S** — Save / Save As
+- [x] **Ctrl+N / Ctrl+O** — New / Open
 - [ ] **Delete key** — delete selected entities
 - [ ] **Escape** — cancel in-progress command or clear selection (already implemented; verify both cases)
 
