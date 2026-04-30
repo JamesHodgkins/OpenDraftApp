@@ -10,6 +10,7 @@ from typing import Optional
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QApplication,
     QMainWindow, QWidget, QVBoxLayout, QFrame,
     QDockWidget,
     QFileDialog,
@@ -28,7 +29,7 @@ from app.ui.layer_manager import LayerManagerDialog
 from app.ui.draftmate_settings import DraftmateSettingsDialog
 from app.ui.status_bar import StatusBarWidget
 from app.ui.properties_panel import PropertiesPanel
-from app.ui.top_terminal import TopTerminalWidget
+from app.editor.stateful_command import StatefulCommandBase
 from app.config.ribbon_config import (
     RIBBON_CONFIG,
     command_specs_from_ribbon,
@@ -121,46 +122,18 @@ class MainWindow(QMainWindow):
         canvas = CADCanvas(document=doc, editor=self.editor)
         self._canvas = canvas
 
-        # ---- Top terminal (single consolidated input + output) -------------
-        # Implemented as an overlay anchored to the canvas so it does not
-        # consume layout height (i.e. it sits on top of the viewport).
-        terminal = TopTerminalWidget(editor=self.editor, parent=canvas)
-        terminal.setFixedWidth(800)
-        terminal.raise_()
-        terminal.show()
-        self._terminal = terminal
-
-        class _TerminalOverlayAnchor(QObject):
-            def __init__(self, *, canvas: QWidget, terminal: QWidget) -> None:
-                super().__init__(canvas)
-                self._canvas = canvas
-                self._terminal = terminal
-
-            def _reposition(self) -> None:
-                x = max(0, (self._canvas.width() - self._terminal.width()) // 2)
-                y = 8
-                self._terminal.move(x, y)
-                self._terminal.raise_()
-                # Keep dropdown panel aligned under the input row.
-                if hasattr(self._terminal, "_reposition_panel"):
-                    try:
-                        self._terminal._reposition_panel()  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-
-            def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
-                if obj is self._canvas and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
-                    self._reposition()
-                return super().eventFilter(obj, event)
-
-        self._terminal_anchor = _TerminalOverlayAnchor(canvas=canvas, terminal=terminal)
-        canvas.installEventFilter(self._terminal_anchor)
-        self._terminal_anchor._reposition()
-
         # Global Escape shortcut: always handle Escape even when focus is
         # inside ribbon controls so users can press Esc to clear selection
         # or cancel commands without clicking the viewport first.
         esc_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+
+        # Canvas-scoped Enter shortcut for committing stateful commands.
+        # Keep this bound to the viewport so Enter in text inputs (such as
+        # the controller command search) is handled by those widgets.
+        enter_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Return), canvas)
+        enter_shortcut2 = QShortcut(QKeySequence(Qt.Key.Key_Enter), canvas)
+        enter_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        enter_shortcut2.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
 
         # Undo / Redo global shortcuts (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z).
         undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
@@ -197,22 +170,38 @@ class MainWindow(QMainWindow):
         del_shortcut.activated.connect(_handle_delete)
 
         def _handle_escape():
-            # If the user is currently typing into the terminal, Esc should
-            # clear that input first (CAD-style command line UX).
-            if hasattr(terminal, "has_pending_input") and terminal.has_pending_input():
-                terminal.clear_input()
+            panel = getattr(self, "_props_panel", None)
+            if panel is not None and panel.consume_escape_clear_input():
                 return
-            canvas.handle_escape()
+
+            # Tiered Escape behaviour:
+            #   * stateful command running → cancel it (also stops any
+            #     auto-repeat by clearing the active command)
+            #   * idle → defer to the canvas escape handler (clears
+            #     selection, clears hover, etc.)
+            # In both cases we end the keystroke by parking focus on the
+            # controller panel's command input so the next keystroke
+            # naturally lands there.  Auto-repeat is suppressed by the
+            # cancel path because ``cancel_command`` does not set
+            # ``_last_committed_cmd`` and never schedules a re-run.
+            cmd = self.editor.active_command
+            if isinstance(cmd, StatefulCommandBase):
+                self.editor.cancel_command()
+            else:
+                canvas.handle_escape()
+            self._props_panel.focus_command_input()
         esc_shortcut.activated.connect(_handle_escape)
         canvas.escapePressed.connect(_handle_escape)
 
-        # Terminal command catalog — populate once all commands are registered.
-        self._refresh_command_pickers()
-        terminal.command_requested.connect(self.editor.run_command)
-        # Canvas keypress (idle) → seed terminal input without extra clicks.
-        canvas.terminalRequested.connect(terminal.focus_with_seed)
-        # Canvas keypress forwarding → terminal input buffer (no focus required).
-        canvas.terminalKeyEvent.connect(terminal.handle_key_event)
+        def _handle_enter():
+            focus = QApplication.focusWidget()
+            if focus is not None and focus is not canvas and not canvas.isAncestorOf(focus):
+                return
+            cmd = self.editor.active_command
+            if isinstance(cmd, StatefulCommandBase):
+                self.editor.commit_command()
+        enter_shortcut.activated.connect(_handle_enter)
+        enter_shortcut2.activated.connect(_handle_enter)
 
         # Canvas left-click → provide world point to the active command
         canvas.pointSelected.connect(
@@ -273,26 +262,17 @@ class MainWindow(QMainWindow):
         # Window sizing/positioning
         # -------------------------------------------------------------------
         self.setMinimumSize(800, 400)
-        self.showMaximized()
 
         # Editor status message → left side of status bar
         self.editor.status_message.connect(self._status_widget.cmd_label.setText)
         # Mirror prompts/errors into the terminal scrollback too.
-        self.editor.status_message.connect(terminal.append_scrollback)
-        self.editor.command_started.connect(lambda name: terminal.append_scrollback(f"[start] {name}"))
-        self.editor.command_finished.connect(lambda: terminal.append_scrollback("[done]"))
+        # (Terminal scrollback removed — command history now lives in the Controller panel.)
 
-        # update status with canvas mouse movement
-        try:
-            canvas.mouseMoved.connect(self._on_canvas_mouse_moved)
-            canvas.mouseMoved.connect(lambda x, y: terminal.update_cursor_world(x, y))
-        except Exception:
-            pass
-
-        # Properties panel — dockable, right side.
+        # Controller panel — dockable right side, merges command input + properties.
         self._props_panel = PropertiesPanel(doc, self.editor, parent=self)
-        self._props_dock = QDockWidget("Properties", self)
-        self._props_dock.setObjectName("PropertiesDock")
+        self._props_panel.set_commands(command_catalog())
+        self._props_dock = QDockWidget("Controller", self)
+        self._props_dock.setObjectName("ControllerDock")
         self._props_dock.setWidget(self._props_panel)
         self._props_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self._props_dock.setFeatures(
@@ -301,8 +281,39 @@ class MainWindow(QMainWindow):
             QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._props_dock)
-        self._props_dock.hide()  # hidden until the user opens it or selects entities
+        self._props_dock.show()
         self.editor.selection.changed.connect(self._props_panel.refresh)
+
+        # Wire controller panel command signals.
+        self.editor.input_mode_changed.connect(self._on_input_mode_changed)
+        self.editor.stateful_value_changed.connect(self._props_panel.set_command_property_value)
+        self.editor.stateful_active_export_changed.connect(self._props_panel.set_active_command_property)
+        self._props_panel.property_changed.connect(self._on_popup_property_changed)
+        self._props_panel.property_preview_changed.connect(self._on_popup_property_preview_changed)
+        self._props_panel.header_value_submitted.connect(self._on_popup_header_submitted)
+        self._props_panel.commit_requested.connect(self.editor.commit_command)
+        self._props_panel.cancel_requested.connect(self.editor.cancel_command)
+        self._props_panel.command_requested.connect(self.editor.run_command)
+
+        # Keyboard-first workflow: typing in the viewport routes into the
+        # command input, and the two workflow toggles drive the editor.
+        canvas.typedTextForwarded.connect(self._props_panel.inject_text)
+        self._props_panel.auto_complete_toggled.connect(
+            lambda on: setattr(self.editor, "auto_complete_enabled", bool(on))
+        )
+        self._props_panel.repeat_toggled.connect(
+            lambda on: setattr(self.editor, "repeat_command_enabled", bool(on))
+        )
+        # Initialise editor flags from the panel's default-checked state.
+        self.editor.auto_complete_enabled = self._props_panel._auto_complete_check.isChecked()
+        self.editor.repeat_command_enabled = self._props_panel._repeat_check.isChecked()
+
+        # update status with canvas mouse movement
+        try:
+            canvas.mouseMoved.connect(self._on_canvas_mouse_moved)
+            canvas.mouseMoved.connect(lambda x, y: self._props_panel.update_cursor_world(x, y))
+        except Exception:
+            pass
 
         # Reusable Layer Manager dialog — created once, re-shown on demand.
         self._layer_dlg: Optional[LayerManagerDialog] = None
@@ -312,10 +323,17 @@ class MainWindow(QMainWindow):
         canvas.draftmateChanged.connect(self._status_widget.set_draftmate)
 
         self._update_window_title()
+        self.showMaximized()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        self._canvas.setFocus()
+        # Keyboard-first default: park focus on the command input so the
+        # very first keystroke after launch lands there.  The canvas still
+        # forwards typing via ``typedTextForwarded`` if the user clicks
+        # into the viewport first.
+        panel = getattr(self, "_props_panel", None)
+        if panel is not None:
+            panel.focus_command_input()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self.editor.is_running:
@@ -380,7 +398,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_command_pickers(self) -> None:
         """Repopulate command pickers from the latest catalog snapshot."""
-        self._terminal.set_commands(command_catalog())
+        self._props_panel.set_commands(command_catalog())
 
     def refresh_command_catalog(self, *, reload_plugins: bool = True) -> None:
         """Refresh plugin commands and repopulate picker UIs.
@@ -643,6 +661,111 @@ class MainWindow(QMainWindow):
         self._layer_dlg.exec()  # modal — canvas refresh signal still fires during exec()
 
     # -----------------------------------------------------------------------
+    # Stateful command popup helpers
+    # -----------------------------------------------------------------------
+
+    def _on_input_mode_changed(self, mode: str) -> None:
+        """Switch the controller panel between idle and stateful command mode."""
+        if mode == "stateful":
+            cmd = self.editor.active_command
+            if isinstance(cmd, StatefulCommandBase):
+                self._props_panel.bind_stateful_command(cmd)
+                self._props_dock.show()
+                self._props_dock.raise_()
+        else:
+            self._props_panel.clear_stateful_command()
+            self._props_panel.refresh()
+
+    def _on_popup_property_changed(self, name: str, value: Any) -> None:
+        """Forward a panel row edit to the active stateful command.
+
+        Routes through :meth:`Editor.set_stateful_property` so the same
+        advance / auto-commit pipeline used by canvas clicks runs here too;
+        without this, a row edit would set the value but neither move
+        ``active_export`` nor trigger auto-complete.
+        """
+        cmd = self.editor.active_command
+        if isinstance(cmd, StatefulCommandBase):
+            self.editor.set_stateful_property(name, value)
+            self._canvas.refresh()
+
+    def _on_popup_property_preview_changed(self, name: str, value: Any) -> None:
+        """Apply a non-committing preview edit to a stateful command property.
+
+        Used for partially-specified point rows (e.g. X entered, Y pending).
+        This updates command preview state without advancing ``active_export``.
+        """
+        cmd = self.editor.active_command
+        if isinstance(cmd, StatefulCommandBase):
+            setattr(cmd, name, value)
+            self._canvas.refresh()
+
+    def _on_popup_header_submitted(self, text: str) -> None:
+        """Parse a value typed into the panel header and set the active export."""
+        cmd = self.editor.active_command
+        if not isinstance(cmd, StatefulCommandBase):
+            return
+        active = cmd.active_export
+        if not active:
+            return
+        kind = ""
+        for info in cmd.exports():
+            if info.name == active:
+                kind = info.input_kind
+                break
+        if not kind:
+            return
+
+        value = self._parse_header_value(text, kind)
+        if value is not None:
+            self.editor.set_stateful_property(active, value)
+            self._canvas.refresh()
+
+    def _parse_header_value(self, text: str, kind: str) -> Any | None:
+        """Parse *text* according to the export's *kind*."""
+        from app.editor.dynamic_input_parser import DynamicInputParser
+
+        if kind == "point":
+            base = getattr(self.editor, "snap_from_point", None)
+            v = DynamicInputParser.parse_vector(
+                text,
+                current_pos=self._props_panel._cursor_world,
+                base_point=base,
+            )
+            if v is not None:
+                return v
+            return self._props_panel._cursor_world
+        if kind == "vector":
+            return DynamicInputParser.parse_vector(
+                text,
+                current_pos=self._props_panel._cursor_world,
+                base_point=Vec2(0, 0),
+            )
+        if kind == "float":
+            try:
+                return float(text)
+            except ValueError:
+                return None
+        if kind == "integer":
+            try:
+                return int(float(text))
+            except ValueError:
+                return None
+        if kind == "angle":
+            try:
+                return float(text)
+            except ValueError:
+                return None
+        if kind == "length":
+            try:
+                return float(text)
+            except ValueError:
+                return None
+        if kind == "string":
+            return text
+        return None
+
+    # -----------------------------------------------------------------------
     # Draftmate helpers
     # -----------------------------------------------------------------------
 
@@ -658,9 +781,8 @@ class MainWindow(QMainWindow):
         )
 
     def _toggle_command_history_panel(self) -> None:
-        """Toggle the top-terminal scrollback/history panel (F2)."""
-        if hasattr(self._terminal, "toggle_history_panel"):
-            self._terminal.toggle_history_panel()
+        """Toggle the controller panel visibility (F2)."""
+        self._toggle_properties_panel()
 
     def _toggle_master_osnap(self) -> None:
         """Toggle master OSNAP state (F3)."""

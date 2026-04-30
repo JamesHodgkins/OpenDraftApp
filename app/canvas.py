@@ -105,18 +105,32 @@ class CADCanvas(QWidget):
     # so the status bar can stay in sync.
     orthoChanged = Signal(bool)
     draftmateChanged = Signal(bool)
-    # emitted when the user starts typing while idle; carries the seed text
-    terminalRequested = Signal(str)
-    # emitted for keypress forwarding to the top terminal (payload is QKeyEvent)
-    terminalKeyEvent = Signal(object)
+    # emitted when the user types a printable character while the canvas
+    # has focus — MainWindow forwards the text into the controller panel's
+    # command input so keyboard-first typing always lands somewhere useful.
+    typedTextForwarded = Signal(str)
 
     @Slot()
     def refresh(self) -> None:
         """Schedule a repaint.  Safe to call from any thread via QueuedConnection."""
-        # If the editor no longer has a dynamic callback, clear stale preview.
-        if self._editor is not None and self._editor._dynamic_callback is None:
-            self._preview_entities = []
+        self._recompute_dynamic_preview()
         self.update()
+
+    def _recompute_dynamic_preview(self) -> None:
+        """Refresh cached dynamic preview entities from the current cursor state.
+
+        Mouse-move already recomputes preview every frame; this helper ensures
+        non-mouse updates (for example textbox edits in the controller panel)
+        also refresh rubberband geometry immediately.
+        """
+        if self._editor is None:
+            return
+        if self._editor._dynamic_callback is None:
+            self._preview_entities = []
+            return
+        if self._cursor_world is None:
+            return
+        self._preview_entities = self._editor.get_dynamic(self._cursor_world)
 
     def __init__(
         self,
@@ -662,12 +676,10 @@ class CADCanvas(QWidget):
             self.update()
 
     def event(self, event) -> bool:  # noqa: N802
-        """Intercept Tab/Shift-Tab before Qt's focus-chain handles them.
+        """Passthrough; Tab/Shift-Tab use Qt's default focus chain.
 
-        Qt processes Tab at the QWidget.event() level, before keyPressEvent
-        is called.  Historically we consumed Tab/Backtab for the cursor-following
-        dynamic input widget; typed input is now handled by the top terminal so
-        we let Qt handle Tab normally.
+        Typed command input lives in the docked Controller (:class:`PropertiesPanel`);
+        focus that panel to type commands and values.
         """
         return super().event(event)
 
@@ -754,34 +766,52 @@ class CADCanvas(QWidget):
                 self.update()
             return
 
-        # Forward typed input keys to the consolidated top terminal.
-        #
-        # This keeps the viewport mouse-first (no required focus change) while
-        # still letting users type values/commands at any time.
-        if (
-            event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Backspace, Qt.Key.Key_Up, Qt.Key.Key_Down)
-            or (event.text() and event.text().isprintable())
-        ):
+        # --- Forward printable typing to the controller panel ------------
+        # Anything that produces a real character (letters, digits, common
+        # punctuation, even space) is routed to the panel's command input
+        # so the user can type a command name or value without having to
+        # click the input first.  Keys that produce no text (function keys,
+        # arrows, bare modifiers, navigation keys) are left for the canvas
+        # to handle natively.
+        if self._is_forwardable_key(event):
             try:
-                self.terminalKeyEvent.emit(event)
+                self.typedTextForwarded.emit(event.text())
             except Exception:
                 pass
-            # If idle and the user started typing, also request a seed focus so
-            # the terminal shows suggestions immediately.
-            if self._idle:
-                text = event.text()
-                if text and (text.isalpha() or text.isdigit()):
-                    self.terminalRequested.emit(text)
             return
 
-        # Any alphanumeric key while idle → seed the top terminal without extra clicks
-        if self._idle:
-            text = event.text()
-            if text and (text.isalpha() or text.isdigit()):
-                self.terminalRequested.emit(text)
-                return
-
         super().keyPressEvent(event)
+
+    @staticmethod
+    def _is_forwardable_key(event) -> bool:
+        """Return True if *event* is a printable keystroke we should forward.
+
+        Filters out anything that would compete with normal canvas keyboard
+        usage: bare modifier presses, Tab (focus traversal), Backspace
+        (handled below), and Ctrl-modified shortcuts.  Plain typing —
+        including ``Shift+letter`` for capitals and any printable
+        punctuation — is forwarded.
+        """
+        text = event.text()
+        if not text:
+            return False
+        # Reject Ctrl/Meta-modified strokes (shortcuts), but allow Shift / AltGr.
+        mods = event.modifiers()
+        if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
+            return False
+        key = event.key()
+        if key in (
+            Qt.Key.Key_Tab,
+            Qt.Key.Key_Backtab,
+            Qt.Key.Key_Backspace,
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        ):
+            return False
+        # Drop any control characters that slipped through.
+        if any(ord(c) < 0x20 for c in text):
+            return False
+        return True
 
     # ----------------------------------------------------------------
     # Selection logic

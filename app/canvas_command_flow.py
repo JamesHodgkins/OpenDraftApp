@@ -12,7 +12,23 @@ from app.editor.draftmate import DraftmateResult
 from app.editor.osnap_engine import SnapResult
 from app.entities import Vec2
 
-_POINT_INPUT_MODES = ("point", "angle", "length")
+_POINT_INPUT_MODES = ("point", "vector", "angle", "length")
+
+
+def _is_stateful_point_input(editor) -> bool:
+    """Return True if the editor's active stateful command has a point-type active export."""
+    from app.editor.stateful_command import StatefulCommandBase
+
+    cmd = getattr(editor, "active_command", None)
+    if not isinstance(cmd, StatefulCommandBase):
+        return False
+    active = cmd.active_export
+    if not active:
+        return False
+    for info in cmd.exports():
+        if info.name == active:
+            return info.input_kind in _POINT_INPUT_MODES
+    return False
 
 
 def is_snap_active(
@@ -23,10 +39,12 @@ def is_snap_active(
     osnap_master: bool,
 ) -> bool:
     """Return True when command-mode OSNAP evaluation should run."""
+    mode = getattr(editor, "_input_mode", "none") if editor is not None else "none"
+    point_like = mode in _POINT_INPUT_MODES or _is_stateful_point_input(editor)
     return (
         active_grip is None
         and editor is not None
-        and getattr(editor, "_input_mode", "none") in _POINT_INPUT_MODES
+        and point_like
         and document is not None
         and osnap_master
         and not getattr(editor, "suppress_osnap", False)

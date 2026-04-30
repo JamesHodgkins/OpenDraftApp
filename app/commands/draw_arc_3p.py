@@ -2,7 +2,7 @@
 import math
 
 from app.editor import command
-from app.editor.base_command import CommandBase
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.entities import ArcEntity, LineEntity, Vec2
 
 
@@ -38,33 +38,63 @@ def _arc_from_3_points(p1: Vec2, p2: Vec2, p3: Vec2):
 
 
 @command("arc3PointCommand")
-class DrawArc3PointCommand(CommandBase):
+class DrawArc3PointCommand(StatefulCommandBase):
     """Draw an arc by picking three points on its perimeter."""
 
-    def execute(self) -> None:
-        p1 = self.editor.get_point("Arc 3P: pick start point")
-        self.editor.snap_from_point = p1
-        self.editor.set_dynamic(lambda m: [LineEntity(p1=p1, p2=m)])
+    start_point = export(None, label="Start point", input_kind="point")
+    intermediate_point = export(None, label="Intermediate point", input_kind="point")
+    end_point = export(None, label="End point", input_kind="point")
 
-        p2 = self.editor.get_point("Arc 3P: pick intermediate point")
-        self.editor.snap_from_point = p2
+    def start(self) -> None:
+        self.begin(
+            active_export="start_point",
+            reset=("start_point", "intermediate_point", "end_point"),
+        )
 
-        def _preview(m: Vec2):
-            result = _arc_from_3_points(p1, p2, m)
+    def update(self) -> None:
+        p1 = self.point_value("start_point")
+        p2 = self.point_value("intermediate_point")
+        p3 = self.point_value("end_point")
+
+        self.set_snap_for_active(
+            {
+                "intermediate_point": p1,
+                "end_point": (p2, p1),
+                "start_point": (p3, p2),
+            },
+            default=(p3, p2, p1),
+        )
+
+        if p1 is None:
+            self.editor.clear_dynamic()
+            return
+
+        def _preview(mouse: Vec2):
+            if p2 is None:
+                return [LineEntity(p1=p1, p2=mouse)]
+
+            end = p3 if p3 is not None else mouse
+            result = _arc_from_3_points(p1, p2, end)
             if result is None:
-                return [LineEntity(p1=p1, p2=m)]
+                return [LineEntity(p1=p1, p2=end)]
             center, radius, sa, ea, ccw = result
             return [ArcEntity(center=center, radius=radius, start_angle=sa, end_angle=ea, ccw=ccw)]
 
         self.editor.set_dynamic(_preview)
 
-        p3 = self.editor.get_point("Arc 3P: pick end point")
-        self.editor.clear_dynamic()
-        self.editor.snap_from_point = None
+    def commit(self) -> None:
+        p1 = self.point_value("start_point")
+        p2 = self.point_value("intermediate_point")
+        p3 = self.point_value("end_point")
+        if p1 is None or p2 is None or p3 is None:
+            self.editor.status_message.emit("Arc 3P: start, intermediate, and end points are required")
+            return
 
         result = _arc_from_3_points(p1, p2, p3)
         if result is None:
-            self.editor.status_message.emit("Arc 3P: points are collinear — no arc created")
+            self.editor.status_message.emit("Arc 3P: points are collinear - no arc created")
             return
+
         center, radius, sa, ea, ccw = result
         self.editor.add_entity(ArcEntity(center=center, radius=radius, start_angle=sa, end_angle=ea, ccw=ccw))
+        self.editor.snap_from_point = p3

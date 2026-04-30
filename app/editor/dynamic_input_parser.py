@@ -116,7 +116,10 @@ class DynamicInputParser:
         # Replace @ with < for uniform parsing
         coord_str = coord_str.replace("@", "<").strip()
 
-        match = re.match(r"^([\d.]+)\s*<\s*([\d.]+)$", coord_str)
+        float_token = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+        pattern = rf"^({float_token})\s*<\s*({float_token})$"
+
+        match = re.match(pattern, coord_str)
         if not match:
             return None
 

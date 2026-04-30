@@ -1,18 +1,28 @@
-"""Draw point command — place a single point entity on each click."""
+"""Draw point command — stateful single-point placement."""
 from app.editor import command
-from app.editor.base_command import CommandBase, CommandCancelled
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.entities import Vec2
 from app.entities.point import PointEntity
 
 
 @command("pointCommand")
-class DrawPointCommand(CommandBase):
-    """Place point entities repeatedly until Escape."""
+class DrawPointCommand(StatefulCommandBase):
+    """Place one point per command run; repeat mode enables continuous picks."""
 
-    def execute(self) -> None:
-        try:
-            while True:
-                pt = self.editor.get_point("Point: pick location (Escape to stop)")
-                self.editor.add_entity(PointEntity(position=pt))
-        except CommandCancelled:
-            pass
+    position = export(None, label="Position", input_kind="point")
+
+    def start(self) -> None:
+        self.begin(active_export="position", reset=("position",))
+
+    def update(self) -> None:
+        pt = self.point_value("position")
+        self.editor.snap_from_point = pt
+        self.editor.clear_dynamic()
+
+    def commit(self) -> None:
+        pt = self.point_value("position")
+        if pt is None:
+            self.editor.status_message.emit("Point: position is required")
+            return
+        self.editor.add_entity(PointEntity(position=pt))
+        self.editor.snap_from_point = pt

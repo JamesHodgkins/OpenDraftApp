@@ -1,11 +1,14 @@
 """Dynamic input overlay tests removed.
 
-OpenDraft now uses the top-of-viewport terminal as the single consolidated
-input surface, and the cursor-following DynamicInputWidget has been removed.
+The old cursor-following dynamic input widget was removed. Command and value
+typing use the docked Controller (:mod:`app.ui.properties_panel`).
 """
 from __future__ import annotations
 
 import pytest
 
 
-pytest.skip("DynamicInputWidget removed (replaced by TopTerminalWidget).", allow_module_level=True)
+pytest.skip(
+    "DynamicInputWidget removed; use PropertiesPanel (Controller) command input.",
+    allow_module_level=True,
+)

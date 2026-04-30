@@ -1,5 +1,98 @@
 # OpenDraft — Development TODO Completed Items
 
+### Post-Point Preview Sync Loop (2026-04-28)
+
+- [x] **Active refresh retries after terminal point submission** — `TopTerminalWidget` now schedules a short point-preview sync loop that repeatedly requests canvas refresh while waiting for point-mode preview readiness
+- [x] **Readiness + timeout diagnostics** — sync loop now emits `[trace] sync:point-preview-ready` on success or `[debug] point preview sync timed out` if preview state never materializes
+- [x] **Focused regression validation** — reran `tests/test_top_terminal.py` + `tests/test_canvas.py` with all tests passing
+
+### Runtime Trace + Point Refresh Diagnostics (2026-04-28)
+
+- [x] **Terminal runtime traces added** — `TopTerminalWidget` now emits compact `[trace]` lines for Enter handling, startup submission queueing/delivery, and point submission state (running/mode/snap/dynamic/preview)
+- [x] **Post-point refresh fallback** — terminal point submissions now request a best-effort parent canvas refresh immediately after `editor.provide_point(...)` to reduce preview timing misses
+- [x] **Focused regression validation** — reran `tests/test_top_terminal.py` + `tests/test_canvas.py` with all tests passing
+
+### Command Startup Submission Queue (2026-04-28)
+
+- [x] **Running+none mode race handled** — terminal now queues typed submissions when command thread is alive but has not yet entered its next explicit input mode
+- [x] **Deferred delivery to ready prompt** — queued startup submissions are delivered automatically once input mode transitions from `none` to a concrete prompt mode (for example `point`)
+- [x] **Regression coverage** — added `tests/test_top_terminal.py::test_running_mode_none_queues_submission_until_prompt_ready`
+
+### Off-Canvas Cursor Seed Guard (2026-04-28)
+
+- [x] **Global-cursor seeding is now viewport-aware** — `CADCanvas._seed_cursor_world_from_global()` now checks whether the mapped global cursor is inside canvas bounds
+- [x] **Fallback to visible preview origin** — when global cursor is outside the canvas, preview seeding now uses canvas center to avoid initializing rubberband from off-screen world coordinates
+- [x] **Regression coverage** — added `tests/test_canvas.py::test_seed_cursor_world_uses_canvas_center_when_global_cursor_is_outside`
+
+### Strict Enter Command Compilation (2026-04-28)
+
+- [x] **Inline Enter arguments must fully satisfy the command** — terminal now treats command lines with inline args as compile-style submissions that must finish without extra prompts
+- [x] **Partial command lines now error and auto-cancel** — inputs like `core.line 0,0` emit an explicit incomplete-command error and cancel the started command instead of entering half-complete interactive state
+- [x] **Regression coverage updated** — `tests/test_top_terminal.py` now asserts incomplete-line error/cancel behavior and keeps delayed-start token-queue coverage for fully compilable lines
+
+### Immediate Rubberband Cursor Seeding (2026-04-28)
+
+- [x] **Preview cursor seed fallback in `CADCanvas`** — when command preview refreshes or input mode changes before any mouse-move event, canvas now seeds `_cursor_world` from the current global cursor position
+- [x] **Immediate dynamic preview reliability** — line/rubberband previews no longer depend on a prior canvas mouse-move to initialize preview coordinates after keyboard-entered first points
+- [x] **Regression coverage** — added `tests/test_canvas.py::test_input_mode_change_seeds_cursor_world_when_unset` to ensure preview recompute works when `_cursor_world` starts as `None`
+
+### Enter Token Startup Race Fix (2026-04-28)
+
+- [x] **Queued Enter tokens no longer drop before command thread starts** — `_drain_pending_enter_tokens()` now waits for `editor.is_running` instead of clearing token payload immediately during startup lag
+- [x] **Line first-point preview restored for terminal command lines** — entering `core.line 0,0` via terminal now reliably commits the first point and arms dynamic rubberband preview from `(0,0)`
+- [x] **Regression coverage for delayed launch path** — added `tests/test_top_terminal.py::test_enter_tokens_survive_delayed_command_start_for_line_preview` to guard against queued-signal startup timing regressions
+
+### Enter-Only Live Terminal Commit (2026-04-28)
+
+- [x] **Enter-only side effects for command lines** — terminal command text now remains live/editable until Enter; typing/editing tokens (for example `core.line 0,0 20,20`) does not start or advance commands before explicit commit
+- [x] **Space changed to non-committing edit/autocomplete behavior** — Space no longer submits idle/running command steps; it now inserts literal separators and can normalize a single idle command token to canonical command id + trailing separator
+- [x] **Queued Enter-line token submission** — after Enter launches a command, remaining command-line tokens are queued and submitted prompt-by-prompt as input modes become ready
+- [x] **Regression coverage updated** — refreshed `tests/test_top_terminal.py` to validate no pre-Enter side effects, full-line Enter commit with edited coordinates, and idle Space repeat/autocomplete expectations
+
+### Terminal Chain Edit + Preview Refresh (2026-04-28)
+
+- [x] **Editable token-chain submission fallback** — when retained terminal prefix text is manually edited, commit extraction now falls back to the latest whitespace-delimited fragment token instead of submitting the full command chain
+- [x] **Repeat-last command now populates terminal** — empty Enter/Space repeats continue to run the last command and now also populate terminal input with the repeated command token + separator for immediate chained value entry
+- [x] **Preview/rubberband refresh without mouse move** — canvas now recomputes dynamic preview entities on input-mode changes and generic refresh events so terminal-submitted command steps can show preview/rubberband without requiring an immediate mouse move
+- [x] **Regression coverage** — added/updated tests in `tests/test_top_terminal.py` and `tests/test_canvas.py` for retained-chain edit commits, repeat input population, and preview recompute on mode transition
+
+### Space Separator Token Chain (2026-04-28)
+
+- [x] **Visible command-token separator retained** — after `l` + Space the terminal now preserves `core.line ` (trailing separator included) so the next token naturally starts after a space
+- [x] **Fragment-only submission while preserving full text** — active command commits now submit only the editable fragment after the committed visible prefix, enabling retained chains like `core.line 0,0 ` without breaking point parsing
+- [x] **Separator regression coverage** — updated `tests/test_top_terminal.py` to assert preserved `core.line ` and chained `core.line 0,0 ` Space-commit flow
+
+### Space Commit Input Retention (2026-04-28)
+
+- [x] **Preserve terminal text on Space commits** — Space-driven command acceptance and non-string prompt submission now retain the input text in the terminal instead of clearing it
+- [x] **Preserve Enter behavior** — Enter keeps existing clear-on-commit behavior so previous keyboard workflow remains intact
+- [x] **Space regression assertions updated** — `tests/test_top_terminal.py` now asserts retained text for `l` + Space (`core.line`) and `0,0` + Space during line point submission
+
+### Terminal Space-Key Commit Flow (2026-04-28)
+
+- [x] **Space as command accept in idle terminal** — pressing Space with a single-token command alias now accepts/commits the selected suggestion and normalizes aliases to canonical command IDs before execution
+- [x] **Space as prompt submit during active commands** — for non-string input prompts, Space now commits terminal input like Enter (for example point/vector steps), while string mode still allows literal spaces
+- [x] **Line command first-point terminal flow validated** — `l` + Space starts line, and `0,0` + Space commits the first point so dynamic rubberband preview anchors from `(0,0)`
+- [x] **Regression coverage** — expanded `tests/test_top_terminal.py` with Space-key commit tests for idle command acceptance and command-running point submission
+
+### Terminal Token Parse/Commit UX Refinement (2026-04-28)
+
+- [x] **Live token parsing feedback** — `TopTerminalWidget` now parses command-option tokens while typing and reflects the latest parse state in terminal feedback (`[key] label -> payload`), so deleting text naturally rewinds the interpreted step
+- [x] **Enter-only commit flow** — in active-command mode, option-match button clicks now stage token text in the input instead of submitting immediately; Enter remains the explicit commit action
+- [x] **Token parse guardrails** — plain multi-word labels are no longer prematurely token-split during submission; token splitting is limited to explicit token syntax or known keyed options
+- [x] **Regression tests** — expanded `tests/test_top_terminal.py` to cover live parse feedback rewinding, staged-click commit semantics, and full-label fallback behavior
+
+### Token-Based Terminal Input Commands (2026-04-28)
+
+- [x] **Tokenized command-option input in `TopTerminalWidget`** — active-command options now accept token forms (`a`, `:a`, `/a`, `[a]`, `opt:a`) instead of label-only text
+- [x] **Inline payload chaining** — tokenized option input now supports a trailing payload (for example `a 45`) that is deferred and submitted to the next command input prompt after the option event is consumed
+- [x] **Terminal regression coverage** — added tests in `tests/test_top_terminal.py` for token forms, payload chaining, and full-label fallback behavior
+
+### Command Thread Race Fix (2026-04-28)
+
+- [x] **Safe thread-liveness checks in `Editor`** — updated `is_running` and `run_command` to snapshot the thread reference before invoking `is_alive()` so command startup cannot crash if the worker clears `_thread` concurrently
+- [x] **Lifecycle regression test** — added a command-architecture contract test that simulates `_thread` being set to `None` during `join()` and verifies command routing continues without raising `AttributeError`
+
 ### Priority 7 UX & Workflow Completion (2026-04-27)
 
 - [x] **Repeat last command via empty Enter** — when no command is active and terminal input is empty, pressing Enter now repeats the most recent command

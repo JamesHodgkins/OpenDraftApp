@@ -177,3 +177,31 @@ def test_run_command_rejects_start_when_previous_thread_alive(monkeypatch) -> No
 
     assert messages
     assert "still cancelling" in messages[-1].lower()
+
+
+def test_run_command_handles_thread_cleared_during_join(monkeypatch) -> None:
+    ed = Editor(document=DocumentStore())
+
+    class _RaceThread:
+        def join(self, timeout: float | None = None) -> None:
+            # Simulate worker finalization clearing the shared thread slot while
+            # run_command is waiting on join.
+            ed._thread = None
+
+        def is_alive(self) -> bool:
+            return False
+
+        name = "race-command-thread"
+
+    monkeypatch.setattr(Editor, "is_running", property(lambda _self: True))
+    ed._thread = _RaceThread()  # type: ignore[assignment]
+
+    messages: list[str] = []
+    ed.status_message.connect(messages.append)
+
+    # Must not raise if the thread slot is cleared between join() and
+    # the liveness check.
+    ed.run_command("tests.unknown_command")
+
+    assert messages
+    assert "unknown command" in messages[-1].lower()

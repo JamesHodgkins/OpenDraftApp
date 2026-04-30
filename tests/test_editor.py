@@ -95,7 +95,7 @@ def test_provide_command_option_accepts_keyed_shortcuts() -> None:
             )
         )
 
-    # Commands may register keyed options for terminal usage.
+    # Commands may register keyed options for context-menu / PropertiesPanel input.
     ed.set_command_options_keyed(
         [
             CommandOption(key="b", label="Set base vector"),

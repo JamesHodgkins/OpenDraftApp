@@ -268,6 +268,20 @@ def test_input_mode_none_clears_cursor_world_state(canvas):
     assert canvas._cursor_world is None
 
 
+def test_refresh_recomputes_dynamic_preview_without_mouse_move(canvas):
+    tip = Vec2(12, 8)
+    canvas._cursor_world = tip
+    canvas._preview_entities = []
+
+    canvas._editor.set_dynamic(lambda m: [LineEntity(p1=Vec2(0, 0), p2=m)])
+    canvas.refresh()
+
+    assert len(canvas._preview_entities) == 1
+    ent = canvas._preview_entities[0]
+    assert isinstance(ent, LineEntity)
+    assert ent.p2 == tip
+
+
 def test_export_thumbnail_png_returns_png_signature(canvas):
     doc = canvas._document
     doc.add_entity(LineEntity(p1=Vec2(0, 0), p2=Vec2(25, 15)))

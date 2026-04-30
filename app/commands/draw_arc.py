@@ -1,95 +1,199 @@
-"""Draw arc command (centre → start → end)."""
+"""Draw arc commands using stateful exported properties."""
 import math
 
 from app.editor import command
-from app.editor.base_command import CommandBase
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.entities import ArcEntity, CircleEntity, LineEntity, Vec2
 
 
+def _arc_center_from_start_end_radius(
+    start: Vec2,
+    end: Vec2,
+    radius: float,
+) -> tuple[Vec2, float, float] | None:
+    """Return center, start_angle, end_angle for start/end/radius arc.
+
+    Uses the left-hand center relative to the chord so the arc defaults to CCW.
+    Returns ``None`` when the radius is not geometrically valid.
+    """
+    dx, dy = end.x - start.x, end.y - start.y
+    chord = math.hypot(dx, dy)
+    if chord == 0 or radius < chord / 2:
+        return None
+
+    mid_x, mid_y = (start.x + end.x) / 2, (start.y + end.y) / 2
+    h = math.sqrt(radius ** 2 - (chord / 2) ** 2)
+    perp_x, perp_y = -dy / chord, dx / chord
+    cx = mid_x + h * perp_x
+    cy = mid_y + h * perp_y
+
+    center = Vec2(cx, cy)
+    start_angle = math.atan2(start.y - cy, start.x - cx)
+    end_angle = math.atan2(end.y - cy, end.x - cx)
+    return center, start_angle, end_angle
+
+
 @command("arcCenterStartEndCommand")
-class DrawArcCenterStartEndCommand(CommandBase):
-    """Draw an arc by picking centre, then start point, then end point (CCW)."""
+class DrawArcCenterStartEndCommand(StatefulCommandBase):
+    """Draw an arc by setting center, start point, and end point."""
 
-    def execute(self) -> None:
-        center = self.editor.get_point("Arc: pick centre point")
+    center = export(None, label="Center", input_kind="point")
+    start_point = export(None, label="Start point", input_kind="point")
+    end_point = export(None, label="End point", input_kind="point")
 
-        # Phase 1: circle tracks cursor to show the radius.
-        self.editor.set_dynamic(
-            lambda m: [
-                CircleEntity(center=center, radius=max(1e-6, math.hypot(m.x - center.x, m.y - center.y))),
-                LineEntity(p1=center, p2=m),
-            ]
+    def start(self) -> None:
+        self.begin(
+            active_export="center",
+            reset=("center", "start_point", "end_point"),
         )
-        self.editor.snap_from_point = center
-        start = self.editor.get_point("Arc: pick start point")
 
-        radius      = math.hypot(start.x - center.x, start.y - center.y)
+    def update(self) -> None:
+        center = self.point_value("center")
+        start = self.point_value("start_point")
+        end = self.point_value("end_point")
+
+        self.set_snap_for_active(
+            {
+                "start_point": center,
+                "end_point": center,
+                "center": (start, end),
+            },
+            default=(center, start, end),
+        )
+
+        if center is None:
+            self.editor.clear_dynamic()
+            return
+
+        def _preview(mouse: Vec2):
+            if start is None:
+                radius = max(1e-6, math.hypot(mouse.x - center.x, mouse.y - center.y))
+                return [
+                    CircleEntity(center=center, radius=radius),
+                    LineEntity(p1=center, p2=mouse),
+                ]
+
+            radius = math.hypot(start.x - center.x, start.y - center.y)
+            if radius < 1e-6:
+                return [LineEntity(p1=center, p2=mouse)]
+
+            end_pt = end if end is not None else mouse
+            start_angle = math.atan2(start.y - center.y, start.x - center.x)
+            end_angle = math.atan2(end_pt.y - center.y, end_pt.x - center.x)
+            return [
+                ArcEntity(
+                    center=center,
+                    radius=radius,
+                    start_angle=start_angle,
+                    end_angle=end_angle,
+                    ccw=True,
+                )
+            ]
+
+        self.editor.set_dynamic(_preview)
+
+    def commit(self) -> None:
+        center = self.point_value("center")
+        start = self.point_value("start_point")
+        end = self.point_value("end_point")
+        if center is None or start is None or end is None:
+            self.editor.status_message.emit("Arc: center, start, and end points are required")
+            return
+
+        radius = math.hypot(start.x - center.x, start.y - center.y)
+        if radius < 1e-6:
+            self.editor.status_message.emit("Arc: start point must differ from center")
+            return
+
         start_angle = math.atan2(start.y - center.y, start.x - center.x)
-
-        # Phase 2: arc sweeps from start_angle to cursor angle.
-        def _arc_preview(m: Vec2):
-            end_angle = math.atan2(m.y - center.y, m.x - center.x)
-            return [ArcEntity(
+        end_angle = math.atan2(end.y - center.y, end.x - center.x)
+        self.editor.add_entity(
+            ArcEntity(
                 center=center,
                 radius=radius,
                 start_angle=start_angle,
                 end_angle=end_angle,
                 ccw=True,
-            )]
-
-        self.editor.set_dynamic(_arc_preview)
-        end = self.editor.get_point("Arc: pick end point")
-        self.editor.clear_dynamic()
-
-        end_angle = math.atan2(end.y - center.y, end.x - center.x)
-        self.editor.add_entity(ArcEntity(
-            center=center,
-            radius=radius,
-            start_angle=start_angle,
-            end_angle=end_angle,
-            ccw=True,
-        ))
+            )
+        )
+        self.editor.snap_from_point = end
 
 
 @command("arcStartEndRadiusCommand")
-class DrawArcStartEndRadiusCommand(CommandBase):
-    """Draw an arc by picking start, end, then entering a radius."""
+class DrawArcStartEndRadiusCommand(StatefulCommandBase):
+    """Draw an arc by setting start point, end point, and radius."""
 
-    def execute(self) -> None:
-        start = self.editor.get_point("Arc: pick start point")
+    start_point = export(None, label="Start point", input_kind="point")
+    end_point = export(None, label="End point", input_kind="point")
+    radius = export(None, label="Radius", input_kind="length")
 
-        # Show a line from start to cursor while picking the end point.
-        self.editor.set_dynamic(lambda m: [LineEntity(p1=start, p2=m)])
-        end = self.editor.get_point("Arc: pick end point")
+    def start(self) -> None:
+        self.begin(
+            active_export="start_point",
+            reset=("start_point", "end_point", "radius"),
+        )
 
-        # Show the chord while the user types the radius.
-        self.editor.set_dynamic(lambda m: [LineEntity(p1=start, p2=end)])
-        radius = self.editor.get_float("Arc: enter radius")
-        self.editor.clear_dynamic()
+    def update(self) -> None:
+        start = self.point_value("start_point")
+        end = self.point_value("end_point")
+        radius = self.number_value("radius")
 
-        # Compute the centre from the chord and radius (choose the left-hand
-        # centre so the arc sweeps CCW by default).
-        dx, dy = end.x - start.x, end.y - start.y
-        chord  = math.hypot(dx, dy)
-        if chord == 0 or radius < chord / 2:
+        self.set_snap_for_active(
+            {
+                "end_point": start,
+                "radius": end,
+                "start_point": end,
+            },
+            default=(end, start),
+        )
+
+        if start is None:
+            self.editor.clear_dynamic()
+            return
+
+        def _preview(mouse: Vec2):
+            if end is None:
+                return [LineEntity(p1=start, p2=mouse)]
+            if radius is None or radius <= 0:
+                return [LineEntity(p1=start, p2=end)]
+
+            result = _arc_center_from_start_end_radius(start, end, float(radius))
+            if result is None:
+                return [LineEntity(p1=start, p2=end)]
+            center, start_angle, end_angle = result
+            return [
+                ArcEntity(
+                    center=center,
+                    radius=float(radius),
+                    start_angle=start_angle,
+                    end_angle=end_angle,
+                    ccw=True,
+                )
+            ]
+
+        self.editor.set_dynamic(_preview)
+
+    def commit(self) -> None:
+        start = self.point_value("start_point")
+        end = self.point_value("end_point")
+        radius = self.number_value("radius")
+        if start is None or end is None or radius is None:
+            self.editor.status_message.emit("Arc: start, end, and radius are required")
+            return
+
+        result = _arc_center_from_start_end_radius(start, end, radius)
+        if result is None:
             self.editor.status_message.emit("Arc: radius too small for the given points")
             return
 
-        mid_x, mid_y = (start.x + end.x) / 2, (start.y + end.y) / 2
-        h = math.sqrt(radius ** 2 - (chord / 2) ** 2)
-        # Perpendicular direction (rotated 90° CCW from chord direction)
-        perp_x, perp_y = -dy / chord, dx / chord
-        cx = mid_x + h * perp_x
-        cy = mid_y + h * perp_y
-
-        center      = Vec2(cx, cy)
-        start_angle = math.atan2(start.y - cy, start.x - cx)
-        end_angle   = math.atan2(end.y   - cy, end.x   - cx)
-
-        self.editor.add_entity(ArcEntity(
-            center=center,
-            radius=radius,
-            start_angle=start_angle,
-            end_angle=end_angle,
-            ccw=True,
-        ))
+        center, start_angle, end_angle = result
+        self.editor.add_entity(
+            ArcEntity(
+                center=center,
+                radius=radius,
+                start_angle=start_angle,
+                end_angle=end_angle,
+                ccw=True,
+            )
+        )
+        self.editor.snap_from_point = end

@@ -7,6 +7,8 @@ Exported symbols
 ``EditorTransaction``   Public undo/notification transaction helper.
 ``CommandOptionSelection`` Typed command-option selection result.
 ``CommandBase``         Abstract base for all command classes.
+``StatefulCommandBase`` Base for stateful commands with exported properties.
+``export``              Descriptor factory for stateful command properties.
 ``CommandCancelled``    Exception raised when the user cancels a command.
 ``command``             ``@command("actionName")`` registration decorator.
 ``get_command``         Look up a registered command class by action name.
@@ -24,6 +26,7 @@ Exported symbols
 ``validate_action_sources`` Validate multiple named action sources.
 """
 from app.editor.base_command import CommandBase, CommandCancelled
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.editor.command_registry import (
     ActionValidationReport,
     CommandCatalogRefreshResult,
@@ -64,6 +67,8 @@ __all__ = [
     "EditorTransaction",
     "CommandOptionSelection",
     "CommandBase",
+    "StatefulCommandBase",
+    "export",
     "CommandCancelled",
     "OsnapEngine",
     "SnapResult",

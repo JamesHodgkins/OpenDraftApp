@@ -43,12 +43,13 @@ from typing import Any, Callable, List, Literal, Optional, Sequence, overload
 
 _log = logging.getLogger(__name__)
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from app.document import DocumentStore
 from app.entities import BaseEntity, Vec2
 from app.editor.base_command import CommandBase, CommandCancelled
 from app.editor.command_registry import get_command
+from app.editor.stateful_command import StatefulCommandBase
 from app.editor.selection import SelectionSet
 from app.editor.settings import EditorSettings
 from app.editor.undo import (
@@ -216,6 +217,8 @@ class Editor(QObject):
     input_mode_changed = Signal(str)   # "point" | "integer" | "string" | "choice" | "none"
     command_started   = Signal(str)    # command action-name
     command_finished  = Signal()       # command ended
+    stateful_value_changed = Signal(str, object)  # name, value — emitted when a stateful command property is updated via canvas/terminal input
+    stateful_active_export_changed = Signal(str)  # name — emitted when the active export changes
     entity_added      = Signal(object) # BaseEntity instance
     entity_removed    = Signal(str)    # entity id
     document_changed  = Signal()       # generic redraw trigger
@@ -256,9 +259,24 @@ class Editor(QObject):
         # Last started command action-name, used by UI affordances such as
         # "Repeat: <command>" in the canvas context menu.
         self._last_command_name: Optional[str] = None
+        # Reference to the most recently committed stateful command; the
+        # next command run by Repeat-command consumes it via ``seed_from_previous``
+        # then it is cleared.  This bridges the gap between
+        # ``_finish_stateful`` (which clears ``_active_command``) and the
+        # deferred ``run_command`` triggered by Repeat-command.
+        self._last_committed_cmd: Optional[StatefulCommandBase] = None
         # Recent command IDs (oldest -> newest) for contextual repeat/history UI.
         self._recent_commands: list[str] = []
         self._recent_command_limit: int = 20
+
+        # ── Keyboard-first workflow toggles ────────────────────────
+        # Auto-complete: after every export of a stateful command has a value,
+        # the editor schedules an automatic ``commit_command()``.
+        # Repeat-command: after a stateful command commits, the same command id
+        # is auto-launched again (commands can chain values via
+        # :meth:`StatefulCommandBase.seed_from_previous`).
+        self.auto_complete_enabled: bool = True
+        self.repeat_command_enabled: bool = True
 
         # Selection set — tracks currently selected entity IDs.
         self.selection = SelectionSet(parent=self)
@@ -344,8 +362,10 @@ class Editor(QObject):
 
     @property
     def is_running(self) -> bool:
-        """``True`` while a command thread is alive."""
-        return self._thread is not None and self._thread.is_alive()
+        """``True`` while a command thread is alive or a stateful command is active."""
+        if self._thread is not None and self._thread.is_alive():
+            return True
+        return self._active_command is not None
 
     @property
     def last_command_name(self) -> Optional[str]:
@@ -387,13 +407,14 @@ class Editor(QObject):
             # Cancel any running command and wait for it to finish.
             if self.is_running:
                 self.cancel()
-                if self._thread:
-                    self._thread.join(timeout=2.0)
-                    if self._thread.is_alive():
+                thread = self._thread
+                if thread is not None:
+                    thread.join(timeout=2.0)
+                    if thread.is_alive():
                         _log.warning(
                             "Command thread %r did not terminate within 2 s after cancel. "
                             "Refusing to start %r while a previous command is still alive.",
-                            self._thread.name,
+                            thread.name,
                             name,
                         )
                         self.status_message.emit(
@@ -414,13 +435,17 @@ class Editor(QObject):
 
             cmd = cls(self)
             self._active_command = cmd
-            self._thread = threading.Thread(
-                target=self._run_in_thread,
-                args=(cmd, name),
-                daemon=True,
-                name=f"cmd-{name}",
-            )
-            self._thread.start()
+
+            if isinstance(cmd, StatefulCommandBase):
+                self._run_stateful(cmd, name)
+            else:
+                self._thread = threading.Thread(
+                    target=self._run_in_thread,
+                    args=(cmd, name),
+                    daemon=True,
+                    name=f"cmd-{name}",
+                )
+                self._thread.start()
 
     def cancel(self) -> None:
         """Cancel the currently running command (equivalent to pressing Escape).
@@ -429,6 +454,10 @@ class Editor(QObject):
         """
         with self._command_lock:
             if not self.is_running:
+                return
+            cmd = self._active_command
+            if isinstance(cmd, StatefulCommandBase):
+                self.cancel_command()
                 return
             self._cancelled.set()
             # Unblock any queued ``_wait_for_input`` call.
@@ -446,6 +475,168 @@ class Editor(QObject):
                 except queue.Full:
                     pass
 
+    # ------------------------------------------------------- stateful command API
+
+    def _run_stateful(self, cmd: StatefulCommandBase, name: str) -> None:
+        """Activate a stateful command on the GUI thread (no worker thread).
+
+        When this run is the auto-launched continuation of a Repeat-command
+        cycle, ``_last_committed_cmd`` holds the just-committed previous
+        instance.  After ``start()`` it is handed to ``seed_from_previous``
+        so the command can chain values (e.g. ``DrawLine`` carries the
+        previous end-point as the new start-point).
+        """
+        prev = self._last_committed_cmd
+        self._last_committed_cmd = None
+        self.command_started.emit(name)
+        self._set_input_mode("stateful")
+        try:
+            cmd.start()
+            if prev is not None and prev is not cmd:
+                try:
+                    cmd.seed_from_previous(prev)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+                # Re-emit so the panel reflects whatever start()/seed set.
+                for info in cmd.exports():
+                    val = getattr(cmd, info.name, None)
+                    if val is not None:
+                        self.stateful_value_changed.emit(info.name, val)
+                self.stateful_active_export_changed.emit(cmd.active_export)
+        except Exception as exc:
+            self.status_message.emit(f"Command error: {exc}")
+            import traceback
+            traceback.print_exc()
+            self._finish_stateful(cmd)
+
+    def commit_command(self) -> None:
+        """Commit the currently active stateful command.
+
+        A command may return ``False`` from :meth:`StatefulCommandBase.commit`
+        to indicate a step-wise commit and keep running (for example,
+        variable-length point collection commands).  Any other return value
+        finalizes the command as usual.
+
+        When :attr:`repeat_command_enabled` is true, the same command is
+        scheduled to re-launch on the next event-loop tick once teardown
+        has fully run; the new command instance will receive the just
+        committed instance via :meth:`StatefulCommandBase.seed_from_previous`.
+        """
+        last_name: str | None = None
+        with self._command_lock:
+            cmd = self._active_command
+            if not isinstance(cmd, StatefulCommandBase):
+                return
+            if cmd._is_committed:
+                return
+            cmd._is_committed = True
+            keep_running = False
+            try:
+                keep_running = cmd.commit() is False
+            except Exception as exc:
+                self.status_message.emit(f"Commit error: {exc}")
+                import traceback
+                traceback.print_exc()
+
+            if keep_running and self._active_command is cmd:
+                cmd._is_committed = False
+                for info in cmd.exports():
+                    self.stateful_value_changed.emit(
+                        info.name,
+                        getattr(cmd, info.name, None),
+                    )
+                self.stateful_active_export_changed.emit(cmd.active_export)
+                return
+
+            self._last_committed_cmd = cmd
+            last_name = self._last_command_name
+            self._finish_stateful(cmd)
+
+        if self.repeat_command_enabled and last_name:
+            QTimer.singleShot(0, lambda n=last_name: self.run_command(n))
+
+    def _maybe_auto_commit(self, cmd: StatefulCommandBase) -> None:
+        """Schedule an auto-commit when every export has a non-``None`` value.
+
+        Called after each ``stateful_active_export_changed`` emission.  The
+        commit itself runs on the next event-loop tick so listeners of
+        ``stateful_value_changed`` / ``stateful_active_export_changed``
+        finish updating UI state first.
+        """
+        if not self.auto_complete_enabled:
+            return
+        if cmd._is_committed:
+            return
+        if not cmd.all_exports_set():
+            return
+        QTimer.singleShot(0, self.commit_command)
+
+    def _stateful_set_and_advance(
+        self,
+        cmd: StatefulCommandBase,
+        name: str,
+        value: Any,
+    ) -> None:
+        """Apply *value* to ``cmd.<name>``, advance, and maybe auto-commit.
+
+        Centralises the "set property → emit value-changed → advance →
+        emit active-changed → maybe auto-commit" sequence shared by every
+        ``provide_*`` entry-point and by the panel's row-edit path.
+        """
+        if not name:
+            return
+        setattr(cmd, name, value)
+        self.stateful_value_changed.emit(name, value)
+        cmd.advance_active_export()
+        self.stateful_active_export_changed.emit(cmd.active_export)
+        self._maybe_auto_commit(cmd)
+
+    def _stateful_active_input_kind(self, cmd: StatefulCommandBase) -> str:
+        """Return the input_kind of the command's active export.
+
+        Defaults to ``"point"`` if metadata is unavailable.
+        """
+        active = cmd.active_export
+        if not active:
+            return "point"
+        for info in cmd.exports():
+            if info.name == active:
+                return info.input_kind
+        return "point"
+
+    def cancel_command(self) -> None:
+        """Cancel the currently active stateful command."""
+        with self._command_lock:
+            cmd = self._active_command
+            if not isinstance(cmd, StatefulCommandBase):
+                return
+            try:
+                cmd.cancel()
+            except Exception:
+                pass
+            self._finish_stateful(cmd)
+
+    def _finish_stateful(self, cmd: StatefulCommandBase) -> None:
+        """Clean up after a stateful command ends (commit or cancel)."""
+        self._active_command = None
+        self._dynamic_callback = None
+        self.snap_from_point = None
+        self.suppress_osnap = False
+        self.suppress_dynamic_input = False
+        self._command_option_labels = []
+        self._set_input_mode("none")
+        self.status_message.emit("")
+        self.command_finished.emit()
+
+    def get_last_point(self) -> Vec2 | None:
+        """Return the last point used by a command, or ``None``.
+
+        Useful for stateful commands that want to default a property to the
+        previously picked point.
+        """
+        return self.snap_from_point
+
     # ---------------------------------------------------------- input providers
     # Called by the UI (canvas mouse clicks, dialog boxes, etc.)
 
@@ -455,6 +646,29 @@ class Editor(QObject):
         Connect the canvas ``pointSelected`` signal here.
         In "angle" mode, converts the point to degrees relative to ``_angle_center``.
         """
+        cmd = self._active_command
+        if isinstance(cmd, StatefulCommandBase):
+            name = cmd.active_export
+            kind = self._stateful_active_input_kind(cmd)
+            if not name:
+                return
+            if kind == "point":
+                value: Any = pt
+            elif kind == "vector":
+                base = self.snap_from_point or Vec2(0, 0)
+                value = Vec2(pt.x - base.x, pt.y - base.y)
+            elif kind == "length":
+                import math
+                base = self.snap_from_point or Vec2(0, 0)
+                value = math.hypot(pt.x - base.x, pt.y - base.y)
+            elif kind == "angle":
+                import math
+                center = self.snap_from_point or Vec2(0, 0)
+                value = math.degrees(math.atan2(pt.y - center.y, pt.x - center.x))
+            else:
+                return
+            self._stateful_set_and_advance(cmd, name, value)
+            return
         if self._input_mode == "angle":
             import math
             center = self._angle_center or Vec2(0, 0)
@@ -473,33 +687,80 @@ class Editor(QObject):
 
     def provide_integer(self, value: int) -> None:
         """Deliver an integer value to the currently waiting command."""
+        cmd = self._active_command
+        if isinstance(cmd, StatefulCommandBase):
+            kind = self._stateful_active_input_kind(cmd)
+            if kind in ("integer", "float", "length", "angle"):
+                cast_value: Any = int(value) if kind == "integer" else float(value)
+                self._stateful_set_and_advance(cmd, cmd.active_export, cast_value)
+            return
         if self._input_mode != "integer":
             return
         self._put_input_event("integer", value)
 
     def provide_string(self, value: str) -> None:
         """Deliver a string value to the currently waiting command."""
+        cmd = self._active_command
+        if isinstance(cmd, StatefulCommandBase):
+            if self._stateful_active_input_kind(cmd) == "string":
+                self._stateful_set_and_advance(cmd, cmd.active_export, value)
+            return
         if self._input_mode != "string":
             return
         self._put_input_event("string", value)
 
     def provide_float(self, value: float) -> None:
         """Deliver a float value to the currently waiting command."""
+        cmd = self._active_command
+        if isinstance(cmd, StatefulCommandBase):
+            kind = self._stateful_active_input_kind(cmd)
+            if kind in ("float", "length", "angle", "integer"):
+                cast_value: Any = int(value) if kind == "integer" else float(value)
+                self._stateful_set_and_advance(cmd, cmd.active_export, cast_value)
+            return
         if self._input_mode != "float":
             return
         self._put_input_event("float", value)
 
     def provide_angle(self, value: float) -> None:
         """Deliver an angle in degrees to the currently waiting command."""
+        cmd = self._active_command
+        if isinstance(cmd, StatefulCommandBase):
+            kind = self._stateful_active_input_kind(cmd)
+            if kind in ("angle", "float", "integer"):
+                cast_value: Any = int(value) if kind == "integer" else float(value)
+                self._stateful_set_and_advance(cmd, cmd.active_export, cast_value)
+            return
         if self._input_mode != "angle":
             return
         self._put_input_event("angle", value)
 
     def provide_length(self, value: float) -> None:
         """Deliver a length/distance value to the currently waiting command."""
+        cmd = self._active_command
+        if isinstance(cmd, StatefulCommandBase):
+            kind = self._stateful_active_input_kind(cmd)
+            if kind in ("length", "float", "integer"):
+                cast_value: Any = int(value) if kind == "integer" else float(value)
+                self._stateful_set_and_advance(cmd, cmd.active_export, cast_value)
+            return
         if self._input_mode != "length":
             return
         self._put_input_event("length", value)
+
+    def set_stateful_property(self, name: str, value: Any) -> None:
+        """Set ``name`` on the active stateful command and advance.
+
+        UI panels call this when a row's edit is committed by the user;
+        it routes through the same advance / auto-commit path the
+        ``provide_*`` entry-points use, but lets the caller name the
+        property explicitly (the user may have edited a row that wasn't
+        the currently active export).
+        """
+        cmd = self._active_command
+        if not isinstance(cmd, StatefulCommandBase):
+            return
+        self._stateful_set_and_advance(cmd, name, value)
 
     def provide_choice(self, value: str) -> None:
         """Deliver a choice value to the currently waiting command."""
