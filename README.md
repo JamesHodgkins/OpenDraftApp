@@ -84,6 +84,14 @@ python main.py
 pytest
 ```
 
+This includes a workflow guard test for `.github/workflows/ci.yml`.
+
+To run only the workflow validation:
+
+```bash
+pytest tests/test_ci_workflow.py
+```
+
 ## Linux ODX Thumbnails (No Installer Yet)
 
 OpenDraft now embeds a preview image at `assets/thumbnail.png` inside each `.odx` file.

@@ -71,6 +71,36 @@ class RectangleEntity(BaseEntity):
         # 0=BL,1=BR,2=TR,3=TL
         return [Vec2(-hx, -hy), Vec2(hx, -hy), Vec2(hx, hy), Vec2(-hx, hy)]
 
+    @property
+    def p1(self) -> Vec2:
+        """Backward-compatible first diagonal corner for legacy rectangle paths."""
+        return self._corners()[0]
+
+    @p1.setter
+    def p1(self, value: Vec2) -> None:
+        self._set_from_diagonal(value, self.p2)
+
+    @property
+    def p2(self) -> Vec2:
+        """Backward-compatible opposite diagonal corner for legacy rectangle paths."""
+        return self._corners()[2]
+
+    @p2.setter
+    def p2(self, value: Vec2) -> None:
+        self._set_from_diagonal(self.p1, value)
+
+    def _set_from_diagonal(self, p1: Vec2, p2: Vec2) -> None:
+        """Update center/size from two opposite corners while preserving rotation."""
+        self.center = Vec2((p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0)
+
+        cos_a, sin_a = self._cos_sin()
+        dx = p2.x - p1.x
+        dy = p2.y - p1.y
+        local_dx = dx * cos_a + dy * sin_a
+        local_dy = -dx * sin_a + dy * cos_a
+        self.width = abs(local_dx)
+        self.height = abs(local_dy)
+
     def _corners(self) -> List[Vec2]:
         return [self._world_from_local(c) for c in self._local_corners()]
 

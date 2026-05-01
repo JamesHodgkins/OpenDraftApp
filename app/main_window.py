@@ -5,7 +5,7 @@ Assembles the top-level layout and wires all major subsystems together.
 Ribbon configuration data lives in :mod:`app.config.ribbon_config`.
 """
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from pathlib import Path
 
