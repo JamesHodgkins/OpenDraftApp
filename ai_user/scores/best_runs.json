@@ -6,5 +6,9 @@
   "draw_circle_radius_5": {
     "step_count": 3,
     "total_points": 13
+  },
+  "draw_rectangle_100x50": {
+    "step_count": 3,
+    "total_points": 13
   }
 }
