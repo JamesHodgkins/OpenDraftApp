@@ -2340,6 +2340,14 @@ class PropertiesPanel(QWidget):
         if any(a.startswith(typed) for a in ali_l): return 5
         if typed in lab_l:                          return 6
         if typed in cid_l:                          return 7
+        # Commands with a short, abbreviated display name (e.g. "Rect" for
+        # the Rectangle tool, "Arc" for the arc tool) never matched a longer
+        # word the abbreviation is itself a prefix of — every check above
+        # only tests `typed` as a substring/prefix of the label, never the
+        # reverse. Found via the ai_user AI-driven-testing harness: typing
+        # the natural English word "rectangle" (not the abbreviation "rect")
+        # matched nothing at all, and the model had no way to recover.
+        if len(lab_l) >= 3 and lab_l.isalpha() and typed.startswith(lab_l): return 8
         return None
 
     def _refresh_suggestion_buttons(self, text: str) -> None:
@@ -2347,6 +2355,7 @@ class PropertiesPanel(QWidget):
         typed = text.strip().lower()
         if not typed:
             self._suggestion_frame.setVisible(False)
+            self._editor.status_message.emit("")
             return
 
         matches: List[Tuple[int, str, str, Tuple[str, ...]]] = []
@@ -2379,6 +2388,21 @@ class PropertiesPanel(QWidget):
         # Pre-select the top match so a single Enter runs it.
         self._suggestion_index = 0 if self._suggestion_buttons else -1
         self._refresh_suggestion_highlight()
+
+        # Same gap as KNOWN_BUGS #14 (a running command's field silently
+        # holding a complete, uncommitted value) but for the *idle* command
+        # bar: the top suggestion is already pre-selected so a single Enter
+        # runs it — nothing previously said so anywhere textually, so typing
+        # a valid command name with no immediate Enter/Space (the model then
+        # typing point coordinates straight on top of it, e.g.) silently
+        # produced garbage instead of starting the command. See KNOWN_BUGS.
+        if matches:
+            _score, _cmd_id, top_label, _aliases = matches[0]
+            self._editor.status_message.emit(
+                f"Press Enter to run '{top_label}'"
+            )
+        else:
+            self._editor.status_message.emit(f"No command matches '{text.strip()}'")
 
     def _clear_suggestion_buttons(self) -> None:
         for btn in self._suggestion_buttons:

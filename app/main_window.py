@@ -821,11 +821,28 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
 
         Used for partially-specified point rows (e.g. X entered, Y pending).
         This updates command preview state without advancing ``active_export``.
+
+        A *complete* preview (a full ``Vec2``, as opposed to a ``PartialPoint``
+        with a component still missing) means the row already holds a valid,
+        ready-to-commit value that the app is silently sitting on — nothing
+        previously told the user this, so typing a second value straight
+        after (with no intervening Enter/Space) just appended onto the same
+        unconfirmed field instead of starting a new one. Surface that state
+        in the status bar the moment it's true, matching the "End vector —
+        12.5<34°" live-readout precedent (see KNOWN_BUGS #9) rather than
+        leaving the prompt frozen on the export's bare label.
         """
         cmd = self.editor.active_command
         if isinstance(cmd, StatefulCommandBase):
             setattr(cmd, name, value)
             self._canvas.refresh()
+            if isinstance(value, Vec2) and cmd.active_export == name:
+                info = next((e for e in cmd.exports() if e.name == name), None)
+                label = info.label if info is not None else name
+                self.editor.status_message.emit(
+                    f"{label} set to {value.x:g},{value.y:g} — "
+                    "press Enter or Space to confirm before typing the next value"
+                )
 
     def _on_popup_header_submitted(self, text: str) -> None:
         """Parse a value typed into the panel header and set the active export."""
