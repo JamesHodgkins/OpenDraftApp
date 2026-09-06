@@ -1,0 +1,10 @@
+{
+  "draw_a_line": {
+    "step_count": 3,
+    "total_points": 13
+  },
+  "draw_circle_radius_5": {
+    "step_count": 3,
+    "total_points": 13
+  }
+}

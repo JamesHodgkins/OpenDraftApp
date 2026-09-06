@@ -1,6 +1,13 @@
 PySide6
 watchfiles
 
+# ai_user (automated AI-driven GUI tester) — optional, only needed to run a
+# live agent episode via `python -m ai_user.run`. Not required for the app
+# itself or for the harness's own unit tests. Install whichever provider(s)
+# you have a key for; only the one selected via --provider is imported.
+anthropic>=0.75   # --provider claude (default)
+mistralai>=1.0    # --provider mistral
+
 # Testing
 pytest>=8.0
 pytest-qt>=4.4
