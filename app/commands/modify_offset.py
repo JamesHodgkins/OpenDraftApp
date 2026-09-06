@@ -4,15 +4,27 @@ from __future__ import annotations
 import copy
 import math
 import uuid
-from typing import List, Optional
+from typing import List
 
 from app.editor import command
-from app.editor.base_command import CommandBase
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.entities import BaseEntity, Vec2
 from app.entities import LineEntity, CircleEntity, ArcEntity, PolylineEntity
 from app.commands.modify_helpers import (
-    _collect_selected, _copy_style, _ReplaceEntitiesUndoCommand,
+    _collect_selected, _ReplaceEntitiesUndoCommand,
 )
+
+_MODE_BOTH = "both"
+_MODE_PICK_SIDE = "pick side"
+
+
+def _normalize_mode(value: str | None) -> str:
+    token = (value or "").strip().lower()
+    if token in {"b", _MODE_BOTH}:
+        return _MODE_BOTH
+    if token in {"p", "pick", "side", _MODE_PICK_SIDE}:
+        return _MODE_PICK_SIDE
+    return token
 
 
 def _offset_line(ent: LineEntity, distance: float) -> List[BaseEntity]:
@@ -62,9 +74,12 @@ def _offset_polyline(ent: PolylineEntity, distance: float) -> List[BaseEntity]:
 
     # Compute per-segment normals
     normals = []
-    for i in range(len(pts) - 1):
-        dx = pts[i + 1].x - pts[i].x
-        dy = pts[i + 1].y - pts[i].y
+    segment_count = len(pts) if ent.closed else len(pts) - 1
+    for i in range(segment_count):
+        p1 = pts[i]
+        p2 = pts[(i + 1) % len(pts)]
+        dx = p2.x - p1.x
+        dy = p2.y - p1.y
         length = math.hypot(dx, dy)
         if length < 1e-12:
             normals.append((0.0, 0.0))
@@ -74,7 +89,18 @@ def _offset_polyline(ent: PolylineEntity, distance: float) -> List[BaseEntity]:
     # Offset each vertex by averaging adjacent segment normals
     new_pts: List[Vec2] = []
     for i, pt in enumerate(pts):
-        if i == 0:
+        if ent.closed:
+            n1 = normals[i - 1]
+            n2 = normals[i]
+            nx = (n1[0] + n2[0]) / 2
+            ny = (n1[1] + n2[1]) / 2
+            mag = math.hypot(nx, ny)
+            if mag > 1e-12:
+                dot = n1[0] * n2[0] + n1[1] * n2[1]
+                miter = 1.0 / max(0.01, (1.0 + dot) / 2) ** 0.5
+                nx = nx / mag * miter
+                ny = ny / mag * miter
+        elif i == 0:
             nx, ny = normals[0]
         elif i == len(pts) - 1:
             nx, ny = normals[-1]
@@ -133,50 +159,169 @@ def _signed_side(ent: BaseEntity, pt: Vec2) -> float:
     return 0.0
 
 
+def _distance_to_entity(ent: BaseEntity, pt: Vec2) -> float | None:
+    nearest_snap = getattr(ent, "nearest_snap", None)
+    if not callable(nearest_snap):
+        return None
+    snap = nearest_snap(pt)
+    position = getattr(snap, "point", None)
+    if not isinstance(position, Vec2):
+        return None
+    return math.hypot(pt.x - position.x, pt.y - position.y)
+
+
 @command("offsetCommand")
-class OffsetCommand(CommandBase):
+class OffsetCommand(StatefulCommandBase):
     """Offset selected entities by a given distance."""
 
-    def execute(self) -> None:
+    distance = export(None, label="Distance", input_kind="length")
+    mode = export(None, label="Mode", input_kind="choice")
+    side_point = export(None, label="Side point", input_kind="point")
+
+    def __init__(self, editor) -> None:
+        super().__init__(editor)
+        self._supported: list[BaseEntity] = []
+
+    def start(self) -> bool | None:
         entities = _collect_selected(self.editor)
-        supported = [e for e in entities
-                     if isinstance(e, (LineEntity, CircleEntity, ArcEntity, PolylineEntity))]
-
-        if not supported:
+        self._supported = [
+            entity
+            for entity in entities
+            if isinstance(entity, (LineEntity, CircleEntity, ArcEntity, PolylineEntity))
+        ]
+        if not self._supported:
             self.editor.status_message.emit(
-                "Offset: select lines, arcs, circles or polylines first, then run Offset")
+                "Offset: select lines, arcs, circles or polylines first, then run Offset"
+            )
+            return False
+        self.editor.suppress_osnap = True
+        self.begin(active_export="distance", reset=("distance", "mode", "side_point"))
+        return None
+
+    def handle_choice_click(self, name: str, pt: Vec2) -> bool:
+        """Let a viewport click on the "both/pick side" step mean "this side".
+
+        Distance can be set by clicking (KNOWN_BUGS-style measured-distance
+        support, see ``value_from_point``), so a user naturally expects the
+        very next click to finish the command by indicating a side — not to
+        be silently ignored while the command waits for a typed "B"/"P".
+        Clicking here is unambiguous: only "pick side" needs a location at
+        all, so treat the click as choosing that mode *and* supplying this
+        point as ``side_point`` in one gesture.
+        """
+        if name != "mode":
+            return False
+        self.editor._stateful_set_and_advance(self, "mode", _MODE_PICK_SIDE)
+        self.editor._stateful_set_and_advance(self, "side_point", pt)
+        return True
+
+    def value_from_point(self, name: str, pt: Vec2):
+        if name != "distance":
+            return None
+        measured = self._measure_distance(pt)
+        return measured if measured is not None and measured >= 1e-9 else None
+
+    def _measure_distance(self, pt: Vec2) -> float | None:
+        distances = [
+            distance
+            for entity in self._supported
+            if (distance := _distance_to_entity(entity, pt)) is not None
+        ]
+        return min(distances) if distances else None
+
+    def reject_point(self, name: str, pt: Vec2) -> bool:
+        if name != "distance":
+            return False
+        measured = self._measure_distance(pt)
+        if measured is not None and measured < 1e-9:
+            # A click landing on (or a hair from) the geometry itself measures
+            # a ~0 distance. Silently accepting that used to leave the command
+            # stuck forever: `all_exports_set()` requires `distance > 0`, so
+            # auto-commit would never fire and no status message ever
+            # explained why nothing happened no matter which side was picked
+            # afterwards. Veto the click outright — falling through to the
+            # generic "length" handling would silently substitute a bogus
+            # distance-from-origin instead.
+            self.editor.status_message.emit(
+                "Offset: click farther from the selected geometry to set a distance"
+            )
+            return True
+        return False
+
+    def advance_active_export(self) -> None:
+        if self.active_export == "distance" and self.number_value("distance") is not None:
+            self.active_export = "mode"
+            return
+        if self.active_export == "mode":
+            mode = _normalize_mode(self.string_value("mode"))
+            self.active_export = "" if mode == _MODE_BOTH else "side_point"
+            return
+        if self.active_export == "side_point" and self.point_value("side_point") is not None:
+            self.active_export = ""
+
+    def all_exports_set(self) -> bool:
+        distance = self.number_value("distance")
+        mode = _normalize_mode(self.string_value("mode"))
+        if distance is None or distance <= 0 or self.active_export:
+            return False
+        if mode == _MODE_BOTH:
+            return True
+        if mode == _MODE_PICK_SIDE:
+            return self.point_value("side_point") is not None
+        return False
+
+    def update(self) -> None:
+        self.editor._choice_options = ["B", "P"] if self.active_export == "mode" else []
+
+        distance = self.number_value("distance")
+        if self.active_export == "side_point" and distance is not None and distance > 0:
+            def _preview(mouse: Vec2) -> list[BaseEntity]:
+                preview_entities: list[BaseEntity] = []
+                for entity in self._supported:
+                    sign = 1.0 if _signed_side(entity, mouse) >= 0 else -1.0
+                    preview_entities.extend(_offset_entity(entity, sign * distance))
+                return preview_entities
+
+            self.editor.set_dynamic(_preview)
             return
 
-        distance = self.editor.get_length("Offset: enter offset distance")
-        if distance <= 0:
+        self.editor.clear_dynamic()
+
+    def commit(self) -> bool | None:
+        distance = self.number_value("distance")
+        mode = _normalize_mode(self.string_value("mode"))
+        side_pt = self.point_value("side_point")
+        if distance is None or distance <= 0:
             self.editor.status_message.emit("Offset: distance must be positive")
-            return
-
-        mode = self.editor.get_choice(
-            "Offset: both sides, or pick a side?", ["both", "pick side"])
-
-        if mode == "pick side":
-            side_pt = self.editor.get_point("Offset: click to indicate which side")
+            return False
+        if mode not in {_MODE_BOTH, _MODE_PICK_SIDE}:
+            self.editor.status_message.emit("Offset: choose both sides or pick side")
+            return False
+        if mode == _MODE_PICK_SIDE and side_pt is None:
+            self.editor.status_message.emit("Offset: click to indicate which side")
+            return False
 
         doc = self.editor.document
-        added: List[BaseEntity] = []
-
-        for ent in supported:
-            if mode == "both":
+        added: list[BaseEntity] = []
+        for entity in self._supported:
+            if mode == _MODE_BOTH:
                 distances = [distance, -distance]
             else:
-                sign = 1.0 if _signed_side(ent, side_pt) >= 0 else -1.0
+                assert side_pt is not None
+                sign = 1.0 if _signed_side(entity, side_pt) >= 0 else -1.0
                 distances = [sign * distance]
 
-            for d in distances:
-                for new_ent in _offset_entity(ent, d):
-                    doc.add_entity(new_ent)
-                    self.editor.entity_added.emit(new_ent)
-                    added.append(new_ent)
+            for amount in distances:
+                for new_entity in _offset_entity(entity, amount):
+                    doc.add_entity(new_entity)
+                    self.editor.entity_added.emit(new_entity)
+                    added.append(new_entity)
 
-        if added:
-            self.editor.push_undo_command(
-                _ReplaceEntitiesUndoCommand(doc, [], [], added, "Offset"))
-            self.editor.notify_document()
-        else:
+        if not added:
             self.editor.status_message.emit("Offset: no valid results (distance too large?)")
+            return False
+
+        self.editor.push_undo_command(
+            _ReplaceEntitiesUndoCommand(doc, [], [], added, "Offset")
+        )
+        self.editor.notify_document()

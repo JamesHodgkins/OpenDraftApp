@@ -101,6 +101,7 @@ class Colors(NamedTuple):
     # Panel / tab backgrounds
     BACKGROUND_DARK: str
     BACKGROUND_LIGHT: str
+    SURFACE_DARKEST: str      # deepest chrome tone (status bar, tab-bar strip)
 
     # Hover / pressed overlays
     HOVER_DARK: str
@@ -135,6 +136,7 @@ class Colors(NamedTuple):
 COLORS = Colors(
     BACKGROUND_DARK="#2D2D2D",
     BACKGROUND_LIGHT="#2D2D2D",
+    SURFACE_DARKEST="#1e1e1e",
     HOVER_DARK="#4A4A4A",
     HOVER_LIGHT="#4A4A4A",
     PRESSED_DARK="rgba(255, 255, 255, 0.12)",

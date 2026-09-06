@@ -223,6 +223,11 @@ class Editor(QObject):
     entity_removed    = Signal(str)    # entity id
     document_changed  = Signal()       # generic redraw trigger
     undo_state_changed = Signal()      # undo/redo availability changed
+    vector_input_style_changed = Signal(str)  # new style name — Left/Right cycled it
+
+    # Cycle order for a vector-kind row's placeholder/indicative format:
+    # relative (dx,dy) → absolute (#x,y) → polar (distance<angle).
+    VECTOR_INPUT_STYLES: tuple[str, ...] = ("relative", "absolute", "polar")
 
     def __init__(
         self,
@@ -255,6 +260,16 @@ class Editor(QObject):
         self.suppress_osnap: bool = False
         # When True, the canvas will not show the dynamic input widget.
         self.suppress_dynamic_input: bool = False
+        # Set for the remainder of the current synchronous call stack whenever
+        # a manually-typed row value is delivered via set_stateful_property().
+        # A canvas click's focus-out commits the row's pending text (via
+        # QLineEdit.editingFinished) *before* CADCanvas.mousePressEvent runs
+        # its own point-delivery — without this guard that click would then
+        # immediately overwrite the value the user just typed with the mouse
+        # position. mousePressEvent consumes (clears) this flag and skips
+        # delivering its own point when it is set, so a typed value always
+        # wins over the click that happened to also carry focus away from it.
+        self._suppress_next_click_point: bool = False
 
         # Last started command action-name, used by UI affordances such as
         # "Repeat: <command>" in the canvas context menu.
@@ -277,6 +292,12 @@ class Editor(QObject):
         # :meth:`StatefulCommandBase.seed_from_previous`).
         self.auto_complete_enabled: bool = True
         self.repeat_command_enabled: bool = True
+
+        # Which textual style a vector-kind command row (e.g. Line's "End
+        # vector") hints as its placeholder and formats its live-indicative
+        # readout in. Cycled with Left/Right on an empty row and remembered
+        # for the rest of the session — see VECTOR_INPUT_STYLES.
+        self.vector_input_style: str = self.VECTOR_INPUT_STYLES[0]
 
         # Selection set — tracks currently selected entity IDs.
         self.selection = SelectionSet(parent=self)
@@ -489,9 +510,12 @@ class Editor(QObject):
         prev = self._last_committed_cmd
         self._last_committed_cmd = None
         self.command_started.emit(name)
-        self._set_input_mode("stateful")
         try:
-            cmd.start()
+            started = cmd.start()
+            self._set_stateful_input_mode(cmd)
+            if started is False:
+                self._finish_stateful(cmd)
+                return
             if prev is not None and prev is not cmd:
                 try:
                     cmd.seed_from_previous(prev)
@@ -503,7 +527,11 @@ class Editor(QObject):
                     val = getattr(cmd, info.name, None)
                     if val is not None:
                         self.stateful_value_changed.emit(info.name, val)
-                self.stateful_active_export_changed.emit(cmd.active_export)
+                self._set_stateful_input_mode(cmd)
+            # Always emit so the command bar placeholder updates to the
+            # active export label (e.g. "Center…") on every fresh start.
+            self.stateful_active_export_changed.emit(cmd.active_export)
+            self._emit_stateful_prompt(cmd)
         except Exception as exc:
             self.status_message.emit(f"Command error: {exc}")
             import traceback
@@ -530,6 +558,14 @@ class Editor(QObject):
                 return
             if cmd._is_committed:
                 return
+            if (
+                not cmd.all_exports_set()
+                and self._stateful_active_input_kind(cmd) == "choice"
+                and cmd.active_export
+                and getattr(cmd, cmd.active_export, None) is None
+                and self._choice_options
+            ):
+                self._stateful_set_and_advance(cmd, cmd.active_export, self._choice_options[0])
             cmd._is_committed = True
             keep_running = False
             try:
@@ -547,6 +583,7 @@ class Editor(QObject):
                         getattr(cmd, info.name, None),
                     )
                 self.stateful_active_export_changed.emit(cmd.active_export)
+                self._emit_stateful_prompt(cmd)
                 return
 
             self._last_committed_cmd = cmd
@@ -586,11 +623,29 @@ class Editor(QObject):
         """
         if not name:
             return
+        point_like_kinds = {"point", "vector", "length", "angle"}
+        edited_kind = next(
+            (info.input_kind for info in cmd.exports() if info.name == name),
+            "",
+        )
+        if edited_kind and edited_kind not in point_like_kinds:
+            self._suppress_next_click_point = False
         setattr(cmd, name, value)
         self.stateful_value_changed.emit(name, value)
         cmd.advance_active_export()
+        self._set_stateful_input_mode(cmd)
         self.stateful_active_export_changed.emit(cmd.active_export)
+        self._emit_stateful_prompt(cmd)
         self._maybe_auto_commit(cmd)
+
+    def _set_stateful_input_mode(self, cmd: StatefulCommandBase) -> None:
+        """Mirror the active stateful export kind into ``input_mode``."""
+        active = cmd.active_export
+        if not active:
+            self._set_input_mode("none")
+            return
+        kind = self._stateful_active_input_kind(cmd)
+        self._set_input_mode("point" if kind == "vector" else kind)
 
     def _stateful_active_input_kind(self, cmd: StatefulCommandBase) -> str:
         """Return the input_kind of the command's active export.
@@ -604,6 +659,42 @@ class Editor(QObject):
             if info.name == active:
                 return info.input_kind
         return "point"
+
+    def _emit_stateful_prompt(self, cmd: StatefulCommandBase) -> None:
+        """Show the active export's label as a status-bar prompt.
+
+        Every stateful command's exported properties already carry a
+        human-readable ``label`` (e.g. Circle's "Center" / "Radius") — this
+        mirrors whichever one is currently active into the bottom-left
+        status label, exactly like the older blocking ``get_point`` /
+        ``get_length`` / etc. prompts did for worker-thread commands. A
+        ``choice`` export appends its option list (e.g. "Keep originals?
+        (Y/N)") since those aren't self-explanatory from the label alone.
+        """
+        active = cmd.active_export
+        if not active:
+            return
+        info = next((e for e in cmd.exports() if e.name == active), None)
+        if info is None:
+            return
+        prompt = info.label
+        if info.input_kind == "choice" and self._choice_options:
+            prompt = f"{prompt} ({'/'.join(self._choice_options)})"
+        self.status_message.emit(prompt)
+
+    def cycle_vector_input_style(self, direction: int) -> str:
+        """Advance ``vector_input_style`` by *direction* (±1) and return it.
+
+        Wraps around ``VECTOR_INPUT_STYLES``. The choice is a session-wide
+        preference (not per-command/per-row) so switching once — e.g. while
+        drawing a line — carries over to every other vector-kind row (Move's
+        displacement, Scale's reference vector, ...).
+        """
+        styles = self.VECTOR_INPUT_STYLES
+        idx = styles.index(self.vector_input_style) if self.vector_input_style in styles else 0
+        self.vector_input_style = styles[(idx + direction) % len(styles)]
+        self.vector_input_style_changed.emit(self.vector_input_style)
+        return self.vector_input_style
 
     def cancel_command(self) -> None:
         """Cancel the currently active stateful command."""
@@ -621,9 +712,11 @@ class Editor(QObject):
         """Clean up after a stateful command ends (commit or cancel)."""
         self._active_command = None
         self._dynamic_callback = None
+        self.clear_highlight()
         self.snap_from_point = None
         self.suppress_osnap = False
         self.suppress_dynamic_input = False
+        self._choice_options = []
         self._command_option_labels = []
         self._set_input_mode("none")
         self.status_message.emit("")
@@ -640,6 +733,21 @@ class Editor(QObject):
     # ---------------------------------------------------------- input providers
     # Called by the UI (canvas mouse clicks, dialog boxes, etc.)
 
+    def consume_click_point_suppressed(self) -> bool:
+        """Return and clear whether the next canvas click point should be dropped.
+
+        Call this from the canvas's mouse-press handler *before* computing or
+        delivering a click point. A manually-typed row value that reaches the
+        editor via ``set_stateful_property`` because a click just carried
+        focus away from its input (rather than an explicit Enter/Space) sets
+        this for the remainder of that same synchronous gesture — the click
+        that triggered the commit must not then also overwrite the value it
+        just delivered with the raw mouse position. See KNOWN_BUGS.
+        """
+        suppressed = self._suppress_next_click_point
+        self._suppress_next_click_point = False
+        return suppressed
+
     def provide_point(self, pt: Vec2) -> None:
         """Deliver a world-space point to the currently waiting command.
 
@@ -652,7 +760,16 @@ class Editor(QObject):
             kind = self._stateful_active_input_kind(cmd)
             if not name:
                 return
-            if kind == "point":
+            custom_value_from_point = getattr(cmd, "value_from_point", None)
+            custom_value = None
+            if callable(custom_value_from_point):
+                custom_value = custom_value_from_point(name, pt)
+            reject_point = getattr(cmd, "reject_point", None)
+            if custom_value is None and callable(reject_point) and reject_point(name, pt):
+                return
+            if custom_value is not None:
+                value = custom_value
+            elif kind == "point":
                 value: Any = pt
             elif kind == "vector":
                 base = self.snap_from_point or Vec2(0, 0)
@@ -665,6 +782,19 @@ class Editor(QObject):
                 import math
                 center = self.snap_from_point or Vec2(0, 0)
                 value = math.degrees(math.atan2(pt.y - center.y, pt.x - center.x))
+            elif kind == "choice":
+                # A canvas click can't answer a choice prompt by itself
+                # (KNOWN_BUGS #6) — a command may opt in to giving the click
+                # a concrete meaning anyway (e.g. Offset treats "click a
+                # side" as shorthand for "pick side" + that side point).
+                handle_choice_click = getattr(cmd, "handle_choice_click", None)
+                if callable(handle_choice_click) and handle_choice_click(name, pt):
+                    return
+                # Otherwise the click can't answer this prompt — point the
+                # user at the options instead of silently swallowing it.
+                options = "/".join(self._choice_options) or "an option"
+                self.status_message.emit(f"Type {options} (or Space for the default) to continue.")
+                return
             else:
                 return
             self._stateful_set_and_advance(cmd, name, value)
@@ -702,7 +832,7 @@ class Editor(QObject):
         """Deliver a string value to the currently waiting command."""
         cmd = self._active_command
         if isinstance(cmd, StatefulCommandBase):
-            if self._stateful_active_input_kind(cmd) == "string":
+            if self._stateful_active_input_kind(cmd) in ("string", "choice"):
                 self._stateful_set_and_advance(cmd, cmd.active_export, value)
             return
         if self._input_mode != "string":
@@ -760,10 +890,55 @@ class Editor(QObject):
         cmd = self._active_command
         if not isinstance(cmd, StatefulCommandBase):
             return
+        # A row-edit commit reaching here via a QLineEdit focus-out (rather
+        # than the user pressing Enter/Space in the row) means some other
+        # widget is about to claim focus in this same gesture — most notably
+        # a canvas click, whose mousePressEvent runs immediately after this
+        # returns (Qt dispatches the focus-out synchronously as part of that
+        # same click, before mousePressEvent's override even starts). Guard
+        # that click from clobbering point-like values just typed, while
+        # still allowing scalar/choice values to flow naturally into a
+        # follow-up viewport click (for example Offset: P, then pick side).
+        #
+        # This arms speculatively, since nothing here can tell a focus-out
+        # apart from a deliberate Enter/Space commit with no click involved
+        # at all — so it must not linger waiting for whatever click happens
+        # to come along next (KNOWN_BUGS #13: typing a value and pressing
+        # Enter armed this flag, then silently ate the very next, entirely
+        # unrelated viewport click — e.g. Offset's side-pick click after
+        # typing its distance). A same-gesture click's point delivery always
+        # runs synchronously within this same call stack (mousePressEvent
+        # calls set_stateful_property via the focus-out, then delivers its
+        # own point before returning), so clearing the flag on the next
+        # event-loop tick discards it before an unrelated later click can
+        # wrongly consume it, while a genuine same-click consumption already
+        # happened by then.
+        point_like_kinds = {"point", "vector", "length", "angle"}
+        edited_kind = next(
+            (info.input_kind for info in cmd.exports() if info.name == name),
+            "",
+        )
+        should_suppress = edited_kind in point_like_kinds
+        self._suppress_next_click_point = should_suppress
+        if should_suppress:
+            QTimer.singleShot(0, self._clear_stale_click_suppression)
         self._stateful_set_and_advance(cmd, name, value)
+
+    def _clear_stale_click_suppression(self) -> None:
+        """Drop a click-suppression flag that outlived the gesture that armed it.
+
+        See :meth:`set_stateful_property` — the flag is armed speculatively
+        and must not survive past the event-loop tick it was armed in.
+        """
+        self._suppress_next_click_point = False
 
     def provide_choice(self, value: str) -> None:
         """Deliver a choice value to the currently waiting command."""
+        cmd = self._active_command
+        if isinstance(cmd, StatefulCommandBase):
+            if self._stateful_active_input_kind(cmd) == "choice":
+                self._stateful_set_and_advance(cmd, cmd.active_export, value)
+            return
         if self._input_mode != "choice":
             return
         # Match case-insensitively, return the original option string
@@ -778,9 +953,35 @@ class Editor(QObject):
         This is independent of ``input_mode`` so commands can expose options
         without entering the editor's "choice" input mode.
         """
+        token = (value or "").strip()
+        if not token:
+            return False
+
+        cmd = self._active_command
+        if isinstance(cmd, StatefulCommandBase):
+            resolved: str | None = None
+            keyed = self._command_option_keys.get(token.lower())
+            if keyed:
+                resolved = keyed
+            else:
+                for opt in self._command_option_labels:
+                    if opt.lower() == token.lower():
+                        resolved = opt
+                        break
+
+            handler = getattr(cmd, "handle_command_option", None)
+            if resolved is not None and callable(handler):
+                return bool(handler(resolved))
+
+            if self._stateful_active_input_kind(cmd) != "command_option":
+                return False
+            if resolved is None:
+                return False
+            self._stateful_set_and_advance(cmd, cmd.active_export, resolved)
+            return True
+
         if not self.is_running:
             return False
-        token = (value or "").strip()
         if not token:
             return False
 
@@ -996,6 +1197,7 @@ class Editor(QObject):
         thread-safe (only capture immutable data or copies).
         """
         self._dynamic_callback = fn
+        self.document_changed.emit()
 
     def clear_dynamic(self) -> None:
         """Remove the active preview callback and refresh the canvas."""

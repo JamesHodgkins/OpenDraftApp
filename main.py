@@ -44,7 +44,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Could not load stylesheet: {e}")
 
     window = MainWindow()
-    window.show()
+    window.show_with_restored_state()
     return app.exec()
 
 

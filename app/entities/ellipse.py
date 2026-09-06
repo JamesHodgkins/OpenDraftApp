@@ -203,7 +203,7 @@ class EllipseEntity(BaseEntity):
             grips.append(GripPoint(self.point_at_param(self.end_param), self.id, 4, GripType.ENDPOINT))
         return grips
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         if index == 0:
             self.center = new_pos
         elif index == 1:

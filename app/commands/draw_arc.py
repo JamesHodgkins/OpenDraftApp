@@ -133,6 +133,19 @@ class DrawArcStartEndRadiusCommand(StatefulCommandBase):
             reset=("start_point", "end_point", "radius"),
         )
 
+    def live_preview_value(self, name, cursor):
+        if name == "radius":
+            start = self.point_value("start_point")
+            end = self.point_value("end_point")
+            if start is None or end is None:
+                return None
+            # Smallest valid radius is half the chord; use whichever is
+            # larger so the readout is always a value the user could commit.
+            chord_half = math.hypot(end.x - start.x, end.y - start.y) / 2
+            probe = math.hypot(cursor.x - start.x, cursor.y - start.y)
+            return max(chord_half, probe)
+        return super().live_preview_value(name, cursor)
+
     def update(self) -> None:
         start = self.point_value("start_point")
         end = self.point_value("end_point")

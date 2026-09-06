@@ -110,8 +110,15 @@ def update_active_grip_drag(
     osnap_master: bool,
     scale: float,
     grip_entity_snapshots: dict[str, Any],
+    constrain: bool = False,
 ) -> tuple[Optional[SnapResult], Vec2, dict[str, Any]]:
-    """Update grip drag preview state for the current cursor position."""
+    """Update grip drag preview state for the current cursor position.
+
+    ``constrain`` mirrors AutoCAD's Ctrl-while-dragging-a-grip behaviour
+    (e.g. held while dragging): entities that support it keep their
+    existing geometric relationship (a line's direction, an arc's radius)
+    and only adjust the one degree of freedom implied by the grip.
+    """
     if document is not None and osnap_master:
         snap_entities = [
             ent for ent in document.entities
@@ -135,7 +142,7 @@ def update_active_grip_drag(
                 continue
             ecopy = copy.deepcopy(ent)
             for gp in linked_by_id[ent.id]:
-                ecopy.move_grip(gp.index, display_grip)
+                ecopy.move_grip(gp.index, display_grip, constrain=constrain)
             updated_snapshots[ent.id] = ecopy
 
     return snap_result, display_grip, updated_snapshots
@@ -149,6 +156,7 @@ def commit_active_grip_edit(
     final_pos: Vec2,
     before_snapshots: list[Any],
     editor,
+    constrain: bool = False,
 ) -> bool:
     """Commit active grip edit to document and push undo when possible."""
     if document is None:
@@ -167,7 +175,7 @@ def commit_active_grip_edit(
         if ent.id not in linked_by_id:
             continue
         for gp in linked_by_id[ent.id]:
-            ent.move_grip(gp.index, final_pos)
+            ent.move_grip(gp.index, final_pos, constrain=constrain)
         after_snapshots.append(copy.deepcopy(ent))
         any_applied = True
 

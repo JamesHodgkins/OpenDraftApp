@@ -351,6 +351,34 @@ class StatefulCommandBase(CommandBase):
             return value
         return None
 
+    def live_preview_value(self, name: str, cursor: Vec2) -> Any:
+        """Return the value export *name* would take on right now, unset.
+
+        Drives the controller panel's indicative readout: while an export has
+        no committed value, its input row shows this as dim placeholder text
+        (freestyle drawing a circle shows the live radius until the user
+        types one, for example) instead of sitting blank. Return ``None`` to
+        show no indicative readout for this export.
+
+        The default implementation covers the common cases automatically:
+        a ``"point"`` export previews as the raw cursor position. Everything
+        else (``"vector"``, ``"length"``, ``"angle"``, ...) has no sensible
+        command-agnostic default and returns ``None`` — override this method
+        to compute one from the command's own in-progress state (e.g. Circle
+        overrides it for ``radius`` as the distance from center to cursor).
+        Only called for an export that is not the current active export and
+        has no committed value; live-typed partial input for the active
+        row already has its own preview path.
+        """
+        info = next((e for e in self._exports if e.name == name), None)
+        if info is not None and info.input_kind == "point":
+            return cursor
+        if info is not None and info.input_kind == "choice":
+            options = getattr(self.editor, "_choice_options", None)
+            if options:
+                return options[0]
+        return None
+
     def set_snap_for_active(
         self,
         mapping: Mapping[str, Vec2 | None | Sequence[Vec2 | None]],
@@ -403,6 +431,42 @@ class StatefulCommandBase(CommandBase):
         """
         self.editor.clear_dynamic()
         self.editor.snap_from_point = None
+
+    def handle_choice_click(self, name: str, pt: Vec2) -> bool:
+        """Give a canvas click meaning while a ``"choice"`` export is active.
+
+        A click can't answer a Y/N-style prompt on its own (KNOWN_BUGS #6),
+        so :meth:`~app.editor.editor.Editor.provide_point` normally just
+        shows a "type B/P" hint and swallows the click. Override this to let
+        a click double as an implicit choice — for example ``OffsetCommand``
+        treats "click a side" as shorthand for choosing "pick side" *and*
+        supplying that side point in one gesture, matching how a user
+        naturally expects clicking in the viewport to drive the command to
+        completion. Return ``True`` once the click has been fully handled
+        (including advancing ``active_export`` / setting further exports as
+        needed); return ``False`` (the default) to fall back to the generic
+        hint.
+        """
+        return False
+
+    def reject_point(self, name: str, pt: Vec2) -> bool:
+        """Veto a canvas click for export *name* outright, no fallback.
+
+        :meth:`value_from_point` lets a command compute a custom value for a
+        click, but returning ``None`` from it just means "no opinion" —
+        :meth:`~app.editor.editor.Editor.provide_point` then falls back to
+        the export's generic ``input_kind`` handling (e.g. raw cursor
+        distance for a ``"length"`` export), which can be actively wrong
+        when the *reason* there's no custom value is that the click itself
+        is invalid input (for example ``OffsetCommand`` measuring a
+        degenerate ~0 distance from a click landing on the geometry itself —
+        falling back to distance-from-origin would silently substitute a
+        meaningless number for a click that should instead be a no-op).
+        Return ``True`` to drop the click entirely once you've already
+        surfaced feedback about it (e.g. a status message); return ``False``
+        (the default) to let normal handling proceed.
+        """
+        return False
 
     def seed_from_previous(self, prev: "StatefulCommandBase") -> None:
         """Called once after :meth:`start` when a Repeat-command run auto-launches.

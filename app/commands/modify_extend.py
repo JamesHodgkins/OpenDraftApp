@@ -5,7 +5,7 @@ import math
 from typing import List, Optional
 
 from app.editor import command
-from app.editor.base_command import CommandBase
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.entities import (
     BaseEntity, Vec2,
     LineEntity, CircleEntity, ArcEntity, RectangleEntity,
@@ -20,7 +20,7 @@ from app.geometry import (
 
 
 @command("extendCommand")
-class ExtendCommand(CommandBase):
+class ExtendCommand(StatefulCommandBase):
     """Extend line/arc endpoints to a selected boundary edge.
 
     Workflow:
@@ -29,46 +29,38 @@ class ExtendCommand(CommandBase):
     3. Repeat until Escape.
     """
 
-    def execute(self) -> None:
+    pick_point = export(None, label="Pick point", input_kind="point")
+
+    def __init__(self, editor) -> None:
+        super().__init__(editor)
+        self._boundary_ids: Optional[set[str]] = None
+
+    def start(self) -> None:
         self.editor.suppress_osnap = True
         self.editor.suppress_dynamic_input = True
-        try:
-            self._run()
-        finally:
-            self.editor.suppress_osnap = False
-            self.editor.suppress_dynamic_input = False
-            self.editor.clear_dynamic()
-            self.editor.clear_highlight()
-
-    def _run(self) -> None:
         doc = self.editor.document
         sel_ids = self.editor.selection.ids
-
         if sel_ids:
             boundaries = [e for e in doc.entities if e.id in sel_ids]
             self.editor.set_highlight(boundaries)
-            self.editor.status_message.emit(
-                f"Extend: {len(boundaries)} boundary edge(s) from selection (highlighted). "
-                "Click near an endpoint to extend (Escape to exit)")
+            self._boundary_ids = {e.id for e in boundaries}
         else:
-            # No preselection — all entities act as boundaries (no highlight).
-            boundaries = list(doc.entities)
-            self.editor.status_message.emit(
-                "Extend: click near the endpoint to extend (Escape to exit)")
+            self._boundary_ids = None
+        self.begin(active_export="pick_point", reset=("pick_point",))
 
+    def _get_boundaries(self, ents: List[BaseEntity]) -> List[BaseEntity]:
+        if self._boundary_ids is None:
+            return ents
+        return [e for e in ents if e.id in self._boundary_ids]
+
+    def update(self) -> None:
         tol = self.editor.settings.extend_target_tolerance
-        boundary_ids: Optional[set] = {e.id for e in boundaries} if sel_ids else None
 
-        def _get_boundaries(ents: List[BaseEntity]) -> List[BaseEntity]:
-            if boundary_ids is None:
-                return ents
-            return [e for e in ents if e.id in boundary_ids]
-
-        def _preview(mouse: Vec2) -> List[BaseEntity]:
+        def _preview(mouse: Vec2) -> list[BaseEntity]:
             ents = list(self.editor.document.entities)
-            bds = _get_boundaries(ents)
+            bds = self._get_boundaries(ents)
             target = _pick_entity(mouse, ents, tolerance=tol)
-            if target is None or (boundary_ids is not None and target.id in boundary_ids):
+            if target is None or (self._boundary_ids is not None and target.id in self._boundary_ids):
                 return []
             for boundary in bds:
                 result = _extend_entity(target, mouse, boundary, ents)
@@ -78,41 +70,53 @@ class ExtendCommand(CommandBase):
 
         self.editor.set_dynamic(_preview)
 
-        while True:
-            pick_pt = self.editor.get_point(
-                "Extend: click near the endpoint to extend (Escape to exit)")
+    def commit(self) -> bool:
+        pick_pt = self.point_value("pick_point")
+        if pick_pt is None:
+            self.editor.status_message.emit(
+                "Extend: click near the endpoint to extend (Escape to exit)"
+            )
+            return False
 
-            entities = list(doc.entities)
-            bds = _get_boundaries(entities)
-            target = _pick_entity(pick_pt, entities, tolerance=tol)
-            if target is None or (boundary_ids is not None and target.id in boundary_ids):
-                self.editor.status_message.emit("Extend: no entity at pick point")
-                continue
+        doc = self.editor.document
+        tol = self.editor.settings.extend_target_tolerance
+        entities = list(doc.entities)
+        bds = self._get_boundaries(entities)
+        target = _pick_entity(pick_pt, entities, tolerance=tol)
+        if target is None or (self._boundary_ids is not None and target.id in self._boundary_ids):
+            self.editor.status_message.emit("Extend: no entity at pick point")
+            self.pick_point = None
+            self.active_export = "pick_point"
+            return False
 
-            result = None
-            for boundary in bds:
-                result = _extend_entity(target, pick_pt, boundary, entities)
-                if result is not None:
-                    break
+        result = None
+        for boundary in bds:
+            result = _extend_entity(target, pick_pt, boundary, entities)
+            if result is not None:
+                break
 
-            if result is None:
-                self.editor.status_message.emit(
-                    "Extend: no intersection found with the boundary")
-                continue
+        if result is None:
+            self.editor.status_message.emit("Extend: no intersection found with the boundary")
+            self.pick_point = None
+            self.active_export = "pick_point"
+            return False
 
-            orig_idx = next(
-                (i for i, e in enumerate(doc.entities) if e.id == target.id), 0)
+        orig_idx = next((i for i, e in enumerate(doc.entities) if e.id == target.id), 0)
+        doc.remove_entity(target.id)
+        self.editor.entity_removed.emit(target.id)
+        doc.add_entity(result)
+        self.editor.entity_added.emit(result)
+        self.editor.push_undo_command(
+            _ReplaceEntitiesUndoCommand(doc, [target], [orig_idx], [result], "Extend")
+        )
+        self.editor.notify_document()
+        self.pick_point = None
+        self.active_export = "pick_point"
+        return False
 
-            doc.remove_entity(target.id)
-            self.editor.entity_removed.emit(target.id)
-            doc.add_entity(result)
-            self.editor.entity_added.emit(result)
-            self.editor.push_undo_command(
-                _ReplaceEntitiesUndoCommand(
-                    doc, [target], [orig_idx], [result], "Extend"))
-            self.editor.notify_document()
-
-
+    def cancel(self) -> None:
+        self.editor.clear_highlight()
+        super().cancel()
 def _pick_entity(pt: Vec2, entities: List[BaseEntity],
                  tolerance: float) -> Optional[BaseEntity]:
     best: Optional[BaseEntity] = None

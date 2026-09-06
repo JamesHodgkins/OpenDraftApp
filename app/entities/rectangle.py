@@ -226,7 +226,7 @@ class RectangleEntity(BaseEntity):
             grips.append(GripPoint(mid, self.id, 4 + j, GripType.MIDPOINT))
         return grips
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         if self.width <= 0.0 or self.height <= 0.0:
             # Degenerate; treat as moved center.
             self.center = new_pos

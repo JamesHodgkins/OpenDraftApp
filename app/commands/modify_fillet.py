@@ -12,7 +12,7 @@ import math
 from typing import List, Optional, Tuple
 
 from app.editor import command
-from app.editor.base_command import CommandBase
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.editor.undo import UndoCommand
 from app.entities import BaseEntity, Vec2, LineEntity, ArcEntity
 from app.commands.modify_helpers import _copy_style
@@ -143,35 +143,45 @@ class _FilletUndoCommand(UndoCommand):
 # ---------------------------------------------------------------------------
 
 @command("filletCommand")
-class FilletCommand(CommandBase):
+class FilletCommand(StatefulCommandBase):
     """Round a corner between two lines with a given radius."""
 
-    def execute(self) -> None:
+    radius = export(None, label="Radius", input_kind="float")
+    first_pick = export(None, label="First line pick", input_kind="point")
+    second_pick = export(None, label="Second line pick", input_kind="point")
+
+    def start(self) -> None:
         self.editor.suppress_dynamic_input = False
-        radius = self.editor.get_float("Fillet: enter radius (0 = sharp corner)")
-        if radius < 0:
+        self.editor.suppress_osnap = True
+        self.editor.suppress_dynamic_input = True
+        self.begin(
+            active_export="radius",
+            reset=("radius", "first_pick", "second_pick"),
+        )
+
+    def update(self) -> None:
+        self.editor.clear_dynamic()
+
+    def commit(self) -> None:
+        radius = self.number_value("radius")
+        if radius is None or radius < 0:
             self.editor.status_message.emit("Fillet: radius must be >= 0")
             return
 
-        self.editor.suppress_osnap = True
-        self.editor.suppress_dynamic_input = True
-        try:
-            self._run(radius)
-        finally:
-            self.editor.suppress_osnap = False
-            self.editor.suppress_dynamic_input = False
-
-    def _run(self, radius: float) -> None:
         tol = self.editor.settings.trim_pick_tolerance
         doc = self.editor.document
 
-        pick1 = self.editor.get_point(f"Fillet r={radius:.4g}: click first line")
+        pick1 = self.point_value("first_pick")
+        pick2 = self.point_value("second_pick")
+        if pick1 is None or pick2 is None:
+            self.editor.status_message.emit("Fillet: pick two lines")
+            return
+
         line1 = _nearest_line(pick1, list(doc.entities), tol)
         if line1 is None:
             self.editor.status_message.emit("Fillet: no line found at first pick")
             return
 
-        pick2 = self.editor.get_point(f"Fillet r={radius:.4g}: click second line")
         line2 = _nearest_line(pick2, list(doc.entities), tol)
         if line2 is None or line2.id == line1.id:
             self.editor.status_message.emit("Fillet: second line not found (pick a different line)")

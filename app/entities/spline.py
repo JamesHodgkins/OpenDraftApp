@@ -158,7 +158,7 @@ class SplineEntity(BaseEntity):
             grips.append(GripPoint(p, self.id, i, grip_type))
         return grips
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         if 0 <= index < len(self.points):
             self.points[index] = new_pos
 

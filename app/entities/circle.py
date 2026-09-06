@@ -96,7 +96,7 @@ class CircleEntity(BaseEntity):
             GripPoint(Vec2(cx, cy - r), self.id, 4, GripType.QUADRANT),
         ]
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         if index == 0:
             # Move entire circle
             self.center = new_pos

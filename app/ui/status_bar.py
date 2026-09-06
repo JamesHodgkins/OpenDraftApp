@@ -8,7 +8,7 @@ Provides three visual sections from left to right:
 2. **OSNAP toggles** — MAS (master on/off), END, MID, CEN, PER, NEA.
    Left-click toggles the individual snap type; right-click on any
    individual button opens a future settings flyout.
-3. **Tool toggles** — ORTHO, DM (Draftmate).  Left-click toggles,
+3. **Tool toggles** — ORTHO, GRID, DM (Draftmate).  Left-click toggles,
    right-click on DM opens the Draftmate settings dialog.
 4. **Coordinates** — ``X: … Y: …`` display (rightmost).
 
@@ -186,6 +186,9 @@ class StatusBarWidget(QWidget):
         self.btn_ortho = _ToggleLabel("ORTHO", on=False, tooltip="Ortho mode (F8)")
         root.addWidget(self.btn_ortho)
 
+        self.btn_grid = _ToggleLabel("GRID", on=True, tooltip="Show/hide viewport grid (F7)")
+        root.addWidget(self.btn_grid)
+
         self.btn_dm = _ToggleLabel("DM", on=False, tooltip="Draftmate — F10 toggle, right-click for settings")
         self.btn_dm.right_clicked.connect(self.draftmate_settings_requested.emit)
         root.addWidget(self.btn_dm)
@@ -222,6 +225,9 @@ class StatusBarWidget(QWidget):
 
     def set_ortho(self, on: bool) -> None:
         self.btn_ortho.on = on
+
+    def set_grid(self, on: bool) -> None:
+        self.btn_grid.on = on
 
     def update_coords(self, x: float, y: float) -> None:
         self.coord_label.setText(f"X: {x:.2f}  Y: {y:.2f}")

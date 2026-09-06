@@ -199,7 +199,7 @@ class TestAutoComplete:
         assert line.p1 == Vec2(2, 3)
         assert line.p2 == Vec2(7, 2)
 
-    def test_circle_radius_vector_property_commits_expected_radius(self, qtbot):
+    def test_circle_radius_length_property_commits_expected_radius(self, qtbot):
         ed = _make_editor(qtbot)
         ed.auto_complete_enabled = True
         ed.repeat_command_enabled = False
@@ -207,8 +207,8 @@ class TestAutoComplete:
         ed.run_command("circleCommand")
         ed.provide_point(Vec2(10, 10))
 
-        # Radius export is vector-kind and named "radius".
-        ed.set_stateful_property("radius", Vec2(3, 4))
+        # Radius export is length-kind — set it as a scalar.
+        ed.set_stateful_property("radius", 5.0)
 
         _wait_for(qtbot, lambda: any(
             isinstance(e, CircleEntity) for e in ed.document.entities

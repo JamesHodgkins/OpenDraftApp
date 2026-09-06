@@ -385,9 +385,15 @@ class BaseEntity:
         """
         return []
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         """Move grip *index* to *new_pos*, mutating the entity in place.
 
         Subclasses must override this to handle each grip index returned
         by ``grip_points()``.
+
+        ``constrain`` mirrors AutoCAD's Ctrl-while-dragging-a-grip behaviour:
+        when True, the entity should keep its existing geometric relationship
+        (e.g. a line's direction, an arc's radius) and only adjust the one
+        remaining degree of freedom implied by the grip being dragged.
+        Entities that have no meaningful constrained mode may ignore it.
         """

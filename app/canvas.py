@@ -7,7 +7,7 @@ scale rather than snapping between states.
 """
 
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QImage
+from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QImage, QCursor
 from PySide6.QtCore import Qt, QPoint, QPointF, Signal, Slot, QByteArray, QBuffer, QIODevice
 
 
@@ -105,6 +105,7 @@ class CADCanvas(QWidget):
     # so the status bar can stay in sync.
     orthoChanged = Signal(bool)
     draftmateChanged = Signal(bool)
+    gridChanged = Signal(bool)
     # emitted when the user types a printable character while the canvas
     # has focus — MainWindow forwards the text into the controller panel's
     # command input so keyboard-first typing always lands somewhere useful.
@@ -184,6 +185,9 @@ class CADCanvas(QWidget):
         # ---- Ortho mode -----------------------------------------------------
         self._ortho: bool = False
 
+        # ---- Grid visibility --------------------------------------------
+        self._grid_visible: bool = True
+
         # ---- Selection state ------------------------------------------------
         # Pixel threshold for click-to-select hit testing.
         self._pick_tolerance_px: float = _s.pick_tolerance_px
@@ -219,6 +223,10 @@ class CADCanvas(QWidget):
         self._grip_before_snapshots: List[object] = []
         # Mouse position in world coordinates during a grip drag.
         self._grip_drag_world: Optional[Vec2] = None
+        # Sticky "locked to existing path" toggle for the current grip drag
+        # (AutoCAD-style): each Ctrl press flips this, rather than requiring
+        # Ctrl to stay held down. Reset whenever a grip drag starts/ends.
+        self._grip_constrain_locked: bool = False
 
         # ---- Render cache (rubber band optimisation) -------------------------
         # Captured scene pixmap (grid + entities, no rubber band) reused during
@@ -334,6 +342,7 @@ class CADCanvas(QWidget):
                     final_pos=final_pos,
                     before_snapshots=self._grip_before_snapshots,
                     editor=self._editor,
+                    constrain=self._grip_constrain_locked,
                 )
                 # Reset grip state.
                 (
@@ -343,6 +352,7 @@ class CADCanvas(QWidget):
                     self._grip_drag_world,
                     self._linked_grips,
                 ) = cleared_active_grip_state()
+                self._grip_constrain_locked = False
                 self._snap_result = None
                 self.setCursor(Qt.CursorShape.CrossCursor)
                 self.update()
@@ -368,22 +378,55 @@ class CADCanvas(QWidget):
                 # suppress stale hover overlay that would otherwise remain at
                 # the entity's pre-commit position.
                 self._hovered_entity_id = None
+                self._grip_constrain_locked = False
                 self.setFocus()
                 return
 
-            if self._idle:
+            was_idle = self._idle
+            if was_idle:
                 # ---- Selection mode ----
                 self._sel_origin_screen = QPointF(posf)
                 self._sel_current_screen = QPointF(posf)
                 self._sel_origin_world = Vec2(world_pt.x(), world_pt.y())
                 self._sel_dragging = False  # will become True after threshold
+            elif self._editor is not None and self._editor.consume_click_point_suppressed():
+                # This click's own focus-out just committed a manually-typed
+                # row value (e.g. "100<45") to the active export via
+                # QLineEdit.editingFinished, which runs synchronously before
+                # this handler. Delivering the click as a point too would
+                # immediately overwrite that typed value with the raw mouse
+                # position — the typed value must win. See KNOWN_BUGS.
+                self._preview_entities = []
+                self._draftmate.clear()
+                self._draftmate_result = None
             else:
                 # ---- Command mode — emit world point for the active command ----
-                from_point = getattr(self._editor, "snap_from_point", None)
+                raw_click = Vec2(world_pt.x(), world_pt.y())
+                # Re-compute snap at the actual click position.  A mouseMoveEvent
+                # fired just before this press (due to cursor jitter during the
+                # click) can clear _snap_result even though the snap marker was
+                # visible to the user.  Snapping fresh here ensures a snap that
+                # was active at click time is honoured.
+                _, click_snap, click_draftmate, from_point = update_snap_and_draftmate(
+                    active_grip=self._active_grip,
+                    editor=self._editor,
+                    document=self._document,
+                    osnap_master=self._osnap_master,
+                    osnap_engine=self._osnap,
+                    draftmate_engine=self._draftmate,
+                    raw=raw_click,
+                    scale=self.scale,
+                    existing_snap_result=self._snap_result,
+                )
+                # Prefer the freshly-computed click-position snap; fall back to
+                # the cached snap result that was visually active just before the
+                # click.  Micro-movement during the button press should not drop
+                # a snap the user clearly intended to use.
+                effective_snap = click_snap if click_snap is not None else self._snap_result
                 pt = resolve_display_point(
-                    Vec2(world_pt.x(), world_pt.y()),
-                    self._snap_result,
-                    self._draftmate_result,
+                    raw_click,
+                    effective_snap,
+                    click_draftmate,
                     ortho=self._ortho,
                     from_point=from_point,
                 )
@@ -396,7 +439,15 @@ class CADCanvas(QWidget):
                 # stays clean between drawing steps.
                 self._draftmate.clear()
                 self._draftmate_result = None
-            self.setFocus()
+            # Only claim focus for the canvas itself in selection mode. A
+            # command-mode click just delivered a point to the active
+            # command, which (synchronously, inside pointSelected.emit
+            # above) already moved keyboard focus to the next controller-
+            # panel input row — grabbing it back here would silently undo
+            # that and strand the user's next keystrokes on the canvas
+            # instead of the input they can see is "active".
+            if was_idle:
+                self.setFocus()
             return
 
         # start panning with middle mouse button
@@ -422,6 +473,7 @@ class CADCanvas(QWidget):
                 osnap_master=self._osnap_master,
                 scale=self.scale,
                 grip_entity_snapshots=self._grip_entity_snapshots,
+                constrain=self._grip_constrain_locked,
             )
             self._grip_drag_world = display_grip
             self.update()
@@ -697,6 +749,12 @@ class CADCanvas(QWidget):
         self.orthoChanged.emit(on)
         self.update()
 
+    def _set_grid_visible(self, on: bool) -> None:
+        self._grid_visible = on
+        self.gridChanged.emit(on)
+        self._entity_cache = None
+        self.update()
+
     def _set_draftmate(self, on: bool) -> None:
         self._draftmate.settings.enabled = on
         if on:
@@ -719,6 +777,16 @@ class CADCanvas(QWidget):
                 self._grip_drag_world,
                 self._linked_grips,
             ) = cleared_active_grip_state()
+            self._grip_constrain_locked = False
+            # The entity render cache was rebuilt from the live drag preview
+            # (snapshot positions) on every frame while the grip was active.
+            # Now that the drag is cancelled the document itself never
+            # changed, but that stale pixmap is still sitting in the cache
+            # and none of _is_entity_cache_valid's checks catch the switch
+            # back to "draw the real document" — so force a rebuild or the
+            # dragged-looking entity lingers on screen until something else
+            # invalidates the cache (KNOWN_BUGS #5).
+            self._entity_cache = None
             self.update()
             return
 
@@ -739,7 +807,45 @@ class CADCanvas(QWidget):
             # Command is active: cancel the command but leave selection intact
             self.cancelRequested.emit()
 
+    def _refresh_active_grip_preview(self) -> None:
+        """Re-run the active grip drag update in place (no cursor movement).
+
+        Called when the path-lock toggle flips while a grip drag is in
+        progress so the constrained/free preview switches immediately
+        instead of waiting for the next mouse move.
+        """
+        if self._active_grip is None:
+            return
+        world_pt = self.screen_to_world(self.mapFromGlobal(QCursor.pos()))
+        raw = Vec2(world_pt.x(), world_pt.y())
+        self._snap_result, display_grip, self._grip_entity_snapshots = update_active_grip_drag(
+            raw,
+            document=self._document,
+            active_grip=self._active_grip,
+            linked_grips=self._linked_grips,
+            osnap_engine=self._osnap,
+            osnap_master=self._osnap_master,
+            scale=self.scale,
+            grip_entity_snapshots=self._grip_entity_snapshots,
+            constrain=self._grip_constrain_locked,
+        )
+        self._grip_drag_world = display_grip
+        self.update()
+
     def keyPressEvent(self, event) -> None:  # noqa: N802
+        # --- Ctrl: toggle "lock to existing path" for the active grip drag -
+        # A sticky toggle rather than a held modifier: press Ctrl once to
+        # lock the grip to the entity's existing line/arc, press again to
+        # unlock — mirrors how ortho/osnap toggles behave in this app.
+        if (
+            event.key() in (Qt.Key.Key_Control, Qt.Key.Key_Meta)
+            and not event.isAutoRepeat()
+            and self._active_grip is not None
+        ):
+            self._grip_constrain_locked = not self._grip_constrain_locked
+            self._refresh_active_grip_preview()
+            return
+
         if event.key() == Qt.Key.Key_Escape:
             try:
                 self.escapePressed.emit()
@@ -755,6 +861,11 @@ class CADCanvas(QWidget):
         # --- F8: toggle Ortho mode ----------------------------------------
         if event.key() == Qt.Key.Key_F8:
             self._set_ortho(not self._ortho)
+            return
+
+        # --- F7: toggle grid visibility -------------------------------
+        if event.key() == Qt.Key.Key_F7:
+            self._set_grid_visible(not self._grid_visible)
             return
 
         # --- Delete key: remove selected entities when idle --------------
@@ -1188,7 +1299,9 @@ class CADCanvas(QWidget):
         return build_overlay_pen(base_pen, is_selected=is_sel, is_hovered=is_hover)
 
     def _draw_grid(self, painter: QPainter) -> None:
-        """Delegate grid rendering to GridRenderer."""
+        """Delegate grid rendering to GridRenderer (skipped when hidden)."""
+        if not self._grid_visible:
+            return
         self._grid.draw(painter, self.width(), self.height())
 
     # ------------------------------------------------------------------

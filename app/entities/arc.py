@@ -194,22 +194,26 @@ class ArcEntity(BaseEntity):
                       self.id, 3, GripType.MIDPOINT),
         ]
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         if index == 0:
             # Centre grip — translate entire arc
             self.center = new_pos
         elif index == 1:
-            # Move start endpoint — adjust start angle and radius
+            # Move start endpoint — adjust start angle, and (unless
+            # Ctrl-constrained) radius too.
             self.start_angle = math.atan2(
                 new_pos.y - self.center.y, new_pos.x - self.center.x)
-            self.radius = max(1e-6, math.hypot(
-                new_pos.x - self.center.x, new_pos.y - self.center.y))
+            if not constrain:
+                self.radius = max(1e-6, math.hypot(
+                    new_pos.x - self.center.x, new_pos.y - self.center.y))
         elif index == 2:
-            # Move end endpoint — adjust end angle and radius
+            # Move end endpoint — adjust end angle, and (unless
+            # Ctrl-constrained) radius too.
             self.end_angle = math.atan2(
                 new_pos.y - self.center.y, new_pos.x - self.center.x)
-            self.radius = max(1e-6, math.hypot(
-                new_pos.x - self.center.x, new_pos.y - self.center.y))
+            if not constrain:
+                self.radius = max(1e-6, math.hypot(
+                    new_pos.x - self.center.x, new_pos.y - self.center.y))
         elif index == 3:
             # Midpoint grip — adjust radius, keep centre and angles fixed
             self.radius = max(1e-6, math.hypot(

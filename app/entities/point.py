@@ -66,7 +66,7 @@ class PointEntity(BaseEntity):
         from app.entities.base import GripPoint, GripType
         return [GripPoint(self.position, self.id, 0, GripType.CENTER)]
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         if index == 0:
             self.position = new_pos
 

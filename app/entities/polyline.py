@@ -139,7 +139,7 @@ class PolylineEntity(BaseEntity):
             grips.append(GripPoint(mid, self.id, len(self.points) + j, GripType.MIDPOINT))
         return grips
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         n = len(self.points)
         if index < n:
             # Vertex grip — move that vertex

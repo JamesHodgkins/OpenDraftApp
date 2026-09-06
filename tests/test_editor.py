@@ -59,6 +59,18 @@ def test_delete_selection_emits_signals():
     assert seen == [e.id]
 
 
+def test_set_dynamic_emits_document_changed():
+    doc = DocumentStore()
+    ed = Editor(document=doc)
+
+    seen: list[str] = []
+    ed.document_changed.connect(lambda: seen.append("changed"))
+
+    ed.set_dynamic(lambda mouse: [LineEntity(p1=Vec2(0, 0), p2=mouse)])
+
+    assert seen == ["changed"]
+
+
 def test_get_command_option_returns_selected_label() -> None:
     doc = DocumentStore()
     ed = Editor(document=doc)
@@ -225,7 +237,7 @@ def test_editor_transaction_groups_undo_commands() -> None:
     assert events == ["undo:second", "undo:first", "redo:first", "redo:second"]
 
 
-def test_move_command_second_pick_uses_base_point_as_vector_origin() -> None:
+def test_move_command_second_pick_uses_base_point_as_vector_origin(qtbot) -> None:
     import app.commands  # noqa: F401
 
     doc = DocumentStore()
@@ -235,22 +247,22 @@ def test_move_command_second_pick_uses_base_point_as_vector_origin() -> None:
     ed.selection.add(line.id)
 
     ed.run_command("moveCommand")
-    assert _wait_until(lambda: ed.is_running and ed.input_mode == "point")
+    qtbot.waitUntil(lambda: ed.is_running and ed.input_mode == "point")
 
     base = Vec2(1, 1)
     ed.provide_point(base)
-    assert _wait_until(
+    qtbot.waitUntil(
         lambda: ed.is_running and ed.input_mode == "point" and ed.snap_from_point == base
     )
 
     ed.provide_point(Vec2(4, 2))
-    assert _wait_until(lambda: not ed.is_running)
+    qtbot.waitUntil(lambda: not ed.is_running)
 
     assert line.p1 == Vec2(3, 1)
     assert line.p2 == Vec2(5, 1)
 
 
-def test_copy_command_keeps_base_point_as_vector_origin_between_placements() -> None:
+def test_copy_command_keeps_base_point_as_vector_origin_between_placements(qtbot) -> None:
     import app.commands  # noqa: F401
 
     doc = DocumentStore()
@@ -260,17 +272,17 @@ def test_copy_command_keeps_base_point_as_vector_origin_between_placements() -> 
     ed.selection.add(line.id)
 
     ed.run_command("copyCommand")
-    assert _wait_until(lambda: ed.is_running and ed.input_mode == "point")
+    qtbot.waitUntil(lambda: ed.is_running and ed.input_mode == "point")
 
     base = Vec2(2, 2)
     ed.provide_point(base)
-    assert _wait_until(
+    qtbot.waitUntil(
         lambda: ed.is_running and ed.input_mode == "point" and ed.snap_from_point == base
     )
 
     ed.provide_point(Vec2(5, 2))
-    assert _wait_until(lambda: len(doc.entities) == 2)
-    assert _wait_until(
+    qtbot.waitUntil(lambda: len(doc.entities) == 2)
+    qtbot.waitUntil(
         lambda: ed.is_running and ed.input_mode == "point" and ed.snap_from_point == base
     )
 
@@ -282,11 +294,11 @@ def test_copy_command_keeps_base_point_as_vector_origin_between_placements() -> 
     assert copy_line.p2 == Vec2(4, 0)
 
     ed.cancel()
-    assert _wait_until(lambda: not ed.is_running)
+    qtbot.waitUntil(lambda: not ed.is_running)
     assert ed.snap_from_point is None
 
 
-def test_rotate_command_uses_vector_point_input_for_angle() -> None:
+def test_rotate_command_uses_vector_point_input_for_angle(qtbot) -> None:
     import app.commands  # noqa: F401
 
     doc = DocumentStore()
@@ -296,16 +308,16 @@ def test_rotate_command_uses_vector_point_input_for_angle() -> None:
     ed.selection.add(line.id)
 
     ed.run_command("rotateCommand")
-    assert _wait_until(lambda: ed.is_running and ed.input_mode == "point")
+    qtbot.waitUntil(lambda: ed.is_running and ed.input_mode == "point")
 
     center = Vec2(0, 0)
     ed.provide_point(center)
-    assert _wait_until(
-        lambda: ed.is_running and ed.input_mode == "point" and ed.snap_from_point == center
+    qtbot.waitUntil(
+        lambda: ed.is_running and ed.input_mode == "angle" and ed.snap_from_point == center
     )
 
     ed.provide_point(Vec2(0, 10))
-    assert _wait_until(lambda: not ed.is_running)
+    qtbot.waitUntil(lambda: not ed.is_running)
 
     assert line.p1.x == pytest.approx(0.0, abs=1e-6)
     assert line.p1.y == pytest.approx(1.0, abs=1e-6)
@@ -313,7 +325,7 @@ def test_rotate_command_uses_vector_point_input_for_angle() -> None:
     assert line.p2.y == pytest.approx(2.0, abs=1e-6)
 
 
-def test_rotate_base_vector_redefines_zero_axis_for_vector_pick() -> None:
+def test_rotate_base_vector_redefines_zero_axis_for_vector_pick(qtbot) -> None:
     import app.commands  # noqa: F401
 
     doc = DocumentStore()
@@ -323,36 +335,36 @@ def test_rotate_base_vector_redefines_zero_axis_for_vector_pick() -> None:
     ed.selection.add(line.id)
 
     ed.run_command("rotateCommand")
-    assert _wait_until(lambda: ed.is_running and ed.input_mode == "point")
+    qtbot.waitUntil(lambda: ed.is_running and ed.input_mode == "point")
 
     center = Vec2(0, 0)
     ed.provide_point(center)
-    assert _wait_until(
-        lambda: ed.is_running and ed.input_mode == "point" and ed.snap_from_point == center
+    qtbot.waitUntil(
+        lambda: ed.is_running and ed.input_mode == "angle" and ed.snap_from_point == center
     )
-    assert _wait_until(lambda: "Set base vector" in ed.command_option_labels)
+    qtbot.waitUntil(lambda: "Set base vector" in ed.command_option_labels)
 
     # Set base vector to straight up; this should become the effective 0 axis.
     ed.provide_command_option("Set base vector")
-    assert _wait_until(
+    qtbot.waitUntil(
         lambda: ed.is_running and ed.input_mode == "point" and not ed.command_option_labels
     )
     base_start = Vec2(10, 10)
     base_end = Vec2(10, 20)
     ed.provide_point(base_start)
-    assert _wait_until(
+    qtbot.waitUntil(
         lambda: ed.is_running and ed.input_mode == "point" and ed.snap_from_point == base_start
     )
     ed.provide_point(base_end)
 
     # Pick the same (straight up) vector as rotation vector => zero rotation.
-    assert _wait_until(
-        lambda: ed.is_running and ed.input_mode == "point"
+    qtbot.waitUntil(
+        lambda: ed.is_running and ed.input_mode == "angle"
         and ed.snap_from_point == center
         and "Set base vector" in ed.command_option_labels
     )
     ed.provide_point(Vec2(0, 10))
-    assert _wait_until(lambda: not ed.is_running)
+    qtbot.waitUntil(lambda: not ed.is_running)
 
     assert line.p1.x == pytest.approx(1.0, abs=1e-6)
     assert line.p1.y == pytest.approx(0.0, abs=1e-6)
@@ -360,7 +372,7 @@ def test_rotate_base_vector_redefines_zero_axis_for_vector_pick() -> None:
     assert line.p2.y == pytest.approx(0.0, abs=1e-6)
 
 
-def test_scale_command_uses_vector_point_input_for_factor() -> None:
+def test_scale_command_uses_vector_point_input_for_factor(qtbot) -> None:
     import app.commands  # noqa: F401
 
     doc = DocumentStore()
@@ -370,16 +382,16 @@ def test_scale_command_uses_vector_point_input_for_factor() -> None:
     ed.selection.add(line.id)
 
     ed.run_command("scaleCommand")
-    assert _wait_until(lambda: ed.is_running and ed.input_mode == "point")
+    qtbot.waitUntil(lambda: ed.is_running and ed.input_mode == "point")
 
     base = Vec2(0, 0)
     ed.provide_point(base)
-    assert _wait_until(
+    qtbot.waitUntil(
         lambda: ed.is_running and ed.input_mode == "point" and ed.snap_from_point == base
     )
 
     ed.provide_point(Vec2(200, 0))
-    assert _wait_until(lambda: not ed.is_running)
+    qtbot.waitUntil(lambda: not ed.is_running)
 
     assert line.p1 == Vec2(20, 0)
     assert line.p2 == Vec2(40, 0)

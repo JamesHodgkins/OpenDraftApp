@@ -13,7 +13,7 @@ import math
 from typing import List, Optional, Tuple
 
 from app.editor import command
-from app.editor.base_command import CommandBase
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.editor.undo import UndoCommand
 from app.entities import BaseEntity, Vec2, LineEntity
 from app.commands.modify_helpers import _copy_style
@@ -120,40 +120,59 @@ class _ChamferUndoCommand(UndoCommand):
 # ---------------------------------------------------------------------------
 
 @command("chamferCommand")
-class ChamferCommand(CommandBase):
+class ChamferCommand(StatefulCommandBase):
     """Bevel a corner between two lines by specified chamfer distances."""
 
-    def execute(self) -> None:
+    distance_1 = export(None, label="Distance 1", input_kind="float")
+    distance_2 = export(None, label="Distance 2", input_kind="float")
+    first_pick = export(None, label="First line pick", input_kind="point")
+    second_pick = export(None, label="Second line pick", input_kind="point")
+
+    def start(self) -> None:
         self.editor.suppress_dynamic_input = False
-        dist1 = self.editor.get_float("Chamfer: enter first distance")
-        if dist1 < 0:
+        self.editor.suppress_osnap = True
+        self.editor.suppress_dynamic_input = True
+        self.begin(
+            active_export="distance_1",
+            reset=("distance_1", "distance_2", "first_pick", "second_pick"),
+        )
+
+    def live_preview_value(self, name, cursor):
+        if name == "distance_2":
+            # commit() falls back to distance_1 when distance_2 is left at 0,
+            # so previewing that fallback here keeps the readout honest.
+            return self.number_value("distance_1")
+        return super().live_preview_value(name, cursor)
+
+    def update(self) -> None:
+        self.editor.clear_dynamic()
+
+    def commit(self) -> None:
+        dist1 = self.number_value("distance_1")
+        dist2 = self.number_value("distance_2")
+        if dist1 is None or dist1 < 0:
             self.editor.status_message.emit("Chamfer: distance must be >= 0")
             return
-        dist2 = self.editor.get_float(
-            f"Chamfer: enter second distance (0 = same as first: {dist1:.4g})"
-        )
+        if dist2 is None:
+            self.editor.status_message.emit("Chamfer: second distance is required")
+            return
         if dist2 <= 0:
             dist2 = dist1
 
-        self.editor.suppress_osnap = True
-        self.editor.suppress_dynamic_input = True
-        try:
-            self._run(dist1, dist2)
-        finally:
-            self.editor.suppress_osnap = False
-            self.editor.suppress_dynamic_input = False
-
-    def _run(self, dist1: float, dist2: float) -> None:
         tol = self.editor.settings.trim_pick_tolerance
         doc = self.editor.document
 
-        pick1 = self.editor.get_point(f"Chamfer d1={dist1:.4g} d2={dist2:.4g}: click first line")
+        pick1 = self.point_value("first_pick")
+        pick2 = self.point_value("second_pick")
+        if pick1 is None or pick2 is None:
+            self.editor.status_message.emit("Chamfer: pick two lines")
+            return
+
         line1 = _nearest_line(pick1, list(doc.entities), tol)
         if line1 is None:
             self.editor.status_message.emit("Chamfer: no line found at first pick")
             return
 
-        pick2 = self.editor.get_point(f"Chamfer: click second line")
         line2 = _nearest_line(pick2, list(doc.entities), tol)
         if line2 is None or line2.id == line1.id:
             self.editor.status_message.emit("Chamfer: second line not found (pick a different line)")

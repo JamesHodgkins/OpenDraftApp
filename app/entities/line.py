@@ -12,6 +12,21 @@ from app.entities.base import (
 )
 
 
+def _project_onto_ray(pt: Vec2, fixed: Vec2, moving: Vec2) -> Vec2:
+    """Project *pt* onto the infinite line through *fixed* and *moving*.
+
+    Used for Ctrl-constrained grip drags: the dragged endpoint slides along
+    the line's existing direction (through the fixed endpoint) instead of
+    moving freely, so only the line's length changes, not its angle.
+    """
+    dx, dy = moving.x - fixed.x, moving.y - fixed.y
+    len_sq = dx * dx + dy * dy
+    if len_sq < 1e-20:
+        return pt
+    t = ((pt.x - fixed.x) * dx + (pt.y - fixed.y) * dy) / len_sq
+    return Vec2(fixed.x + t * dx, fixed.y + t * dy)
+
+
 @dataclass
 class LineEntity(BaseEntity):
     """A straight line segment between two world-space points."""
@@ -97,11 +112,11 @@ class LineEntity(BaseEntity):
             GripPoint(mid,     self.id, 2, GripType.MIDPOINT),
         ]
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         if index == 0:
-            self.p1 = new_pos
+            self.p1 = _project_onto_ray(new_pos, self.p2, self.p1) if constrain else new_pos
         elif index == 1:
-            self.p2 = new_pos
+            self.p2 = _project_onto_ray(new_pos, self.p1, self.p2) if constrain else new_pos
         elif index == 2:
             # Move entire line
             dx = new_pos.x - (self.p1.x + self.p2.x) / 2

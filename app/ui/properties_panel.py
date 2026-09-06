@@ -467,14 +467,40 @@ class _CommandInput(_AutoSelectLineEdit):
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and panel._suggestion_index >= 0:
                 panel._activate_selected_suggestion()
                 return
+        if (
+            event.key() == Qt.Key.Key_Space
+            and panel is not None
+            and panel._space_commits_cmd_input()
+        ):
+            panel._on_cmd_input_return()
+            return
         super().keyPressEvent(event)
 
 
 class _CmdInputLineEdit(_AutoSelectLineEdit):
-    """Command-row line edit with Up/Down row navigation hooks."""
+    """Command-row line edit with Up/Down row navigation hooks.
+
+    ``space_commits`` lets the owning row opt in to Space acting as an
+    alternate Enter (see KNOWN_BUGS #2) — every export kind except ``string``
+    (free-text content, which needs literal spaces) enables this.
+
+    ``default_space_commit``, when set, is called for a bare Space press on
+    an *empty* field (KNOWN_BUGS #6) — e.g. a ``choice`` row commits its
+    default option ("keep originals") on Space with nothing typed, rather
+    than requiring the user to type it out first.
+    """
 
     activated = Signal()
     navigate_requested = Signal(int)
+    cycle_style_requested = Signal(int)
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.space_commits: bool = True
+        self.default_space_commit: Optional[Callable[[], None]] = None
+        # Only a vector-kind row (Line's "End vector", Move's displacement,
+        # ...) opts in — Left/Right otherwise needs to move the text cursor.
+        self.style_cycling_enabled: bool = False
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         self.activated.emit()
@@ -488,6 +514,22 @@ class _CmdInputLineEdit(_AutoSelectLineEdit):
             return
         if key == Qt.Key.Key_Down:
             self.navigate_requested.emit(1)
+            return
+        # Left/Right cycle the vector input style (relative/absolute/polar)
+        # only while the field is empty — otherwise they need to move the
+        # text cursor through whatever the user is typing.
+        if self.style_cycling_enabled and not self.text():
+            if key == Qt.Key.Key_Left:
+                self.cycle_style_requested.emit(-1)
+                return
+            if key == Qt.Key.Key_Right:
+                self.cycle_style_requested.emit(1)
+                return
+        if key == Qt.Key.Key_Space and not self.text().strip() and self.default_space_commit is not None:
+            self.default_space_commit()
+            return
+        if key == Qt.Key.Key_Space and self.space_commits and self.text().strip():
+            self.returnPressed.emit()
             return
         super().keyPressEvent(event)
 
@@ -762,12 +804,22 @@ class _CmdRowBase(QWidget):
     def append_text(self, text: str) -> None:  # overridden by subclasses
         """Append typed text to the row's active editor."""
 
+    def set_indicative_text(self, text: str) -> None:  # overridden by subclasses
+        """Show *text* as dim placeholder while no value is committed/typed.
+
+        Called on every cursor move with a live-computed readout (see
+        :meth:`StatefulCommandBase.live_preview_value`). A no-op once the row
+        has real text (typed or committed) — the placeholder never overwrites
+        actual input, so clearing the field always falls back to whatever
+        indicative text is current the next time the cursor moves."""
+
 
 class _CmdPointRow(_CmdRowBase):
     """Single parsed textbox row for a point-like (x/y) export."""
 
     value_changed = Signal(object)
     preview_changed = Signal(object)
+    cycle_style_requested = Signal(int)  # vector rows only — Left(-1)/Right(+1)
 
     def __init__(
         self,
@@ -779,6 +831,7 @@ class _CmdPointRow(_CmdRowBase):
     ) -> None:
         super().__init__(info, parent)
         self._point_parser = point_parser
+        self._base_placeholder = placeholder
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -788,12 +841,25 @@ class _CmdPointRow(_CmdRowBase):
         self._edit = _CmdInputLineEdit(self)
         self._edit.setMinimumWidth(120)
         self._edit.setPlaceholderText(placeholder)
+        self._edit.style_cycling_enabled = info.input_kind == "vector"
         self._edit.editingFinished.connect(self._on_edit_finished)
         self._edit.returnPressed.connect(self._on_return_pressed)
         self._edit.textChanged.connect(self._on_partial_text_changed)
         self._edit.activated.connect(self.activated.emit)
         self._edit.navigate_requested.connect(self.navigate_requested.emit)
+        self._edit.cycle_style_requested.connect(self.cycle_style_requested.emit)
         layout.addWidget(self._edit, 1)
+
+    def set_placeholder(self, text: str) -> None:
+        """Update the base (non-indicative) placeholder, e.g. after a style cycle."""
+        self._base_placeholder = text
+        if not self._edit.text():
+            self._edit.setPlaceholderText(text)
+
+    def set_indicative_text(self, text: str) -> None:
+        if self._edit.text():
+            return
+        self._edit.setPlaceholderText(text or self._base_placeholder)
 
     def set_value(self, value: Any) -> None:
         self._edit.blockSignals(True)
@@ -908,6 +974,7 @@ class _CmdScalarRow(_CmdRowBase):
         self._edit = _CmdInputLineEdit(self)
         if self._is_numeric:
             self._edit.setValidator(QDoubleValidator(self._edit))
+        self._edit.space_commits = info.input_kind != "string"
         self._edit.editingFinished.connect(self._on_edit_finished)
         self._edit.returnPressed.connect(self._on_return_pressed)
         self._edit.activated.connect(self.activated.emit)
@@ -934,7 +1001,19 @@ class _CmdScalarRow(_CmdRowBase):
         self._edit._cancel_pending_focus_select()
         self._edit.insert(text)
 
+    def set_indicative_text(self, text: str) -> None:
+        if self._edit.text():
+            return
+        self._edit.setPlaceholderText(text or "Type a value…")
+
     def _on_return_pressed(self) -> None:
+        if (
+            self._info.input_kind == "choice"
+            and not self._edit.text().strip()
+            and self._edit.default_space_commit is not None
+        ):
+            self._edit.default_space_commit()
+            return
         if self._emit_if_valid():
             self.advance_requested.emit()
 
@@ -1166,6 +1245,7 @@ class PropertiesPanel(QWidget):
         self._blocked = False
 
         self._type_filters: Dict[str, QPushButton] = {}
+        self._stateful_command: Optional[StatefulCommandBase] = None
         self._cmd_rows: Dict[str, QWidget] = {}
         self._suggestion_buttons: List[QToolButton] = []
         self._suggestion_index: int = -1   # arrow-key cursor in the suggestion list
@@ -1193,6 +1273,7 @@ class PropertiesPanel(QWidget):
     def bind_stateful_command(self, command: StatefulCommandBase) -> None:
         """Switch the panel into command mode and show ``command``'s exports."""
         self.clear_stateful_command()
+        self._stateful_command = command
         cmd_name = self._format_command_name(getattr(command, "command_name", "Command"))
         self._set_mode_pill(cmd_name, active=True)
         self._set_idle_input_visible(False)
@@ -1205,17 +1286,28 @@ class PropertiesPanel(QWidget):
             if info.input_kind in ("point", "vector"):
                 parser = self._parse_stateful_point_text
                 placeholder = "x,y"
-                if info.input_kind == "vector":
+                is_vector = info.input_kind == "vector"
+                if is_vector:
                     parser = self._parse_stateful_vector_text
-                    placeholder = "dx,dy or n<a"
+                    placeholder = self._vector_placeholder(self._editor.vector_input_style)
                 row = _CmdPointRow(
                     info,
                     parser,
                     placeholder=placeholder,
                     parent=self._cmd_props_container,
                 )
+                if is_vector:
+                    row.cycle_style_requested.connect(self._cycle_vector_input_style)
             else:
                 row = _CmdScalarRow(info, self._cmd_props_container)
+                if info.input_kind == "choice":
+                    # Bare Space on an untouched choice row commits its
+                    # default option (KNOWN_BUGS #6) — Mirror's "Keep
+                    # originals?" defaults to Y (keep), the first of the
+                    # options the command currently exposes.
+                    row._edit.default_space_commit = (
+                        lambda n=info.name: self._commit_default_choice(n)
+                    )
 
             row.activated.connect(lambda n=info.name: self._set_cmd_active(n))
 
@@ -1244,6 +1336,7 @@ class PropertiesPanel(QWidget):
         self._sync_cmd_values(command)
         self._sync_cmd_active(command)
         self._update_cmd_input_placeholder(command)
+        self._refresh_indicative_values()
         self._cmd_props_container.show()
         self._cmd_action_row.show()
         self._focus_active_row(command, prefer_row=True)
@@ -1251,6 +1344,7 @@ class PropertiesPanel(QWidget):
 
     def clear_stateful_command(self) -> None:
         """Tear down stateful-command rows and return to idle mode."""
+        self._stateful_command = None
         self._cmd_rows.clear()
         while self._cmd_props_layout.count():
             item = self._cmd_props_layout.takeAt(0)
@@ -1268,10 +1362,28 @@ class PropertiesPanel(QWidget):
         self._clear_suggestion_buttons()
         self._set_nav_shortcuts_enabled(False)
 
+    def is_bound_to_stateful_command(self, command: StatefulCommandBase) -> bool:
+        return self._stateful_command is command
+
+    def _cycle_vector_input_style(self, direction: int) -> None:
+        """Left/Right on an empty vector row cycles the input-style hint.
+
+        The choice (relative/absolute/polar) is remembered on the editor —
+        see ``Editor.vector_input_style`` — so it carries over to every other
+        vector-kind row, not just the one the user cycled it from.
+        """
+        style = self._editor.cycle_vector_input_style(direction)
+        placeholder = self._vector_placeholder(style)
+        for row in self._cmd_rows.values():
+            if isinstance(row, _CmdPointRow) and row.info.input_kind == "vector":
+                row.set_placeholder(placeholder)
+        self._refresh_indicative_values()
+
     def set_command_property_value(self, name: str, value: Any) -> None:
         row = self._cmd_rows.get(name)
         if row is not None:
             row.set_value(value)  # type: ignore[union-attr]
+        self._refresh_indicative_values()
 
     def set_active_command_property(self, name: str) -> None:  # noqa: ARG002 — name kept for API compat
         cmd = getattr(self._editor, "active_command", None)
@@ -1279,10 +1391,90 @@ class PropertiesPanel(QWidget):
             self._sync_cmd_active(cmd)
             self._update_cmd_input_placeholder(cmd)
             self._focus_active_row(cmd)
+            self._refresh_indicative_values()
 
     def update_cursor_world(self, x: float, y: float) -> None:
         self._cursor_world = Vec2(x, y)
         self._refresh_cursor_label()
+        self._refresh_indicative_values()
+
+    def _refresh_indicative_values(self) -> None:
+        """Push a live readout into every unset export's row placeholder.
+
+        See KNOWN_BUGS #4 — while freestyle-drawing (e.g. a circle with no
+        radius typed yet) the row should show the value it would take on
+        right now rather than sitting blank, without that ever overwriting
+        real typed/committed text (``set_indicative_text`` no-ops in that
+        case, so clearing a field always reveals the live readout again).
+        """
+        cmd = getattr(self._editor, "active_command", None)
+        if not isinstance(cmd, StatefulCommandBase) or not self._cmd_rows:
+            return
+        for name, row in self._cmd_rows.items():
+            if getattr(cmd, name, None) is not None:
+                continue  # already committed — real value wins
+            live = cmd.live_preview_value(name, self._cursor_world)
+            row.set_indicative_text(self._format_indicative_value(row.info, live))  # type: ignore[union-attr]
+        self._refresh_active_prompt(cmd)
+
+    def _refresh_active_prompt(self, cmd: StatefulCommandBase) -> None:
+        """Append the active export's live readout to the status-bar prompt.
+
+        e.g. drawing a line shows "End vector — 12.5<34°" in the bottom-left
+        status label so the rubber-band length is visible without looking at
+        the panel row (KNOWN_BUGS — rubber-band line length was invisible).
+        Only refreshes while the export is still unset; once committed the
+        prompt has already moved on to the next export via
+        ``Editor._emit_stateful_prompt``.
+        """
+        active = cmd.active_export
+        if not active or getattr(cmd, active, None) is not None:
+            return
+        info = next((e for e in cmd.exports() if e.name == active), None)
+        if info is None:
+            return
+        live = cmd.live_preview_value(active, self._cursor_world)
+        text = self._format_indicative_value(info, live)
+        if not text:
+            return
+        self._editor.status_message.emit(f"{info.label} — {text}")
+
+    def _format_indicative_value(self, info: ExportInfo, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, Vec2):
+            if info.input_kind == "vector":
+                return self._format_vector_value(value)
+            return f"{_fmt_float(value.x)},{_fmt_float(value.y)}"
+        if isinstance(value, (int, float)):
+            return _fmt_float(float(value))
+        return str(value)
+
+    def _format_vector_value(self, value: Vec2) -> str:
+        """Format a ``vector``-kind readout per the cycled input style.
+
+        Left/Right on an empty vector row cycles ``editor.vector_input_style``
+        through relative (``dx,dy``) / absolute (``#x,y``) / polar
+        (``length<angle°``) — this renders the live-indicative readout (and,
+        via :meth:`_vector_placeholder`, the empty-field placeholder) to match
+        whichever style is currently selected.
+        """
+        style = getattr(self._editor, "vector_input_style", "relative")
+        if style == "absolute":
+            return f"#{_fmt_float(value.x)},{_fmt_float(value.y)}"
+        if style == "polar":
+            length = math.hypot(value.x, value.y)
+            angle = math.degrees(math.atan2(value.y, value.x))
+            return f"{_fmt_float(length)}<{_fmt_float(angle)}°"
+        return f"{_fmt_float(value.x)},{_fmt_float(value.y)}"
+
+    @staticmethod
+    def _vector_placeholder(style: str) -> str:
+        if style == "absolute":
+            return "#x,y"
+        if style == "polar":
+            return "length<angle"
+        return "dx,dy"
 
     def _parse_stateful_point_text(self, text: str) -> Vec2 | None:
         """Parse one point textbox value for stateful point exports.
@@ -1517,6 +1709,15 @@ class PropertiesPanel(QWidget):
         self._cmd_commit_btn.setObjectName("CommitButton")
         self._cmd_commit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._cmd_commit_btn.setToolTip("Enter")
+        # A plain QPushButton only activates on Enter/Return when autoDefault
+        # (or isDefault) is set — that machinery is normally only wired up
+        # automatically inside a QDialog, so in this docked panel the button
+        # silently ignored Enter even while focused. _focus_active_row moves
+        # focus here once every export is set (e.g. right after Mirror's
+        # "keep originals?" choice is answered) specifically so a final
+        # Enter commits — without this the command looked stuck there
+        # (KNOWN_BUGS #6 follow-up).
+        self._cmd_commit_btn.setAutoDefault(True)
         self._cmd_commit_btn.clicked.connect(self.commit_requested.emit)
         action_layout.addWidget(self._cmd_commit_btn)
 
@@ -1902,7 +2103,7 @@ class PropertiesPanel(QWidget):
         active = command.active_export
         # When all exports are set, the editor leaves active_export as-is;
         # we should land focus on Commit so Enter finalises the command.
-        if command.all_exports_set() and not prefer_row:
+        if command.all_exports_set():
             self._cmd_commit_btn.setFocus()
             return
         row = self._cmd_rows.get(active)
@@ -1967,9 +2168,52 @@ class PropertiesPanel(QWidget):
             row = self._cmd_rows.get(first_name)
         if not isinstance(row, _CmdRowBase):
             return False
+        if self._commit_choice_keystroke(cmd, row, text):
+            return True
         self._focus_active_row(cmd, prefer_row=True)
         row.append_text(text)
         return True
+
+    def _commit_choice_keystroke(self, cmd: StatefulCommandBase, row: "_CmdRowBase", text: str) -> bool:
+        """Commit a ``choice`` export the instant its single hotkey is typed.
+
+        A choice like Mirror's "Keep originals? Y/N" only has one option per
+        keystroke, so making the user also press Space/Enter afterwards is
+        pure friction (KNOWN_BUGS #6) — typing ``y`` or ``n`` (or ``Y``/``N``)
+        should commit immediately. Only fires on a single-character keystroke
+        into an otherwise-empty ``choice`` row that exactly matches one of
+        the command's current options (case-insensitively); anything else —
+        multi-character paste, a non-choice row, no match — falls through to
+        normal append-and-wait-for-Enter/Space behaviour.
+        """
+        if row.info.input_kind != "choice" or len(text) != 1:
+            return False
+        edit = getattr(row, "_edit", None)
+        if edit is not None and edit.text():
+            return False  # mid-edit — let normal typing continue
+        options = list(getattr(self._editor, "_choice_options", []) or [])
+        match = next((opt for opt in options if opt.lower() == text.lower()), None)
+        if match is None:
+            return False
+        self._focus_active_row(cmd, prefer_row=True)
+        self.property_changed.emit(cmd.active_export, match)
+        return True
+
+    def _commit_default_choice(self, name: str) -> None:
+        """Commit the first available option for choice export *name*.
+
+        Wired to a bare Space press on an empty choice row (KNOWN_BUGS #6):
+        Mirror's "Keep originals?" defaults to whichever option the command
+        lists first (``Y`` — keep) so Space alone accepts the default
+        without the user typing anything.
+        """
+        cmd = getattr(self._editor, "active_command", None)
+        if not isinstance(cmd, StatefulCommandBase):
+            return
+        options = list(getattr(self._editor, "_choice_options", []) or [])
+        if not options:
+            return
+        self.property_changed.emit(name, options[0])
 
     def _install_shortcuts(self) -> None:
         self._cmd_nav_up_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Up), self)
@@ -2010,9 +2254,25 @@ class PropertiesPanel(QWidget):
 
     def _on_cmd_input_return(self) -> None:
         text = self._cmd_input.text().strip()
-        if not text:
-            return
         cmd = getattr(self._editor, "active_command", None)
+        if not text:
+            if isinstance(cmd, StatefulCommandBase):
+                if cmd.all_exports_set():
+                    self.commit_requested.emit()
+                    return
+                active = cmd.active_export
+                row = self._cmd_rows.get(active)
+                if isinstance(row, _CmdScalarRow) and row.info.input_kind == "choice":
+                    self._commit_default_choice(active)
+            # Empty Enter/Space in idle mode repeats the last-run command
+            # (KNOWN_BUGS #7) — mirrors AutoCAD-style "press Enter to
+            # repeat". Only meaningful when idle; a running command has
+            # nothing to repeat into and should just ignore the empty press.
+            if not isinstance(cmd, StatefulCommandBase):
+                last_id = getattr(self._editor, "last_command_name", None)
+                if last_id:
+                    self.command_requested.emit(last_id)
+            return
         if isinstance(cmd, StatefulCommandBase):
             self._cmd_input.clear()
             self.header_value_submitted.emit(text)
@@ -2024,6 +2284,34 @@ class PropertiesPanel(QWidget):
         self._run_matched_command(text)
         self._cmd_input.clear()
         self._clear_suggestion_buttons()
+
+    def _space_commits_cmd_input(self) -> bool:
+        """Return True when Space should commit the command bar like Enter.
+
+        Space is a faster alternative to Enter for committing whatever is
+        typed in the command bar — starting an idle-mode command, or
+        submitting a value while a stateful command is running — so the
+        user doesn't have to leave the home row. The one exception is a
+        ``string``-kind export (for example Text's Content field), where a
+        space is legitimate input and must be inserted literally.
+
+        Also True when the bar is empty and idle (KNOWN_BUGS #7) so bare
+        Space, like bare Enter, repeats the last-run command.
+        """
+        cmd = getattr(self._editor, "active_command", None)
+        if not self._cmd_input.text().strip():
+            if isinstance(cmd, StatefulCommandBase) and cmd.all_exports_set():
+                return True
+            return not isinstance(cmd, StatefulCommandBase) and bool(
+                getattr(self._editor, "last_command_name", None)
+            )
+        if isinstance(cmd, StatefulCommandBase):
+            active = cmd.active_export
+            for info in cmd.exports():
+                if info.name == active:
+                    return info.input_kind != "string"
+            return True
+        return True
 
     def _on_cmd_input_text_edited(self, text: str) -> None:
         cmd = getattr(self._editor, "active_command", None)

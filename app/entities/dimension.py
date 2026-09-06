@@ -264,7 +264,7 @@ class DimensionEntity(BaseEntity):
             GripPoint(mid,     self.id, 2, GripType.MIDPOINT),
         ]
 
-    def move_grip(self, index: int, new_pos: Vec2) -> None:
+    def move_grip(self, index: int, new_pos: Vec2, constrain: bool = False) -> None:
         if index == 0:
             self.p1 = new_pos
         elif index == 1:

@@ -14,7 +14,7 @@ import math
 from typing import List, Optional, Tuple
 
 from app.editor import command
-from app.editor.base_command import CommandBase
+from app.editor.stateful_command import StatefulCommandBase, export
 from app.editor.undo import UndoCommand
 from app.entities import BaseEntity, Vec2, LineEntity, ArcEntity, CircleEntity
 from app.entities.rectangle import RectangleEntity
@@ -574,90 +574,102 @@ def _trim_preview_segment(
 
 
 @command("trimCommand")
-class TrimCommand(CommandBase):
+class TrimCommand(StatefulCommandBase):
     """Trim entities at their intersections with other geometry.
 
     Uses "quick trim" mode: all visible entities serve as cutting
     edges.  Click on the portion of an entity to remove it.
     """
 
-    def execute(self) -> None:
+    pick_point = export(None, label="Pick point", input_kind="point")
+
+    def __init__(self, editor) -> None:
+        super().__init__(editor)
+        self._cutting_edges: Optional[List[BaseEntity]] = None
+
+    def start(self) -> None:
         self.editor.suppress_osnap = True
         self.editor.suppress_dynamic_input = True
-        try:
-            self._run_trim_loop()
-        finally:
-            self.editor.suppress_osnap = False
-            self.editor.suppress_dynamic_input = False
-            self.editor.clear_dynamic()
-            self.editor.clear_highlight()
-
-    def _run_trim_loop(self) -> None:
-        tol = self.editor.settings.trim_pick_tolerance
         doc = self.editor.document
 
         # If entities are preselected, use only those as cutting edges.
         sel_ids = self.editor.selection.ids
         if sel_ids:
-            cutting_edges = [e for e in doc.entities if e.id in sel_ids]
-            self.editor.set_highlight(cutting_edges)
-            prompt = "Trim (cutting edges highlighted): click segment to remove (Escape to exit)"
+            self._cutting_edges = [e for e in doc.entities if e.id in sel_ids]
+            self.editor.set_highlight(self._cutting_edges)
         else:
-            cutting_edges = None  # resolved fresh each iteration from all entities
-            prompt = "Trim: click the segment to remove (Escape to exit)"
+            self._cutting_edges = None
+        self.begin(active_export="pick_point", reset=("pick_point",))
 
-        def _preview(mouse: Vec2) -> List[BaseEntity]:
+    def update(self) -> None:
+        tol = self.editor.settings.trim_pick_tolerance
+
+        def _preview(mouse: Vec2) -> list[BaseEntity]:
             all_ents = list(self.editor.document.entities)
-            edges = cutting_edges if cutting_edges is not None else all_ents
+            edges = self._cutting_edges if self._cutting_edges is not None else all_ents
             return _trim_preview_segment(mouse, all_ents, tolerance=tol, cutting_edges=edges)
 
         self.editor.set_dynamic(_preview)
 
-        while True:
-            pt = self.editor.get_point(prompt)
+    def commit(self) -> bool:
+        pt = self.point_value("pick_point")
+        if pt is None:
+            self.editor.status_message.emit("Trim: click the segment to remove (Escape to exit)")
+            return False
 
-            doc = self.editor.document
+        tol = self.editor.settings.trim_pick_tolerance
+        doc = self.editor.document
+        target = _nearest_entity(pt, list(doc.entities), tolerance=tol)
+        if target is None:
+            self.editor.status_message.emit("Trim: no entity at pick point")
+            self.pick_point = None
+            self.active_export = "pick_point"
+            return False
 
-            target = _nearest_entity(pt, list(doc.entities), tolerance=tol)
-            if target is None:
-                self.editor.status_message.emit("Trim: no entity at pick point")
-                continue
+        replacements: Optional[List[BaseEntity]] = None
+        trim_edges = self._cutting_edges if self._cutting_edges is not None else list(doc.entities)
+        if isinstance(target, LineEntity):
+            replacements = _trim_line(target, pt, trim_edges)
+        elif isinstance(target, ArcEntity):
+            replacements = _trim_arc(target, pt, trim_edges)
+        elif isinstance(target, CircleEntity):
+            replacements = _trim_circle(target, pt, trim_edges)
+        elif isinstance(target, RectangleEntity):
+            replacements = _trim_rect(target, pt, trim_edges)
+        elif isinstance(target, EllipseEntity):
+            replacements = _trim_ellipse(target, pt, trim_edges)
 
-            replacements: Optional[List[BaseEntity]] = None
-            trim_edges = cutting_edges if cutting_edges is not None else list(doc.entities)
-            if isinstance(target, LineEntity):
-                replacements = _trim_line(target, pt, trim_edges)
-            elif isinstance(target, ArcEntity):
-                replacements = _trim_arc(target, pt, trim_edges)
-            elif isinstance(target, CircleEntity):
-                replacements = _trim_circle(target, pt, trim_edges)
-            elif isinstance(target, RectangleEntity):
-                replacements = _trim_rect(target, pt, trim_edges)
-            elif isinstance(target, EllipseEntity):
-                replacements = _trim_ellipse(target, pt, trim_edges)
+        if replacements is None:
+            self.editor.status_message.emit("Trim: no cutting edges intersect that entity")
+            self.pick_point = None
+            self.active_export = "pick_point"
+            return False
 
-            if replacements is None:
-                self.editor.status_message.emit("Trim: no cutting edges intersect that entity")
-                continue
+        original_index = 0
+        for i, ent in enumerate(doc.entities):
+            if ent.id == target.id:
+                original_index = i
+                break
 
-            original_index = 0
-            for i, ent in enumerate(doc.entities):
-                if ent.id == target.id:
-                    original_index = i
-                    break
+        doc.remove_entity(target.id)
+        self.editor.selection.remove(target.id)
+        self.editor.entity_removed.emit(target.id)
+        for ent in replacements:
+            doc.add_entity(ent)
+            self.editor.entity_added.emit(ent)
+        self.editor.document_changed.emit()
+        self.editor.push_undo_command(
+            _TrimUndoCommand(doc, target, original_index, replacements)
+        )
 
-            doc.remove_entity(target.id)
-            self.editor.selection.remove(target.id)
-            self.editor.entity_removed.emit(target.id)
-            for ent in replacements:
-                doc.add_entity(ent)
-                self.editor.entity_added.emit(ent)
-            self.editor.document_changed.emit()
+        if self._cutting_edges is not None:
+            self._cutting_edges = [e for e in self._cutting_edges if e.id != target.id]
+            self.editor.set_highlight(self._cutting_edges)
 
-            self.editor.push_undo_command(
-                _TrimUndoCommand(doc, target, original_index, replacements))
+        self.pick_point = None
+        self.active_export = "pick_point"
+        return False
 
-            # If we trimmed a cutting edge, update the highlight list.
-            if cutting_edges is not None:
-                cutting_edges = [e for e in cutting_edges if e.id != target.id]
-                self.editor.set_highlight(cutting_edges)
+    def cancel(self) -> None:
+        self.editor.clear_highlight()
+        super().cancel()

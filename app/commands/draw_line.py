@@ -14,6 +14,17 @@ class DrawLineCommand(StatefulCommandBase):
     def start(self) -> None:
         self.begin(active_export="start_point", reset=("start_point", "end_point"))
 
+    def live_preview_value(self, name, cursor):
+        if name == "end_point":
+            start = self.point_value("start_point")
+            if start is None:
+                return None
+            # The panel formats this per the user's cycled vector-input
+            # style (relative/absolute/polar) — see
+            # PropertiesPanel._format_indicative_value.
+            return cursor - start
+        return super().live_preview_value(name, cursor)
+
     def seed_from_previous(self, prev: StatefulCommandBase) -> None:
         """Chain consecutive lines: previous end becomes our start.
 

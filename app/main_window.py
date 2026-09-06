@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, QObject, QEvent
+from PySide6.QtCore import QByteArray, Qt, QObject, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QIcon, QCloseEvent
 
 from controls.ribbon import RibbonPanel
@@ -29,6 +29,11 @@ from app.ui.layer_manager import LayerManagerDialog
 from app.ui.draftmate_settings import DraftmateSettingsDialog
 from app.ui.status_bar import StatusBarWidget
 from app.ui.properties_panel import PropertiesPanel
+from app.ui.frameless_window import FramelessWindowMixin
+from app.ui.title_bar import TitleBar, AppFileButton, TITLE_BAR_HEIGHT, TAB_ROW_HEIGHT
+from app.ui.backstage_menu import BackstageMenu
+from app.ui.window_state import load_window_state, save_window_state
+from app.ui.recent_files import load_recent_files, add_recent_file
 from app.editor.stateful_command import StatefulCommandBase
 from app.config.ribbon_config import (
     RIBBON_CONFIG,
@@ -80,7 +85,7 @@ if _UNRESOLVED_RIBBON_ACTIONS:
         ", ".join(_UNRESOLVED_RIBBON_ACTIONS),
     )
 
-class MainWindow(QMainWindow):
+class MainWindow(FramelessWindowMixin, QMainWindow):
     """Top-level application window."""
 
     _OPEN_FILE_FILTER = (
@@ -100,6 +105,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("OpenDraft 2D CAD App")
         _icon = Path(__file__).parent.parent / "assets" / "svg" / "badge_logo_dark.svg"
         self.setWindowIcon(QIcon(str(_icon)))
+        self.init_frameless()
 
         # ---- Core subsystems (created before widgets so canvas can receive
         #      proper constructor arguments instead of post-hoc attr injection) ---
@@ -115,8 +121,6 @@ class MainWindow(QMainWindow):
             dark=False,  # set True for dark mode
         )
         self._ribbon = ribbon
-
-        self.setMenuWidget(ribbon)
 
         # ---- Canvas is the central drawing widget — docks snap beside it -----
         canvas = CADCanvas(document=doc, editor=self.editor)
@@ -233,6 +237,40 @@ class MainWindow(QMainWindow):
         # selection. Clearing here would make those commands no-op.
         # -------------------------------------------------------------------
 
+        # ---- Custom title bar (replaces the native Windows frame) ----------
+        # The merged File/app-icon button is a square column spanning the
+        # title bar and the ribbon's tab row, so its width equals that
+        # combined height. TitleBar needs the same width up front to
+        # reserve a matching gap in its own layout (see file_column_width).
+        file_column_size = TITLE_BAR_HEIGHT + TAB_ROW_HEIGHT
+        self.title_bar = TitleBar("OpenDraft 2D CAD App", file_column_width=file_column_size, parent=self)
+        self.title_bar.minimizeClicked.connect(self.showMinimized)
+        self.title_bar.maximizeClicked.connect(self._toggle_maximize)
+        self.title_bar.closeClicked.connect(self.close)
+
+        # Title bar + ribbon live in QMainWindow's menu-widget slot, not the
+        # central widget - the menu widget spans the full window width above
+        # both the central widget *and* the dock areas, so dock widgets
+        # (e.g. the Controller panel) correctly stay confined to the area
+        # beside the canvas instead of stretching up behind the ribbon.
+        _chrome = QWidget()
+        _chrome_layout = QVBoxLayout(_chrome)
+        _chrome_layout.setContentsMargins(0, 0, 0, 0)
+        _chrome_layout.setSpacing(0)
+        _chrome_layout.addWidget(self.title_bar)
+        _chrome_layout.addWidget(ribbon)
+        self.setMenuWidget(_chrome)
+
+        # Square "File" button merged with the app icon: floats on top of
+        # both the title bar and the ribbon's tab row rather than living in
+        # either one's own layout, so it can visually span both as a single
+        # accent-colored square column.
+        self.file_button = AppFileButton(_chrome)
+        self.file_button.set_height(file_column_size)
+        self.file_button.move(0, 0)
+        self.file_button.raise_()
+        self.file_button.clicked.connect(self._on_file_button_clicked)
+
         # Wrap canvas in a container so we can paint a stable 1px separator
         # line at the bottom without fighting QStatusBar's repaint ordering.
         _central = QWidget()
@@ -321,9 +359,9 @@ class MainWindow(QMainWindow):
         # Sync status-bar buttons when the canvas toggles via F-keys.
         canvas.orthoChanged.connect(self._status_widget.set_ortho)
         canvas.draftmateChanged.connect(self._status_widget.set_draftmate)
+        canvas.gridChanged.connect(self._status_widget.set_grid)
 
         self._update_window_title()
-        self.showMaximized()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -339,9 +377,89 @@ class MainWindow(QMainWindow):
         if self.editor.is_running:
             self.editor.cancel()
         if self._confirm_unsaved_changes("closing OpenDraft"):
+            save_window_state(self.saveGeometry())
             event.accept()
             return
         event.ignore()
+
+    # -----------------------------------------------------------------------
+    # Custom title bar / frameless window chrome
+    # -----------------------------------------------------------------------
+
+    def show_with_restored_state(self) -> None:
+        """Show the window in its last-saved size/position/maximized state.
+
+        Must be used instead of a plain ``show()`` call: applying a
+        maximized state directly to a never-shown window leaves Qt's native
+        geometry bookkeeping out of sync, so ``show()`` always runs first.
+        """
+        geometry_b64 = load_window_state()
+        geometry = QByteArray.fromBase64(geometry_b64.encode("ascii")) if geometry_b64 else None
+        self.show()
+        if geometry is None or not self.restoreGeometry(geometry):
+            self.showMaximized()
+
+    def _toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        if event.type() == event.Type.WindowStateChange:
+            title_bar = getattr(self, "title_bar", None)
+            if title_bar is not None:
+                title_bar.set_maximized(self.isMaximized())
+        super().changeEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if self.title_bar.geometry().contains(event.position().toPoint()):
+            self._toggle_maximize()
+        super().mouseDoubleClickEvent(event)
+
+    def _on_file_button_clicked(self) -> None:
+        """Open the Backstage-style file menu anchored under the File button.
+
+        `AppFileButton` swallows the click that would otherwise immediately
+        reopen a menu its own press just closed (see its `mousePressEvent`),
+        so a plain click handler here is safe to always open a fresh menu.
+        """
+        menu = BackstageMenu(self)
+        menu.add_action("New", "file_new", self._new_document)
+        menu.add_action("Open...", "file_open", self._open_document_from_file)
+        menu.add_action("Save", "file_save", self._save_document_to_file)
+        menu.add_action("Save As...", "file_save", self._save_document_as)
+
+        recent_paths = load_recent_files()
+        if recent_paths:
+            menu.add_separator()
+            for recent_path in recent_paths:
+                name = Path(recent_path).name
+                menu.add_action(
+                    name, "file_open",
+                    lambda checked=False, p=recent_path: self._open_recent_file(p),
+                )
+
+        menu.add_separator()
+        menu.add_action("Exit", None, self.close)
+        menu.popup_below(self.file_button)
+
+    def _open_recent_file(self, file_path: str) -> bool:
+        if not self._ensure_no_active_command():
+            return False
+        if not self._confirm_unsaved_changes("opening another drawing"):
+            return False
+
+        path = Path(file_path)
+        if not path.is_file():
+            QMessageBox.warning(
+                self,
+                "File Not Found",
+                f"This file could not be found:\n{path}",
+            )
+            return False
+
+        return self._load_document_from_path(path)
 
     # -----------------------------------------------------------------------
     # Status-bar wiring
@@ -382,6 +500,9 @@ class MainWindow(QMainWindow):
 
         # -- Ortho toggle ---------------------------------------------------
         sw.btn_ortho.toggled.connect(canvas._set_ortho)
+
+        # -- Grid visibility toggle -------------------------------------
+        sw.btn_grid.toggled.connect(canvas._set_grid_visible)
 
         # -- Draftmate toggle -----------------------------------------------
         sw.btn_dm.toggled.connect(canvas._set_draftmate)
@@ -575,6 +696,7 @@ class MainWindow(QMainWindow):
         self._mark_document_saved()
         self._update_window_title()
         self.editor.status_message.emit(f"Saved: {path.name}")
+        add_recent_file(str(path))
         return True
 
     def _open_document_from_file(self) -> bool:
@@ -620,6 +742,7 @@ class MainWindow(QMainWindow):
         self.editor.status_message.emit(f"Opened: {path.name}")
         self.editor.document_changed.emit()
         self._update_window_title()
+        add_recent_file(str(path))
         return True
 
     def _format_load_error(self, exc: Exception) -> str:
@@ -666,12 +789,16 @@ class MainWindow(QMainWindow):
 
     def _on_input_mode_changed(self, mode: str) -> None:
         """Switch the controller panel between idle and stateful command mode."""
-        if mode == "stateful":
-            cmd = self.editor.active_command
-            if isinstance(cmd, StatefulCommandBase):
+        cmd = self.editor.active_command
+        if isinstance(cmd, StatefulCommandBase):
+            if not self._props_panel.is_bound_to_stateful_command(cmd):
                 self._props_panel.bind_stateful_command(cmd)
-                self._props_dock.show()
-                self._props_dock.raise_()
+            self._props_dock.show()
+            self._props_dock.raise_()
+            # A command is running — focus the command input so typing always
+            # reaches it (fixes ribbon-launched commands where focus stays on
+            # the ribbon button).
+            self._props_panel.focus_command_input()
         else:
             self._props_panel.clear_stateful_command()
             self._props_panel.refresh()
@@ -736,8 +863,24 @@ class MainWindow(QMainWindow):
                 return v
             return self._props_panel._cursor_world
         if kind == "vector":
+            import math as _math
+            raw = text.strip()
+            # Direct distance entry: a plain number means "move that far in the
+            # direction the cursor is pointing relative to the base point".
+            try:
+                dist = float(raw)
+                base = getattr(self.editor, "snap_from_point", None)
+                cursor = self._props_panel._cursor_world
+                if base is not None:
+                    dx = cursor.x - base.x
+                    dy = cursor.y - base.y
+                    length = _math.hypot(dx, dy)
+                    if length > 1e-9:
+                        return Vec2(dist * dx / length, dist * dy / length)
+            except ValueError:
+                pass
             return DynamicInputParser.parse_vector(
-                text,
+                raw,
                 current_pos=self._props_panel._cursor_world,
                 base_point=Vec2(0, 0),
             )
@@ -763,6 +906,11 @@ class MainWindow(QMainWindow):
                 return None
         if kind == "string":
             return text
+        if kind == "choice":
+            raw = text.strip()
+            for option in getattr(self.editor, "_choice_options", []) or []:
+                if option.lower() == raw.lower():
+                    return option
         return None
 
     # -----------------------------------------------------------------------
@@ -800,6 +948,7 @@ class MainWindow(QMainWindow):
             "F1  Help\n"
             "F2  Toggle command history panel\n"
             "F3  Toggle OSNAP\n"
+            "F7  Toggle Grid\n"
             "F8  Toggle Ortho\n"
             "F10 Toggle Draftmate\n"
             "Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S  File operations\n"
